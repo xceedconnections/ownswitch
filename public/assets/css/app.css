@@ -1,0 +1,32 @@
+/* Ownswitch admin UI - no inline styles are used anywhere (CSP: style-src 'self' + jsDelivr). */
+:root {
+    --os-sidebar-w: 248px;
+    --os-topbar-h: 56px;
+}
+
+.os-body { background: #f4f6f9; min-height: 100vh; }
+.os-topbar { height: var(--os-topbar-h); position: sticky; top: 0; z-index: 1030; }
+.os-shell { display: flex; min-height: calc(100vh - var(--os-topbar-h)); }
+.os-main { flex: 1 1 auto; min-width: 0; }
+
+@media (min-width: 992px) {
+    .os-sidebar { width: var(--os-sidebar-w); flex: 0 0 var(--os-sidebar-w); overflow-y: auto; position: sticky; top: var(--os-topbar-h); height: calc(100vh - var(--os-topbar-h)); }
+}
+.os-sidebar { --bs-offcanvas-width: var(--os-sidebar-w); }
+.os-nav-section { color: #8b95a5; font-size: .70rem; letter-spacing: .08em; text-transform: uppercase; padding: 1rem 1rem .25rem; }
+.os-nav-link { color: #cfd6e0; padding: .35rem 1rem .35rem 1.25rem; font-size: .9rem; border-left: 3px solid transparent; }
+.os-nav-link:hover { color: #fff; background: rgba(255, 255, 255, .06); }
+.os-nav-link.active { color: #fff; background: rgba(13, 110, 253, .25); border-left-color: #0d6efd; }
+
+.os-auth { max-width: 420px; padding-top: 10vh; }
+.os-card-stat .os-stat-value { font-size: 1.75rem; font-weight: 600; line-height: 1.1; }
+.os-card-stat .os-stat-label { color: #6c757d; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+
+.os-table th { white-space: nowrap; font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; color: #6c757d; }
+.os-table td { vertical-align: middle; }
+.os-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; }
+.os-empty { padding: 3rem 1rem; text-align: center; color: #6c757d; }
+.os-empty .os-empty-title { font-size: 1.1rem; color: #343a40; margin-bottom: .25rem; }
+.os-demo-banner { border-left: 4px solid #fd7e14; }
+.os-actions form { display: inline; }
+.os-num { text-align: right; font-variant-numeric: tabular-nums; }

@@ -1,0 +1,164 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Ownswitch\Services\Cdr;
+
+use Ownswitch\Support\TenantScope;
+use PDO;
+
+/** Tenant-scoped, injection-safe CDR search with CSV export. */
+final class CdrSearchService
+{
+    public const SORTABLE = ['id', 'setup_at', 'duration_actual', 'customer_charge', 'carrier_cost', 'disposition', 'dst_normalized'];
+    public const DISPOSITIONS = ['ANSWERED', 'NO_ANSWER', 'BUSY', 'FAILED', 'CANCELLED'];
+
+    public function __construct(private PDO $pdo)
+    {
+    }
+
+    /**
+     * @param array<string,mixed> $f from,to (Y-m-d), customer_id, carrier_id, src, dst, disposition, min_duration, q
+     * @return array{0:string,1:list<mixed>}
+     */
+    public function where(TenantScope $scope, array $f): array
+    {
+        [$sql, $params] = $scope->where('owned', 'c');
+        $w = ["({$sql})"];
+        $from = $this->date($f['from'] ?? null);
+        $to = $this->date($f['to'] ?? null);
+        if ($from) {
+            $w[] = 'c.setup_at >= ?';
+            $params[] = $from . ' 00:00:00';
+        }
+        if ($to) {
+            $w[] = 'c.setup_at < ?';
+            $params[] = (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00');
+        }
+        foreach (['customer_id', 'carrier_id', 'reseller_id'] as $k) {
+            if (isset($f[$k]) && $f[$k] !== '' && ctype_digit((string) $f[$k])) {
+                if ($k === 'carrier_id' && !$scope->isGlobal()) {
+                    continue;   // customers must not probe carrier-side data
+                }
+                $w[] = "c.{$k} = ?";
+                $params[] = (int) $f[$k];
+            }
+        }
+        if (!empty($f['src']) && is_string($f['src'])) {
+            $w[] = 'c.src LIKE ?';
+            $params[] = addcslashes(trim($f['src']), '%_\\') . '%';
+        }
+        if (!empty($f['dst']) && is_string($f['dst'])) {
+            $w[] = 'c.dst_normalized LIKE ?';
+            $params[] = addcslashes(preg_replace('/\D+/', '', $f['dst']) ?? '', '%_\\') . '%';
+        }
+        if (!empty($f['disposition']) && in_array($f['disposition'], self::DISPOSITIONS, true)) {
+            $w[] = 'c.disposition = ?';
+            $params[] = $f['disposition'];
+        }
+        if (isset($f['min_duration']) && ctype_digit((string) $f['min_duration']) && $f['min_duration'] !== '') {
+            $w[] = 'c.duration_actual >= ?';
+            $params[] = (int) $f['min_duration'];
+        }
+        return [implode(' AND ', $w), $params];
+    }
+
+    /** @return array{rows:list<array<string,mixed>>,total:int,page:int,perPage:int,pages:int} */
+    public function search(TenantScope $scope, array $filters, int $page = 1, int $perPage = 50, string $sort = 'setup_at', string $dir = 'desc'): array
+    {
+        $page = max(1, $page);
+        $perPage = min(500, max(1, $perPage));
+        [$where, $params] = $this->where($scope, $filters);
+        $sort = in_array($sort, self::SORTABLE, true) ? $sort : 'setup_at';
+        $dir = strtolower($dir) === 'asc' ? 'ASC' : 'DESC';
+
+        $cnt = $this->pdo->prepare("SELECT COUNT(*) FROM cdrs c WHERE {$where}");
+        $cnt->execute($params);
+        $total = (int) $cnt->fetchColumn();
+
+        $sql = "SELECT c.*, cu.name AS customer_name, ca.name AS carrier_name FROM cdrs c
+                LEFT JOIN customers cu ON cu.id = c.customer_id LEFT JOIN carriers ca ON ca.id = c.carrier_id
+                WHERE {$where} ORDER BY c.`{$sort}` {$dir}, c.id DESC LIMIT ? OFFSET ?";
+        $st = $this->pdo->prepare($sql);
+        $i = 1;
+        foreach ($params as $p) {
+            $st->bindValue($i++, $p, is_int($p) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
+        $st->bindValue($i++, $perPage, PDO::PARAM_INT);
+        $st->bindValue($i, ($page - 1) * $perPage, PDO::PARAM_INT);
+        $st->execute();
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+
+        // Customers must never see carrier-side cost/margin.
+        if (!$scope->isGlobal()) {
+            foreach ($rows as &$r) {
+                foreach (['carrier_cost', 'carrier_rate', 'carrier_connect_fee', 'gross_margin', 'carrier_id', 'carrier_name', 'carrier_trunk_id', 'carrier_initial', 'carrier_subsequent', 'duration_billable_carrier'] as $k) {
+                    unset($r[$k]);
+                }
+            }
+            unset($r);
+        }
+        return ['rows' => $rows, 'total' => $total, 'page' => $page, 'perPage' => $perPage, 'pages' => max(1, (int) ceil($total / $perPage))];
+    }
+
+    public function find(TenantScope $scope, int $id): ?array
+    {
+        [$sql, $params] = $scope->where('owned', 'c');
+        $st = $this->pdo->prepare("SELECT c.*, cu.name AS customer_name, ca.name AS carrier_name FROM cdrs c
+            LEFT JOIN customers cu ON cu.id = c.customer_id LEFT JOIN carriers ca ON ca.id = c.carrier_id
+            WHERE c.id = ? AND ({$sql}) LIMIT 1");
+        $st->execute([$id, ...$params]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return null;
+        }
+        if (!$scope->isGlobal()) {
+            foreach (['carrier_cost', 'carrier_rate', 'carrier_connect_fee', 'gross_margin', 'carrier_id', 'carrier_name', 'carrier_trunk_id', 'carrier_initial', 'carrier_subsequent', 'duration_billable_carrier', 'cgrates_cost', 'rating_discrepancy'] as $k) {
+                unset($row[$k]);
+            }
+        }
+        return $row;
+    }
+
+    /** Stream CSV in chunks (keyset on id) so large exports do not exhaust memory. Max 200k rows. */
+    public function exportCsv(TenantScope $scope, array $filters, callable $write): void
+    {
+        $hdr = ['id', 'setup_at', 'src', 'dst', 'disposition', 'sip_response', 'duration_s', 'billable_s', 'rate', 'increment', 'charge', 'currency'];
+        $staff = $scope->isGlobal();
+        if ($staff) {
+            array_push($hdr, 'carrier', 'carrier_cost', 'margin');
+        }
+        $write(\Ownswitch\Support\Csv::line($hdr));
+        [$where, $params] = $this->where($scope, $filters);
+        $last = PHP_INT_MAX;
+        $sent = 0;
+        while ($sent < 200000) {
+            $st = $this->pdo->prepare("SELECT c.*, ca.name AS carrier_name FROM cdrs c LEFT JOIN carriers ca ON ca.id = c.carrier_id
+                WHERE {$where} AND c.id < ? ORDER BY c.id DESC LIMIT 1000");
+            $st->execute([...$params, $last]);
+            $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+            if (!$rows) {
+                break;
+            }
+            foreach ($rows as $r) {
+                $line = [$r['id'], $r['setup_at'], $r['src'], $r['dst_normalized'], $r['disposition'], $r['sip_response'], $r['duration_actual'],
+                    $r['duration_billable_customer'], $r['customer_rate'], ($r['customer_initial'] ?? '') . '/' . ($r['customer_subsequent'] ?? ''), $r['customer_charge'], $r['currency']];
+                if ($staff) {
+                    array_push($line, $r['carrier_name'], $r['carrier_cost'], $r['gross_margin']);
+                }
+                $write(\Ownswitch\Support\Csv::line($line));
+                $last = (int) $r['id'];
+                $sent++;
+            }
+        }
+    }
+
+    private function date(mixed $v): ?string
+    {
+        if (!is_string($v) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) {
+            return null;
+        }
+        $d = \DateTimeImmutable::createFromFormat('!Y-m-d', $v);
+        return $d && $d->format('Y-m-d') === $v ? $v : null;
+    }
+}
