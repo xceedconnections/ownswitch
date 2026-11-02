@@ -83,13 +83,21 @@ final class SipUserController extends CrudController
     {
         $row = $this->repo()->findInternal($id);
         $prov = OpensipsProvisioner::fromConfig();
-        if ($row && $prov->enabled()) {
-            try {
-                $row['status'] === 'active'
-                    ? $prov->upsertSubscriber((string) $row['username'], (string) $row['domain'], (string) $row['ha1'], (string) $row['ha1b'])
-                    : $prov->removeSubscriber((string) $row['username'], (string) $row['domain']);
-            } catch (\Throwable $e) {
-                App::session()->flash('warning', 'Saved, but OpenSIPS provisioning failed: ' . (App::config('app.debug') ? $e->getMessage() : 'see server log'));
+        if ($row) {
+            if (!$prov->enabled()) {
+                App::session()->flash('warning', 'Saved in portal, but OpenSIPS provisioning is not available: '
+                    . ($prov->initError() !== '' ? $prov->initError() : 'OPENSIPS_ENABLED off')
+                    . '. Run: sudo bash /opt/ownswitch-src/deploy/fix-opensips-provision.sh');
+            } else {
+                try {
+                    $row['status'] === 'active'
+                        ? $prov->upsertSubscriber((string) $row['username'], (string) $row['domain'], (string) $row['ha1'], (string) $row['ha1b'])
+                        : $prov->removeSubscriber((string) $row['username'], (string) $row['domain']);
+                } catch (\Throwable $e) {
+                    error_log('[ownswitch] OpenSIPS provision SIP user: ' . $e->getMessage());
+                    $hint = preg_replace('/\s+/', ' ', $e->getMessage()) ?? $e->getMessage();
+                    App::session()->flash('warning', 'Saved, but OpenSIPS provisioning failed: ' . mb_substr($hint, 0, 240));
+                }
             }
         }
         if ($this->plainPassword !== null && $row) {

@@ -21,24 +21,41 @@ final class OpensipsProvisioner
     public const GRP_CARRIER = 2;
     public const DR_GROUP = '1';
 
-    public function __construct(private ?PDO $osDb, private string $miUrl = '', private string $sipDomain = '')
-    {
+    public function __construct(
+        private ?PDO $osDb,
+        private string $miUrl = '',
+        private string $sipDomain = '',
+        private string $initError = '',
+    ) {
     }
 
     public static function fromConfig(): self
     {
         $cfg = (array) \Ownswitch\App::config('app.integrations.opensips', []);
         if (empty($cfg['enabled'])) {
-            return new self(null, '', '');
+            return new self(null, '', '', 'OPENSIPS_ENABLED is off');
         }
-        $db = $cfg['db'];
-        $pdo = \Ownswitch\Database\Connection::make($db + ['charset' => 'utf8mb4']);
+        $db = (array) ($cfg['db'] ?? []);
+        if (trim((string) ($db['username'] ?? '')) === '' || (string) ($db['password'] ?? '') === '') {
+            return new self(null, '', '', 'OpenSIPS DB username/password missing in /etc/ownswitch/ownswitch.env');
+        }
+        try {
+            $pdo = \Ownswitch\Database\Connection::make($db + ['charset' => 'utf8mb4']);
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] OpenSIPS DB connect failed: ' . $e->getMessage());
+            return new self(null, '', '', 'Cannot connect to OpenSIPS DB: ' . $e->getMessage());
+        }
         return new self($pdo, (string) ($cfg['mi_url'] ?? ''), (string) ($cfg['sip_domain'] ?? ''));
     }
 
     public function enabled(): bool
     {
         return $this->osDb !== null;
+    }
+
+    public function initError(): string
+    {
+        return $this->initError;
     }
 
     public static function ha1(string $username, string $realm, string $password): array
@@ -49,17 +66,52 @@ final class OpensipsProvisioner
     public function upsertSubscriber(string $username, string $domain, string $ha1, string $ha1b): void
     {
         $db = $this->db();
+        if (!$this->tableExists('subscriber')) {
+            throw new \RuntimeException('opensips.subscriber table missing — re-run deploy stage 50 / OpenSIPS schema');
+        }
+        $cols = $this->columns('subscriber');
         $st = $db->prepare('SELECT id FROM subscriber WHERE username = ? AND domain = ?');
         $st->execute([$username, $domain]);
-        if ($id = $st->fetchColumn()) {
-            $db->prepare("UPDATE subscriber SET ha1 = ?, ha1b = ?, password = '' WHERE id = ?")->execute([$ha1, $ha1b, $id]);
-        } else {
-            $db->prepare("INSERT INTO subscriber (username, domain, password, ha1, ha1b) VALUES (?,?, '', ?, ?)")->execute([$username, $domain, $ha1, $ha1b]);
+        $id = $st->fetchColumn();
+
+        $set = ['ha1' => $ha1];
+        if (in_array('ha1b', $cols, true)) {
+            $set['ha1b'] = $ha1b;
         }
+        if (in_array('password', $cols, true)) {
+            $set['password'] = '';
+        }
+
+        if ($id) {
+            $parts = [];
+            $vals = [];
+            foreach ($set as $c => $v) {
+                $parts[] = "`{$c}` = ?";
+                $vals[] = $v;
+            }
+            $vals[] = $id;
+            $db->prepare('UPDATE subscriber SET ' . implode(',', $parts) . ' WHERE id = ?')->execute($vals);
+            return;
+        }
+
+        $insert = ['username' => $username, 'domain' => $domain] + $set;
+        // Optional NOT NULL columns with empty defaults on some schemas
+        foreach (['email_address', 'rpid'] as $opt) {
+            if (in_array($opt, $cols, true) && !array_key_exists($opt, $insert)) {
+                $insert[$opt] = '';
+            }
+        }
+        $cnames = array_keys($insert);
+        $sql = 'INSERT INTO subscriber (' . implode(',', array_map(static fn ($c) => "`{$c}`", $cnames)) . ') VALUES ('
+            . implode(',', array_fill(0, count($cnames), '?')) . ')';
+        $db->prepare($sql)->execute(array_values($insert));
     }
 
     public function removeSubscriber(string $username, string $domain): void
     {
+        if (!$this->tableExists('subscriber')) {
+            return;
+        }
         $this->db()->prepare('DELETE FROM subscriber WHERE username = ? AND domain = ?')->execute([$username, $domain]);
     }
 
@@ -95,15 +147,10 @@ final class OpensipsProvisioner
 
     public function reloadRegistrant(): bool
     {
-        // OpenSIPS 3.x MI name for uac_registrant
         return $this->mi('reg_reload') || $this->mi('uac_reg_reload');
     }
 
-    /**
-     * Push one Ownswitch trunk into OpenSIPS drouting (+ optional outbound REGISTER).
-     *
-     * @param array<string,mixed> $trunk row from carrier_trunks
-     */
+    /** @param array<string,mixed> $trunk */
     public function syncTrunk(array $trunk): void
     {
         $id = (int) $trunk['id'];
@@ -113,7 +160,6 @@ final class OpensipsProvisioner
         $port = (int) ($trunk['port'] ?? 5060);
         $transport = strtolower((string) ($trunk['transport'] ?? 'udp'));
         $address = $host . ($port > 0 && $port !== 5060 ? ':' . $port : '');
-        // OpenSIPS gateway address may include ;transport=
         if (in_array($transport, ['tcp', 'tls'], true)) {
             $address .= ';transport=' . $transport;
         }
@@ -121,6 +167,10 @@ final class OpensipsProvisioner
         if (!$active) {
             $this->removeTrunk($id);
             return;
+        }
+
+        if (!$this->tableExists('dr_gateways')) {
+            throw new \RuntimeException('opensips.dr_gateways missing — apply drouting schema');
         }
 
         $db = $this->db();
@@ -135,7 +185,6 @@ final class OpensipsProvisioner
                 ->execute([$gwid, $address, $desc]);
         }
 
-        // Allow inbound from this provider IP (group 2)
         if (filter_var($host, FILTER_VALIDATE_IP)) {
             $this->upsertAddress(self::GRP_CARRIER, $host, str_contains($host, ':') ? 128 : 32, 0, 'any', 'trunk:' . $id);
         }
@@ -152,29 +201,28 @@ final class OpensipsProvisioner
     {
         $gwid = self::gwid($trunkId);
         $db = $this->db();
-        $db->prepare('DELETE FROM dr_gateways WHERE gwid = ?')->execute([$gwid]);
-        $db->prepare("DELETE FROM address WHERE grp = ? AND context_info = ?")->execute([self::GRP_CARRIER, 'trunk:' . $trunkId]);
+        if ($this->tableExists('dr_gateways')) {
+            $db->prepare('DELETE FROM dr_gateways WHERE gwid = ?')->execute([$gwid]);
+        }
+        if ($this->tableExists('address')) {
+            $db->prepare('DELETE FROM address WHERE grp = ? AND context_info = ?')->execute([self::GRP_CARRIER, 'trunk:' . $trunkId]);
+        }
         $this->removeRegistrant($trunkId);
-        // Drop rules that only referenced this gw — full rule sync preferred after delete
     }
 
-    /**
-     * Rebuild dr_rules group "1" from Ownswitch routing_rules (active only).
-     * Failover order = priority ASC (lower first) → gwlist order.
-     *
-     * @param list<array{prefix:string,carrier_trunk_id:int,priority:int}> $rules
-     */
+    /** @param list<array{prefix:string,carrier_trunk_id:int,priority:int,status?:string}> $rules */
     public function syncRoutingRules(array $rules): void
     {
+        if (!$this->tableExists('dr_rules')) {
+            throw new \RuntimeException('opensips.dr_rules missing — apply drouting schema');
+        }
         $db = $this->db();
-        // Bucket by prefix; sort by priority
         $byPrefix = [];
         foreach ($rules as $r) {
             if (($r['status'] ?? 'active') !== 'active') {
                 continue;
             }
-            $p = (string) $r['prefix'];
-            $byPrefix[$p][] = $r;
+            $byPrefix[(string) $r['prefix']][] = $r;
         }
         foreach ($byPrefix as &$list) {
             usort($list, static fn ($a, $b) => ((int) $a['priority']) <=> ((int) $b['priority']));
@@ -182,8 +230,8 @@ final class OpensipsProvisioner
         unset($list);
 
         $db->prepare('DELETE FROM dr_rules WHERE groupid = ?')->execute([self::DR_GROUP]);
-        $ins = $db->prepare('INSERT INTO dr_rules (groupid, prefix, timerec, priority, routeid, gwlist, sort_alg, description) VALUES (?,?,?,?,NULL,?,?,?)');
         $prio = 0;
+        $hasSort = in_array('sort_alg', $this->columns('dr_rules'), true);
         foreach ($byPrefix as $prefix => $list) {
             $gws = [];
             foreach ($list as $r) {
@@ -193,12 +241,12 @@ final class OpensipsProvisioner
             if ($gwlist === '') {
                 continue;
             }
-            // Detect optional sort_alg column presence via try/catch fallback
-            try {
-                $ins->execute([self::DR_GROUP, $prefix, '', $prio++, $gwlist, 'N', 'ownswitch:' . $prefix]);
-            } catch (\PDOException) {
+            if ($hasSort) {
+                $db->prepare('INSERT INTO dr_rules (groupid, prefix, timerec, priority, routeid, gwlist, sort_alg, description) VALUES (?,?,?,?,NULL,?,?,?)')
+                    ->execute([self::DR_GROUP, $prefix, '', $prio++, $gwlist, 'N', 'ownswitch:' . $prefix]);
+            } else {
                 $db->prepare('INSERT INTO dr_rules (groupid, prefix, timerec, priority, routeid, gwlist, description) VALUES (?,?,?,?,NULL,?,?)')
-                    ->execute([self::DR_GROUP, $prefix, '', $prio - 1, $gwlist, 'ownswitch:' . $prefix]);
+                    ->execute([self::DR_GROUP, $prefix, '', $prio++, $gwlist, 'ownswitch:' . $prefix]);
             }
         }
     }
@@ -207,7 +255,7 @@ final class OpensipsProvisioner
     private function upsertRegistrant(array $trunk): void
     {
         if (!$this->tableExists('uac_registrant')) {
-            throw new \RuntimeException('OpenSIPS uac_registrant table missing — install opensips-uac-module and import its schema');
+            throw new \RuntimeException('uac_registrant table missing — install opensips-uac-module');
         }
         $id = (int) $trunk['id'];
         $user = trim((string) ($trunk['auth_username'] ?? ''));
@@ -215,12 +263,7 @@ final class OpensipsProvisioner
         if ($user === '' || $enc === '') {
             throw new \DomainException('Register mode needs Username and Password on the trunk.');
         }
-        try {
-            $pass = Crypto::decrypt($enc);
-        } catch (\Throwable $e) {
-            throw new \DomainException('Cannot decrypt trunk password: ' . $e->getMessage());
-        }
-
+        $pass = Crypto::decrypt($enc);
         $host = (string) $trunk['host'];
         $port = (int) ($trunk['port'] ?? 5060);
         $proxyHost = trim((string) ($trunk['outbound_proxy'] ?? ''));
@@ -234,24 +277,12 @@ final class OpensipsProvisioner
         $db = $this->db();
         $st = $db->prepare('SELECT id FROM uac_registrant WHERE l_uuid = ?');
         $st->execute([$uuid]);
-        $fields = [
-            'l_uuid' => $uuid,
-            'l_username' => $user,
-            'l_domain' => $domain,
-            'r_username' => $user,
-            'r_domain' => $host,
-            'realm' => $host,
-            'auth_username' => $user,
-            'auth_password' => $pass,
-            'auth_proxy' => $authProxy,
-            'expires' => 300,
-        ];
         if ($rowId = $st->fetchColumn()) {
             $db->prepare('UPDATE uac_registrant SET l_username=?, l_domain=?, r_username=?, r_domain=?, realm=?, auth_username=?, auth_password=?, auth_proxy=?, expires=? WHERE id=?')
-                ->execute([$fields['l_username'], $fields['l_domain'], $fields['r_username'], $fields['r_domain'], $fields['realm'], $fields['auth_username'], $fields['auth_password'], $fields['auth_proxy'], $fields['expires'], $rowId]);
+                ->execute([$user, $domain, $user, $host, $host, $user, $pass, $authProxy, 300, $rowId]);
         } else {
             $db->prepare('INSERT INTO uac_registrant (l_uuid, l_username, l_domain, r_username, r_domain, realm, auth_username, auth_password, auth_proxy, expires) VALUES (?,?,?,?,?,?,?,?,?,?)')
-                ->execute([$fields['l_uuid'], $fields['l_username'], $fields['l_domain'], $fields['r_username'], $fields['r_domain'], $fields['realm'], $fields['auth_username'], $fields['auth_password'], $fields['auth_proxy'], $fields['expires']]);
+                ->execute([$uuid, $user, $domain, $user, $host, $host, $user, $pass, $authProxy, 300]);
         }
     }
 
@@ -285,6 +316,17 @@ final class OpensipsProvisioner
         $raw = @file_get_contents($this->miUrl, false, $ctx);
         $r = $raw === false ? null : json_decode($raw, true);
         return is_array($r) && !isset($r['error']);
+    }
+
+    /** @return list<string> */
+    private function columns(string $table): array
+    {
+        static $cache = [];
+        if (isset($cache[$table])) {
+            return $cache[$table];
+        }
+        $rows = $this->db()->query("SHOW COLUMNS FROM `{$table}`")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        return $cache[$table] = array_values(array_map(static fn ($r) => (string) $r['Field'], $rows));
     }
 
     private function tableExists(string $table): bool
