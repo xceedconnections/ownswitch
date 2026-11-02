@@ -9,8 +9,9 @@ return [
         'driver'   => 'mysql',
         'host'     => Env::get('DB_HOST', '127.0.0.1'),
         'port'     => (int) Env::get('DB_PORT', 3306),
-        'database' => Env::get('DB_DATABASE', 'ownswitch'),
-        'username' => Env::get('DB_USERNAME', 'root'),
+        // Accept both portal (.env.example) and installer (/etc/ownswitch/ownswitch.env) names.
+        'database' => Env::get('DB_DATABASE', Env::get('DB_NAME', 'ownswitch')),
+        'username' => Env::get('DB_USERNAME', Env::get('DB_USER', 'root')),
         'password' => Env::get('DB_PASSWORD', ''),
         'charset'  => Env::get('DB_CHARSET', 'utf8mb4'),
     ],
