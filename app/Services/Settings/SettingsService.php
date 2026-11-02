@@ -22,6 +22,8 @@ final class SettingsService
             'Relay = RTP through this switch (RTPengine; SDP media IP = your switch). Direct = RTP peer-to-peer (signalling only on switch). Record = relay + record.',
         ],
         'recording_retention_days'    => ['Recording retention (days)', 'int', ''],
+        'switch_logo'                 => ['Switch logo', 'logo', 'PNG/JPG/WEBP/SVG, max 2 MB. Shown in the top navigation for all users.'],
+        'switch_name'                 => ['Switch display name', 'text', 'Optional brand name next to logo when no image is set'],
     ];
 
     /** @var array<string,string>|null */
@@ -102,6 +104,17 @@ final class SettingsService
                 return preg_match('/^\d+(\.\d{1,8})?$/', $v) ? [$v, null] : [null, "{$label} must be a non-negative decimal."];
             case 'media':
                 return in_array($v, ['direct', 'relay', 'record'], true) ? [$v, null] : [null, "{$label} must be direct, relay or record."];
+            case 'logo':
+                // Path set by controller after upload; empty keeps existing.
+                return [$v, null];
+            case 'text':
+                if ($key === 'default_currency') {
+                    return preg_match('/^[A-Z]{3}$/', strtoupper($v)) ? [strtoupper($v), null] : [null, "{$label} must be a 3-letter code."];
+                }
+                if (mb_strlen($v) > 80) {
+                    return [null, "{$label} must be at most 80 characters."];
+                }
+                return [$v, null];
             default:
                 return preg_match('/^[A-Z]{3}$/', strtoupper($v)) ? [strtoupper($v), null] : [null, "{$label} must be a 3-letter code."];
         }

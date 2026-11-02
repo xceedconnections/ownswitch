@@ -1,61 +1,240 @@
 <?php
-/** @var array $today @var int $totalCdrs @var bool $showDemo @var bool $isGlobal @var array $counts */
-$asr = \Ownswitch\Services\Reports\AsrAcdService::compute($today['attempts'], $today['answered'], 0)['asr'];
-$tile = static function (string $label, mixed $value, string $href = '', string $hint = ''): void { ?>
-    <div class="col-6 col-xl-3">
-        <div class="os-card-stat h-100">
-            <div class="card-body">
-                <div class="os-stat-label"><?= e($label) ?></div>
-                <div class="os-stat-value"><?= $href !== '' ? '<a href="' . e(url($href)) . '">' . e($value) . '</a>' : e($value) ?></div>
-                <?php if ($hint !== ''): ?><div class="small text-muted mt-1"><?= e($hint) ?></div><?php endif; ?>
-            </div>
-        </div>
-    </div>
-<?php };
+/** @var array $metrics @var bool $showDemo @var bool $isGlobal @var array $counts */
+$w = $metrics['window60'];
+$t = $metrics['today'];
+$failed = $metrics['failed24'];
+$traffic = $metrics['traffic60'];
+$daily = $metrics['daily7'];
+$routes = $metrics['routes'];
+$maxBar = 1;
+foreach ($traffic as $b) {
+    $maxBar = max($maxBar, $b['answered'] + $b['failed']);
+}
+$maxMin = 1.0;
+foreach ($daily as $d) {
+    $maxMin = max($maxMin, (float) $d['minutes']);
+}
+$acdFmt = static function (string $acd): string {
+    $s = (int) round((float) $acd);
+    return sprintf('%d:%02d', intdiv($s, 60), $s % 60);
+};
+$flowing = $w['attempts'] > 0;
 ?>
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title">Dashboard</h1>
-        <p class="os-page-sub">MagnusBilling-style ops · times in UTC</p>
+        <p class="os-page-sub">Live traffic · spend · routing · UTC</p>
     </div>
     <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>"><i class="bi bi-telephone-forward me-1"></i>CDR</a>
-        <a class="btn btn-primary btn-sm" href="<?= e(url('/users')) ?>"><i class="bi bi-people me-1"></i>Users</a>
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>">CDR</a>
+        <a class="btn btn-primary btn-sm" href="<?= e(url('/users')) ?>">Users</a>
     </div>
 </div>
 
 <?php if ($showDemo): ?>
-    <div class="alert os-demo-banner mb-3">
-        <strong>Demo data present.</strong> Rows flagged DEMO came from the seeder and are not production traffic.
-    </div>
+    <div class="alert alert-warning">Demo data is present (seeded DEMO rows).</div>
 <?php endif; ?>
 
-<div class="os-panel mb-4 p-3 p-md-4">
-    <div class="os-section-label mb-2">First call (MagnusBilling order)</div>
-    <ol class="mb-0 ps-3 small">
-        <li class="mb-1"><a href="<?= e(url('/users')) ?>">Clients → Users</a> — create user</li>
-        <li class="mb-1"><a href="<?= e(url('/rate-plans')) ?>">Rates → Plans</a> — create plan, assign on User</li>
-        <li class="mb-1"><a href="<?= e(url('/sip-users')) ?>">Clients → SIP Users</a> — softphone account</li>
-        <li class="mb-1"><a href="<?= e(url('/providers')) ?>">Routes → Providers</a> → <a href="<?= e(url('/trunks')) ?>">Trunks</a> → <a href="<?= e(url('/trunk-groups')) ?>">Trunk Groups</a></li>
-        <li class="mb-1"><a href="<?= e(url('/prefixes')) ?>">Rates → Prefixes</a> (code + name) → <a href="<?= e(url('/tariffs')) ?>">Tariffs</a> (Plan + Destination + Trunk Group + sell price)</li>
-        <li class="mb-1"><a href="<?= e(url('/provider-rates')) ?>">Routes → Provider Rates</a> — buy price</li>
-        <li class="mb-1"><a href="<?= e(url('/billing/refill')) ?>">Billing → Refills</a> — add credit</li>
-        <li>Register softphone and place a call · check <a href="<?= e(url('/cdrs')) ?>">Reports → CDR</a></li>
-    </ol>
+<div class="os-banner">
+    <div>
+        <div class="os-banner-title">
+            <span class="os-dot <?= $flowing ? 'os-dot-ok' : '' ?>" style="<?= $flowing ? '' : 'background:#c9a227' ?>"></span>
+            <?= $flowing ? 'Calls flowing' : 'Quiet right now' ?>
+        </div>
+        <div class="small text-muted mt-1">
+            <?= e(number_format($w['attempts'])) ?> attempts in 60 min ·
+            <?= e($w['asr']) ?>% answered ·
+            <?= e(number_format($counts['customers'] ?? 0)) ?> users ·
+            <?= e(number_format($counts['sip'] ?? 0)) ?> SIP
+            <?php if (($counts['openFraud'] ?? 0) > 0): ?>
+                · <a href="<?= e(url('/fraud')) ?>"><?= e((string) $counts['openFraud']) ?> fraud open</a>
+            <?php endif; ?>
+        </div>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/system/status')) ?>">System status</a>
 </div>
 
-<p class="os-section-label">Platform</p>
-<div class="row g-3 mb-4">
-    <?php $tile('Users', $counts['customers'], '/users'); ?>
-    <?php $tile('SIP Users', $counts['sip'], '/sip-users'); ?>
-    <?php $tile('Providers', $counts['carriers'] ?? ($counts['providers'] ?? '—'), '/providers'); ?>
-    <?php $tile('CDRs (all time)', $totalCdrs, '/cdrs'); ?>
+<div class="os-dash-grid os-dash-kpis mb-3">
+    <div class="os-kpi">
+        <div class="lbl">Attempts (60 min)</div>
+        <div class="val"><?= e(number_format($w['attempts'])) ?></div>
+        <div class="sub"><?= e(number_format($w['last_min'])) ?> in the last full minute</div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Answered (60 min)</div>
+        <div class="val"><?= e(number_format($w['answered'])) ?></div>
+        <div class="sub">Avg talk <?= e($acdFmt($w['acd'])) ?></div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Answer rate</div>
+        <div class="val"><?= e($w['asr']) ?>%</div>
+        <div class="sub">Today <?= e($t['asr']) ?>%</div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Spend (60 min)</div>
+        <div class="val os-mono"><?= e(fmt_money($w['spend'], 2)) ?></div>
+        <div class="sub"><?= e(fmt_money($t['spend'], 2)) ?> today</div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Users / SIP</div>
+        <div class="val"><?= e(number_format($counts['customers'] ?? 0)) ?></div>
+        <div class="sub"><?= e(number_format($counts['sip'] ?? 0)) ?> active SIP</div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Routing</div>
+        <div class="val" style="font-size:1.15rem"><?= ($metrics['trunk_groups'] ?? 0) > 0 ? 'Healthy' : 'Setup' ?></div>
+        <div class="sub"><?= e((string) ($metrics['trunk_groups'] ?? 0)) ?> trunk groups</div>
+    </div>
 </div>
 
-<p class="os-section-label">Today (UTC)</p>
-<div class="row g-3 mb-4">
-    <?php $tile('Attempts', $today['attempts']); ?>
-    <?php $tile('Answered', $today['answered']); ?>
-    <?php $tile('ASR', $asr . '%'); ?>
-    <?php $tile('Sell today', $today['revenue'] ?? '0'); ?>
+<div class="os-dash-grid os-dash-mid mb-3">
+    <div class="os-widget">
+        <div class="os-widget-h">
+            <h2 class="os-widget-title">Traffic · completed calls, last 60 minutes</h2>
+        </div>
+        <?php if (!$traffic): ?>
+            <div class="os-empty py-4"><div class="os-empty-title">No traffic yet</div><div>Bars appear as CDRs arrive.</div></div>
+        <?php else: ?>
+            <div class="os-bars" aria-hidden="true">
+                <?php foreach ($traffic as $b):
+                    $tot = $b['answered'] + $b['failed'];
+                    $h = $tot > 0 ? (100 * $tot / $maxBar) : 0;
+                    $ap = $tot > 0 ? (100 * $b['answered'] / $tot) : 0;
+                    $fp = 100 - $ap;
+                    ?>
+                    <div class="os-bar-stack" title="<?= e($b['minute'] . ': ' . $b['answered'] . ' ans / ' . $b['failed'] . ' fail') ?>">
+                        <div class="os-bar-a" style="height: <?= e((string) round($h * $ap / 100, 1)) ?>%"></div>
+                        <div class="os-bar-f" style="height: <?= e((string) round($h * $fp / 100, 1)) ?>%"></div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            <div class="os-legend">
+                <span><i style="background:var(--os-teal)"></i>Answered</span>
+                <span><i style="background:#d9e0e7"></i>Not answered</span>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="os-widget">
+        <div class="os-widget-h">
+            <h2 class="os-widget-title">Failed calls · 24 h</h2>
+            <span class="small text-muted"><?= e($failed['pct']) ?>%</span>
+        </div>
+        <div class="mb-2">
+            <strong><?= e(number_format($failed['total'])) ?></strong>
+            <span class="text-muted"> of <?= e(number_format($failed['attempts'])) ?></span>
+        </div>
+        <?php foreach ($failed['reasons'] as $reason): ?>
+            <div class="os-fail-row">
+                <div class="meta"><span><?= e($reason['label']) ?></span><span><?= e((string) $reason['pct']) ?>%</span></div>
+                <div class="os-fail-track"><div class="os-fail-fill" style="width:<?= e((string) min(100, $reason['pct'])) ?>%"></div></div>
+            </div>
+        <?php endforeach; ?>
+        <?php if (!$failed['reasons']): ?>
+            <div class="small text-muted">No failed calls in the last 24 hours.</div>
+        <?php endif; ?>
+        <div class="mt-3"><a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/reports/cdr-failed')) ?>">View failed calls</a></div>
+    </div>
+
+    <div class="os-widget">
+        <div class="os-widget-h">
+            <h2 class="os-widget-title">Routing</h2>
+            <span class="os-pill os-pill-ok">Routing <?= ($metrics['trunk_groups'] ?? 0) > 0 ? 'healthy' : 'idle' ?></span>
+        </div>
+        <?php if (!$routes): ?>
+            <div class="small text-muted mb-2">No trunk groups yet.</div>
+            <a href="<?= e(url('/trunk-groups')) ?>">Create trunk group</a>
+        <?php else: ?>
+            <?php foreach ($routes as $route): ?>
+                <div class="os-route-row">
+                    <div>
+                        <strong><?= e($route['name']) ?></strong>
+                        <span class="badge text-bg-light ms-1"><?= e($route['role']) ?></span>
+                        <div class="small text-muted"><?= e($route['status']) ?></div>
+                    </div>
+                    <div class="text-end small">
+                        <div><?= e((string) $route['share']) ?>%</div>
+                        <div class="text-muted">ASR <?= e($route['asr']) ?></div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+            <div class="mt-2"><a href="<?= e(url('/trunk-groups')) ?>">Manage routing</a></div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<div class="os-dash-grid os-dash-bottom">
+    <div class="os-widget">
+        <div class="os-widget-h">
+            <h2 class="os-widget-title">Daily usage · last 7 days</h2>
+            <div class="d-flex gap-2">
+                <a class="small" href="<?= e(url('/reports/summary-day')) ?>">All usage</a>
+                <a class="small" href="<?= e(url('/cdrs')) ?>">Call log</a>
+            </div>
+        </div>
+        <?php if (!$daily): ?>
+            <div class="os-empty py-3"><div class="os-empty-title">No usage yet</div></div>
+        <?php else: ?>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 os-table">
+                    <thead>
+                    <tr>
+                        <th>Day</th>
+                        <th class="os-num">Billed</th>
+                        <th class="os-num">Attempted</th>
+                        <th class="os-num">Answer %</th>
+                        <th>Billable min</th>
+                        <th class="os-num">Cost</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($daily as $d): ?>
+                        <tr>
+                            <td class="os-mono"><?= e($d['day']) ?></td>
+                            <td class="os-num"><?= e(number_format($d['answered'])) ?></td>
+                            <td class="os-num"><?= e(number_format($d['attempts'])) ?></td>
+                            <td class="os-num"><?= e($d['asr']) ?></td>
+                            <td>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="os-mono"><?= e((string) $d['minutes']) ?></span>
+                                    <div class="os-usage-bar flex-grow-1"><span style="width:<?= e((string) round(100 * $d['minutes'] / $maxMin)) ?>%"></span></div>
+                                </div>
+                            </td>
+                            <td class="os-num os-mono"><?= e(fmt_money($d['cost'], 2)) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="os-widget">
+        <div class="os-widget-h">
+            <h2 class="os-widget-title">Platform</h2>
+        </div>
+        <div class="row g-3">
+            <div class="col-6">
+                <div class="lbl small text-muted text-uppercase fw-bold" style="letter-spacing:.06em">Users</div>
+                <div class="fs-4 fw-bold"><a href="<?= e(url('/users')) ?>"><?= e(number_format($counts['customers'] ?? 0)) ?></a></div>
+            </div>
+            <div class="col-6">
+                <div class="lbl small text-muted text-uppercase fw-bold" style="letter-spacing:.06em">Providers</div>
+                <div class="fs-4 fw-bold"><a href="<?= e(url('/providers')) ?>"><?= e(number_format($counts['carriers'] ?? 0)) ?></a></div>
+            </div>
+            <div class="col-6">
+                <div class="lbl small text-muted text-uppercase fw-bold" style="letter-spacing:.06em">Today sell</div>
+                <div class="fs-5 fw-bold os-mono"><?= e(fmt_money($t['spend'], 2)) ?></div>
+            </div>
+            <div class="col-6">
+                <div class="lbl small text-muted text-uppercase fw-bold" style="letter-spacing:.06em">Yday by now</div>
+                <div class="fs-5 fw-bold os-mono"><?= e(fmt_money($metrics['yesterday_pace'], 2)) ?></div>
+            </div>
+        </div>
+        <div class="mt-3 d-flex flex-wrap gap-2">
+            <a class="btn btn-primary btn-sm" href="<?= e(url('/billing/refill')) ?>">Refill</a>
+            <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/reports/financial')) ?>">Financial</a>
+            <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/settings')) ?>">Settings</a>
+        </div>
+    </div>
 </div>
