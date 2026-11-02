@@ -35,7 +35,7 @@
       </select>
     </div>
     <div class="col-md-3">
-      <label class="form-label small mb-0">Owner ID (rate_plan_id / carrier_id)</label>
+      <label class="form-label small mb-0">Plan ID or Provider ID</label>
       <input type="number" name="owner_id" class="form-control form-control-sm" value="<?= (int) $owner_id ?>" min="1" required>
     </div>
     <div class="col-md-4">
