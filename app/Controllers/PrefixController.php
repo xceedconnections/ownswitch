@@ -40,7 +40,6 @@ final class PrefixController extends CrudController
                 'required' => true,
                 'readonly_on_edit' => true,
                 'list' => true,
-                'help' => 'Digits only. Used for longest-match rating and routing (Magnus-style).',
             ],
             [
                 'name' => 'destination',
@@ -48,7 +47,6 @@ final class PrefixController extends CrudController
                 'required' => true,
                 'max' => 120,
                 'list' => true,
-                'help' => 'Friendly name, e.g. USA, UK Mobile, Pakistan Mobile.',
             ],
         ];
     }

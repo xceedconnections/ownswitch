@@ -10,14 +10,14 @@ use Ownswitch\Repositories\CustomerRepository;
 use Ownswitch\Repositories\ResellerRepository;
 use Ownswitch\Support\TenantScope;
 
-/** Magnus “Users” (clients) — Ownswitch customers table. */
+/** Magnus Clients → Users — core fields only. */
 final class CustomerController extends CrudController
 {
     protected string $base = '/users';
     protected string $singular = 'User';
     protected string $plural = 'Users';
     protected array $writeRoles = ['super_admin', 'admin', 'reseller'];
-    protected string $emptyHint = 'No users yet. Magnus flow: create a User, assign Plan + Trunk Group, add SIP Users, then Refill credit.';
+    protected string $emptyHint = 'No users yet. Create User → assign Plan → add SIP User → Refill credit.';
 
     protected function repo(): BaseRepository
     {
@@ -33,7 +33,7 @@ final class CustomerController extends CrudController
     {
         $staff = $this->scope($r)->isStaff();
         $f = [
-            ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
+            ['name' => 'name', 'label' => 'Username', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'Display / account name'],
             ['name' => 'contact_email', 'label' => 'Email', 'type' => 'email', 'max' => 190, 'list' => true],
         ];
         if ($staff) {
@@ -41,33 +41,25 @@ final class CustomerController extends CrudController
             foreach ((new ResellerRepository($this->db()))->all(TenantScope::global(), [], 500, 'name') as $x) {
                 $res[$x['id']] = $x['name'];
             }
-            $f[] = ['name' => 'reseller_id', 'label' => 'Reseller', 'type' => 'select', 'options' => $res, 'list' => true];
-        }
-        array_push($f,
-            ['name' => 'billing_mode', 'label' => 'Type paid', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true],
-            ['name' => 'currency', 'label' => 'Currency', 'required' => true, 'max' => 3, 'pattern' => '/^[A-Z]{3}$/', 'default' => 'USD', 'list' => true],
-            ['name' => 'timezone', 'label' => 'Timezone', 'required' => true, 'max' => 64, 'default' => 'UTC'],
-            ['name' => 'status', 'label' => 'Active', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Suspended', 'closed' => 'Closed'], 'list' => true],
-            ['name' => 'credit_limit', 'label' => 'Credit limit', 'type' => 'number', 'default' => '0'],
-            ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true],
-        );
-        if ($staff) {
-            $plans = ['' => '— select plan —'];
+            $f[] = ['name' => 'reseller_id', 'label' => 'Group (reseller)', 'type' => 'select', 'options' => $res, 'list' => true];
+            $plans = ['' => '— select —'];
             foreach ($this->db()->query('SELECT id, name FROM rate_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
                 $plans[$p['id']] = $p['name'];
             }
-            $routes = ['' => '— select trunk group —'];
+            $routes = ['' => '— select —'];
             foreach ($this->db()->query('SELECT id, name FROM routing_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
                 $routes[$p['id']] = $p['name'];
             }
             array_push($f,
-                ['name' => 'rate_plan_id', 'label' => 'Plan', 'type' => 'select', 'options' => $plans, 'list' => true, 'help' => 'Magnus plan — Tariffs under this plan set sell price by Destination'],
-                ['name' => 'routing_plan_id', 'label' => 'Trunk group', 'type' => 'select', 'options' => $routes, 'help' => 'Default trunk group when a Tariff has none set'],
+                ['name' => 'rate_plan_id', 'label' => 'Plan', 'type' => 'select', 'options' => $plans, 'list' => true],
+                ['name' => 'routing_plan_id', 'label' => 'Trunk group', 'type' => 'select', 'options' => $routes, 'list' => true],
             );
         }
         array_push($f,
-            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Default (from Settings)', 'direct' => 'Direct', 'relay' => 'Relay (RTPengine)', 'record' => 'Record'], 'help' => 'Default follows Settings → Configuration → Default media policy.'],
-            ['name' => 'recording_enabled', 'label' => 'Record call', 'type' => 'checkbox'],
+            ['name' => 'billing_mode', 'label' => 'Type paid', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true, 'default' => 'prepaid'],
+            ['name' => 'status', 'label' => 'Active', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Inactive', 'closed' => 'Closed'], 'list' => true, 'default' => 'active'],
+            ['name' => 'credit_limit', 'label' => 'Credit limit', 'type' => 'number', 'default' => '0', 'help' => 'Postpaid'],
+            ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true],
         );
         return $f;
     }
@@ -87,6 +79,12 @@ final class CustomerController extends CrudController
             }
         }
         $data = $this->autoCode($data, $existing, 'customers');
+        if ($existing === null) {
+            $data['currency'] = $data['currency'] ?? 'USD';
+            $data['timezone'] = $data['timezone'] ?? 'UTC';
+            $data['media_policy'] = null;
+            $data['recording_enabled'] = $data['recording_enabled'] ?? 0;
+        }
         $data['is_demo'] = $existing['is_demo'] ?? 0;
         return $data;
     }

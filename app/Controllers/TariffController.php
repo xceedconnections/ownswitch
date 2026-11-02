@@ -11,8 +11,9 @@ use Ownswitch\Repositories\RatePlanRepository;
 use Ownswitch\Repositories\TariffRepository;
 
 /**
- * MagnusBilling-style Tariffs (sell) or Provider Rates (buy).
- * Destination from Prefixes; sell tariffs optionally bind a Trunk Group.
+ * Magnus Tariffs / Provider Rates field set.
+ * Sell: Plan, Destination, Trunk group, Sell price, Initial/Billing block, Connection charge, Status.
+ * Buy: Provider, Destination, Buy price, Initial/Billing block, Status.
  */
 final class TariffController extends CrudController
 {
@@ -23,8 +24,8 @@ final class TariffController extends CrudController
         $this->singular = $carrier ? 'Provider rate' : 'Tariff';
         $this->plural = $carrier ? 'Provider Rates' : 'Tariffs';
         $this->emptyHint = $carrier
-            ? 'No provider rates. Add buy rates per Prefix for each Provider.'
-            : 'No tariffs yet. Magnus: Prefixes → Tariff (Plan + Destination + Trunk Group + sell price).';
+            ? 'No provider rates. Magnus: Provider + Destination + buy price.'
+            : 'No tariffs yet. Magnus: Plan + Destination + Trunk group + sell price + blocks.';
     }
 
     protected function repo(): BaseRepository
@@ -48,7 +49,6 @@ final class TariffController extends CrudController
             $opts[$x['id']] = $x['name'];
         }
         $prefixes = (new PrefixRepository($this->db()))->options();
-        $pattern = '/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/';
         $fields = [
             [
                 'name' => $carrier ? 'carrier_id' : 'rate_plan_id',
@@ -68,9 +68,7 @@ final class TariffController extends CrudController
                 'readonly_on_edit' => true,
                 'list' => true,
                 'wide' => true,
-                'help' => $prefixes === []
-                    ? 'No Prefixes yet — create them under Rates → Prefixes first.'
-                    : 'Pick a Prefix (dial code + name).',
+                'help' => $prefixes === [] ? 'Create Prefixes first (Rates → Prefixes).' : 'From Rates → Prefixes.',
             ],
         ];
         if (!$carrier) {
@@ -80,29 +78,27 @@ final class TariffController extends CrudController
             }
             $fields[] = [
                 'name' => 'routing_plan_id',
-                'label' => 'Trunk group',
+                'label' => 'Trunk groups',
                 'type' => 'select',
                 'options' => $groups,
                 'list' => true,
-                'help' => 'Magnus trunk group for this tariff. Blank = customer’s Trunk Group.',
+                'help' => 'Trunks used to send this call. Blank = user’s Trunk Group.',
             ];
         }
-        $fields = array_merge($fields, [
+        return array_merge($fields, [
             [
                 'name' => 'rate',
-                'label' => $carrier ? 'Buy price / min' : 'Sell price / min',
+                'label' => $carrier ? 'Buy price' : 'Sell price',
                 'type' => 'number',
                 'required' => true,
                 'list' => true,
+                'help' => 'Per minute',
             ],
-            ['name' => 'initial_increment', 'label' => 'Initial block (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'list' => true, 'help' => 'Blank = use plan / trunk default'],
-            ['name' => 'subsequent_increment', 'label' => 'Billing block (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'list' => true],
-            ['name' => 'connect_fee', 'label' => 'Connection charge', 'type' => 'number', 'help' => 'Blank = inherit'],
-            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true],
-            ['name' => 'effective_from', 'label' => 'Valid from (UTC)', 'pattern' => $pattern, 'help' => 'Optional YYYY-MM-DD'],
-            ['name' => 'effective_to', 'label' => 'Valid to (UTC)', 'pattern' => $pattern],
+            ['name' => 'initial_increment', 'label' => 'Initial block', 'type' => 'int', 'min' => 1, 'max' => 86400, 'default' => '6', 'list' => true, 'help' => 'Seconds'],
+            ['name' => 'subsequent_increment', 'label' => 'Billing block', 'type' => 'int', 'min' => 1, 'max' => 86400, 'default' => '6', 'list' => true, 'help' => 'Seconds'],
+            ['name' => 'connect_fee', 'label' => 'Connection charge', 'type' => 'number', 'default' => '0'],
+            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'],
         ]);
-        return $fields;
     }
 
     protected function prepare(Request $r, array $data, ?array $existing): array
@@ -110,13 +106,22 @@ final class TariffController extends CrudController
         $prefix = (string) ($data['prefix'] ?? ($existing['prefix'] ?? ''));
         $dest = (new PrefixRepository($this->db()))->destinationFor($prefix);
         if ($dest === null) {
-            throw new \DomainException('Select a Destination from Prefixes (Rates → Prefixes).');
+            throw new \DomainException('Select a Destination from Prefixes.');
         }
         $data['prefix'] = $prefix;
         $data['destination'] = $dest;
         if ($this->kind === 'customer') {
             $tg = $data['routing_plan_id'] ?? null;
             $data['routing_plan_id'] = ($tg === null || $tg === '') ? null : (int) $tg;
+        }
+        if (($data['initial_increment'] ?? null) === null || $data['initial_increment'] === '') {
+            $data['initial_increment'] = 6;
+        }
+        if (($data['subsequent_increment'] ?? null) === null || $data['subsequent_increment'] === '') {
+            $data['subsequent_increment'] = 6;
+        }
+        if (($data['connect_fee'] ?? null) === null || $data['connect_fee'] === '') {
+            $data['connect_fee'] = '0';
         }
         return $data;
     }

@@ -53,11 +53,11 @@ final class CustomRateController extends CrudController
                 'wide' => true,
                 'help' => $prefixes === [] ? 'Create Prefixes first (Rates → Prefixes).' : 'Prefix from the global Prefixes catalogue.',
             ],
-            ['name' => 'rate', 'label' => 'Sell price / min', 'type' => 'number', 'required' => true, 'list' => true],
-            ['name' => 'initial_increment', 'label' => 'Initial block (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'list' => true],
-            ['name' => 'subsequent_increment', 'label' => 'Billing block (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'list' => true],
-            ['name' => 'connect_fee', 'label' => 'Connection charge', 'type' => 'number'],
-            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true],
+            ['name' => 'rate', 'label' => 'Sell price', 'type' => 'number', 'required' => true, 'list' => true],
+            ['name' => 'initial_increment', 'label' => 'Initial block', 'type' => 'int', 'min' => 1, 'max' => 86400, 'default' => '6', 'list' => true],
+            ['name' => 'subsequent_increment', 'label' => 'Billing block', 'type' => 'int', 'min' => 1, 'max' => 86400, 'default' => '6', 'list' => true],
+            ['name' => 'connect_fee', 'label' => 'Connection charge', 'type' => 'number', 'default' => '0'],
+            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'],
         ];
     }
 

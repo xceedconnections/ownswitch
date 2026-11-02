@@ -46,14 +46,14 @@ final class RoutingController extends CrudController
     {
         $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
         if ($this->kind === 'plans') {
+            // Magnus Trunk Groups: Name + Type
             return [
-                ['name' => 'name', 'label' => 'Trunk group name', 'required' => true, 'max' => 120, 'list' => true],
+                ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
                 ['name' => 'strategy', 'label' => 'Type', 'type' => 'select', 'required' => true, 'options' => [
-                    'priority' => 'Order / failover',
-                    'lcr' => 'Lowest cost (LCR)',
-                ], 'list' => true, 'help' => 'Magnus trunk-group order types'],
+                    'priority' => 'Order',
+                    'lcr' => 'Lowest cost',
+                ], 'list' => true, 'default' => 'priority'],
                 $status,
-                ['name' => 'description', 'label' => 'Description', 'max' => 255],
             ];
         }
         $plans = [];
@@ -66,9 +66,9 @@ final class RoutingController extends CrudController
         }
         return [
             ['name' => 'routing_plan_id', 'label' => 'Trunk group', 'type' => 'select', 'required' => true, 'options' => $plans, 'list' => true],
-            ['name' => 'prefix', 'label' => 'Prefix', 'type' => 'prefix', 'required' => true, 'list' => true, 'help' => 'Dial prefix for this route, e.g. 1 or 44'],
+            ['name' => 'prefix', 'label' => 'Prefix', 'type' => 'prefix', 'required' => true, 'list' => true],
             ['name' => 'carrier_trunk_id', 'label' => 'Trunk', 'type' => 'select', 'required' => true, 'options' => $trunks, 'list' => true],
-            ['name' => 'priority', 'label' => 'Order', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Lower = tried first (Order strategy)'],
+            ['name' => 'priority', 'label' => 'Order', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true],
             $status,
         ];
     }

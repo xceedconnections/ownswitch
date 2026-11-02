@@ -37,12 +37,12 @@ final class SipUserController extends CrudController
             $f[] = ['name' => 'customer_id', 'label' => 'User', 'type' => 'select', 'required' => true, 'options' => $this->customerOptions($r), 'readonly_on_edit' => true, 'list' => true];
         }
         array_push($f,
-            ['name' => 'username', 'label' => 'SIP username', 'required' => true, 'max' => 64, 'pattern' => '/^[A-Za-z0-9._-]{3,64}$/', 'readonly_on_edit' => true, 'list' => true, 'help' => 'Account used to register — e.g. 1001 or office1'],
-            ['name' => 'password', 'label' => 'SIP password', 'type' => 'password', 'max' => 128, 'help' => 'Leave blank to auto-generate a strong password (create) or keep current (edit). Min 12 if typed.'],
-            ['name' => 'caller_id', 'label' => 'Caller ID', 'max' => 32, 'pattern' => '/^\+?[0-9]{3,30}$/', 'list' => true],
+            ['name' => 'username', 'label' => 'SIP user', 'required' => true, 'max' => 64, 'pattern' => '/^[A-Za-z0-9._-]{3,64}$/', 'readonly_on_edit' => true, 'list' => true],
+            ['name' => 'password', 'label' => 'SIP password', 'type' => 'password', 'max' => 128, 'help' => 'Blank = auto-generate (create) or keep current (edit). Min 12 if typed.'],
+            ['name' => 'caller_id', 'label' => 'CallerID', 'max' => 32, 'pattern' => '/^\+?[0-9]{3,30}$/', 'list' => true],
             ['name' => 'max_channels', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 10000, 'required' => true, 'default' => '2', 'list' => true],
-            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true],
-            ['name' => 'notes', 'label' => 'Notes', 'max' => 255],
+            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'],
+            ['name' => 'notes', 'label' => 'Description', 'max' => 255],
         );
         return $f;
     }

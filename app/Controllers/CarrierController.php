@@ -48,42 +48,33 @@ final class CarrierController extends CrudController
     {
         $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
         if ($this->kind !== 'trunk') {
+            // Magnus Providers: Name, Description (+ Active)
             return [
-                ['name' => 'name', 'label' => 'Provider name', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'e.g. Voxbone, Bandwidth, Local DID provider'],
+                ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
+                ['name' => 'notes', 'label' => 'Description', 'type' => 'textarea', 'max' => 2000],
                 $status,
-                ['name' => 'notes', 'label' => 'Notes', 'type' => 'textarea', 'max' => 2000],
             ];
         }
         $carriers = [];
         foreach ($this->db()->query('SELECT id, name FROM carriers ORDER BY name LIMIT 500')->fetchAll() as $c) {
             $carriers[$c['id']] = $c['name'];
         }
-        $globalMedia = MediaPolicy::resolve(null, $this->db());
+        // Magnus Trunks: Provider, Name, Username, Password, Host, Codec, Register trunk, Status
         return [
             ['name' => 'carrier_id', 'label' => 'Provider', 'type' => 'select', 'required' => true, 'options' => $carriers, 'list' => true],
-            ['name' => 'name', 'label' => 'Trunk name', 'required' => true, 'max' => 120, 'list' => true],
-            ['name' => 'auth_mode', 'label' => 'Auth mode', 'type' => 'select', 'required' => true, 'list' => true, 'default' => 'ip', 'options' => [
-                'ip' => 'IP peer (no REGISTER) — vendor allowlists your public IP',
-                'register' => 'Register — Ownswitch REGISTERs to vendor (user/pass)',
-                'invite' => 'Invite digest only — auth on INVITE, no REGISTER',
-            ], 'help' => 'IP peer will NEVER show as “registered” on Magnus. That is normal. Only Register mode sends REGISTER.'],
-            ['name' => 'host', 'label' => 'SIP host / IP', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true, 'help' => 'Vendor SBC / Magnus IP or hostname'],
+            ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
+            ['name' => 'host', 'label' => 'Host', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true],
             ['name' => 'port', 'label' => 'Port', 'type' => 'int', 'min' => 1, 'max' => 65535, 'required' => true, 'default' => '5060', 'list' => true],
             ['name' => 'transport', 'label' => 'Transport', 'type' => 'select', 'required' => true, 'options' => ['udp' => 'UDP', 'tcp' => 'TCP', 'tls' => 'TLS'], 'default' => 'udp'],
-            ['name' => 'auth_username', 'label' => 'Username', 'max' => 120, 'help' => 'Required for Register / Invite digest modes'],
-            ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Encrypted at rest. Leave blank on edit to keep current password.'],
-            ['name' => 'outbound_proxy', 'label' => 'Outbound proxy (optional)', 'max' => 190, 'help' => 'Only if vendor gave a separate proxy host'],
-            ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 1, 'max' => 1000000, 'required' => true, 'default' => '100'],
-            ['name' => 'codecs', 'label' => 'Codecs', 'type' => 'multiselect', 'wide' => true, 'max' => 190, 'default' => 'PCMA,PCMU', 'options' => SipCodecs::OPTIONS, 'help' => 'Pick codecs (G.711/ulaw/alaw, G.729, …). Click × to remove.'],
-            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'default' => '', 'options' => [
-                '' => 'Default (Settings: ' . $globalMedia . ')',
-                'direct' => 'Direct',
-                'relay' => 'Relay',
-                'record' => 'Record',
-            ], 'help' => 'Default follows Settings → Default media policy. Changing that setting updates every trunk left on Default.'],
-            ['name' => 'initial_increment', 'label' => 'Buy increment I (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6'],
-            ['name' => 'subsequent_increment', 'label' => 'Buy increment S (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6'],
-            ['name' => 'connect_fee', 'label' => 'Buy connection fee', 'type' => 'number', 'default' => '0'],
+            ['name' => 'auth_mode', 'label' => 'Register trunk', 'type' => 'select', 'required' => true, 'list' => true, 'default' => 'ip', 'options' => [
+                'ip' => 'No (IP peer)',
+                'register' => 'Yes (user/pass REGISTER)',
+                'invite' => 'Invite digest only',
+            ]],
+            ['name' => 'auth_username', 'label' => 'Username', 'max' => 120],
+            ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Leave blank on edit to keep current.'],
+            ['name' => 'codecs', 'label' => 'Codec', 'type' => 'multiselect', 'wide' => true, 'max' => 190, 'default' => 'PCMA,PCMU', 'options' => SipCodecs::OPTIONS],
+            ['name' => 'max_channels', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true],
             $status,
         ];
     }
@@ -100,11 +91,13 @@ final class CarrierController extends CrudController
                     throw new \DomainException('Cannot store the secret: ' . $e->getMessage());
                 }
             }
-            $data['connect_fee'] = $data['connect_fee'] ?? '0';
             if ($existing === null) {
                 $data['priority'] = $data['priority'] ?? 100;
+                $data['connect_fee'] = $data['connect_fee'] ?? '0';
+                $data['initial_increment'] = $data['initial_increment'] ?? 6;
+                $data['subsequent_increment'] = $data['subsequent_increment'] ?? 6;
+                $data['media_policy'] = null; // inherit Settings default
             }
-            $data['media_policy'] = MediaPolicy::normalizeStored(isset($data['media_policy']) ? (string) $data['media_policy'] : null);
             if (array_key_exists('codecs', $data)) {
                 $data['codecs'] = SipCodecs::toStorage($data['codecs']);
             } elseif ($existing === null) {
