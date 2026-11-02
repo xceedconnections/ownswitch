@@ -33,7 +33,7 @@ $isEdit = $existing !== null;
             $id = 'f_' . $name;
             $err = $errors[$name] ?? null;
             $cls = 'form-control' . ($err ? ' is-invalid' : '');
-            $wide = in_array($type, ['textarea', 'password'], true) || !empty($f['wide']);
+            $wide = in_array($type, ['textarea', 'password', 'multiselect'], true) || !empty($f['wide']);
             ?>
             <div class="<?= $wide ? 'col-12' : 'col-12 col-md-6' ?>">
                 <?php if ($type === 'checkbox'): ?>
@@ -50,6 +50,43 @@ $isEdit = $existing !== null;
                                 <option value="<?= e($k) ?>"<?= ((string) $val === (string) $k) ? ' selected' : '' ?>><?= e($label) ?></option>
                             <?php endforeach; ?>
                         </select>
+                    <?php elseif ($type === 'multiselect'):
+                        $opts = $f['options'] ?? [];
+                        $selected = [];
+                        if (is_array($val)) {
+                            $selected = array_values(array_filter(array_map('strval', $val)));
+                        } else {
+                            $selected = array_values(array_filter(array_map('trim', explode(',', (string) $val)), static fn ($x) => $x !== ''));
+                        }
+                        $selected = array_values(array_filter($selected, static fn ($c) => isset($opts[$c])));
+                        ?>
+                        <div class="os-ms<?= $err ? ' is-invalid' : '' ?>" data-os-multiselect data-name="<?= e($name) ?>"<?= $readonly ? ' data-readonly="1"' : '' ?>>
+                            <input type="hidden" name="<?= e($name) ?>" id="<?= e($id) ?>" value="<?= e(implode(',', $selected)) ?>">
+                            <div class="os-ms-chips" data-chips>
+                                <?php foreach ($selected as $code): ?>
+                                    <span class="os-ms-chip" data-value="<?= e($code) ?>">
+                                        <span class="os-ms-chip-label"><?= e($opts[$code] ?? $code) ?></span>
+                                        <?php if (!$readonly): ?>
+                                            <button type="button" class="os-ms-chip-x" data-remove aria-label="Remove <?= e($code) ?>">&times;</button>
+                                        <?php endif; ?>
+                                    </span>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php if (!$readonly): ?>
+                                <select class="form-select form-select-sm os-ms-add" data-add aria-label="Add <?= e($f['label']) ?>">
+                                    <option value="">+ Add codec…</option>
+                                    <?php foreach ($opts as $k => $label): ?>
+                                        <option value="<?= e($k) ?>"<?= in_array((string) $k, $selected, true) ? ' disabled' : '' ?>><?= e($label) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            <?php endif; ?>
+                            <template data-chip-tpl>
+                                <span class="os-ms-chip" data-value="">
+                                    <span class="os-ms-chip-label"></span>
+                                    <button type="button" class="os-ms-chip-x" data-remove aria-label="Remove">&times;</button>
+                                </span>
+                            </template>
+                        </div>
                     <?php elseif ($type === 'textarea'): ?>
                         <textarea class="<?= e($cls) ?>" id="<?= e($id) ?>" name="<?= e($name) ?>" rows="3"<?= isset($f['max']) ? ' maxlength="' . (int) $f['max'] . '"' : '' ?>><?= e($val) ?></textarea>
                     <?php else:

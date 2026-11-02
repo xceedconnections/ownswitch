@@ -21,6 +21,6 @@ final class CarrierRepository extends BaseRepository
             ['carrier_id', 'name', 'host', 'port', 'transport', 'auth_username', 'auth_secret_enc', 'auth_mode', 'outbound_proxy',
                 'register_status', 'register_checked_at', 'max_channels', 'codecs', 'media_policy',
                 'initial_increment', 'subsequent_increment', 'default_rate', 'connect_fee', 'priority', 'status'],
-            'none', ['name', 'host'], ['id', 'name', 'host', 'auth_mode', 'status', 'priority', 'carrier_id']);
+            'none', ['name', 'host'], ['id', 'name', 'host', 'auth_mode', 'status', 'carrier_id']);
     }
 }

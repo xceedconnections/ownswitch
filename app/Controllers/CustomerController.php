@@ -65,7 +65,7 @@ final class CustomerController extends CrudController
             );
         }
         array_push($f,
-            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Global default', 'direct' => 'Direct', 'relay' => 'Relay (RTPengine)', 'record' => 'Record']],
+            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Default (from Settings)', 'direct' => 'Direct', 'relay' => 'Relay (RTPengine)', 'record' => 'Record'], 'help' => 'Default follows Settings → Default media policy.'],
             ['name' => 'recording_enabled', 'label' => 'Allow recording', 'type' => 'checkbox'],
         );
         return $f;

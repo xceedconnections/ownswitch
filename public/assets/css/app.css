@@ -452,9 +452,58 @@ a:hover { text-decoration: none; }
   font-size: .78rem;
 }
 
+/* Multi-select chips (codecs) — Magnus-style tags with × */
+.os-ms {
+  border: 1px solid var(--os-line);
+  border-radius: .7rem;
+  background: #fff;
+  padding: .5rem .6rem .55rem;
+}
+.os-ms.is-invalid { border-color: #dc3545; }
+.os-ms-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  min-height: 1.6rem;
+  margin-bottom: .45rem;
+}
+.os-ms-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  max-width: 100%;
+  padding: .2rem .35rem .2rem .55rem;
+  border-radius: .45rem;
+  background: #ecfdf8;
+  border: 1px solid #99f6e4;
+  color: #0f766e;
+  font-size: .82rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.os-ms-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.os-ms-chip-x {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #0f766e;
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 .2rem;
+  cursor: pointer;
+  border-radius: .25rem;
+}
+.os-ms-chip-x:hover { background: rgba(15, 118, 110, .12); color: #115e59; }
+.os-ms-add { max-width: 280px; }
+
 /* Mobile tweaks */
 @media (max-width: 575.98px) {
   .os-stat-value { font-size: 1.25rem; }
   .os-page-title { font-size: 1.25rem; }
   .os-table td, .os-table th { padding: .55rem .65rem; }
+  .os-ms-add { max-width: 100%; }
 }

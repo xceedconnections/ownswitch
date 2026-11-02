@@ -6,7 +6,7 @@ namespace Ownswitch\Support;
 
 /**
  * Field-spec driven validation used by generic CRUD controllers.
- * Spec keys: name,label,type(text|email|number|int|select|checkbox|textarea|password|prefix|ip|hidden),
+ * Spec keys: name,label,type(text|email|number|int|select|checkbox|textarea|password|prefix|ip|hidden|multiselect),
  * required,max,min,options(array value=>label),pattern,default,help,list(bool),readonly_on_edit
  */
 final class Validator
@@ -29,6 +29,34 @@ final class Validator
             }
             if ($type === 'checkbox') {
                 $data[$name] = !empty($input[$name]) ? 1 : 0;
+                continue;
+            }
+            if ($type === 'multiselect') {
+                $raw = $input[$name] ?? ($input[$name . '_csv'] ?? null);
+                if (is_array($raw)) {
+                    $parts = $raw;
+                } else {
+                    $parts = preg_split('/[\s,;|]+/', trim((string) ($raw ?? ''))) ?: [];
+                }
+                $allowed = array_map('strval', array_keys($f['options'] ?? []));
+                $picked = [];
+                foreach ($parts as $p) {
+                    $p = trim((string) $p);
+                    if ($p === '' || !in_array($p, $allowed, true) || in_array($p, $picked, true)) {
+                        continue;
+                    }
+                    $picked[] = $p;
+                }
+                if ($picked === [] && !empty($f['required'])) {
+                    $errors[$name] = "{$label} is required.";
+                    continue;
+                }
+                $joined = implode(',', $picked);
+                if (isset($f['max']) && mb_strlen($joined) > (int) $f['max']) {
+                    $errors[$name] = "{$label} is too long.";
+                    continue;
+                }
+                $data[$name] = $picked === [] ? ($f['default_empty'] ?? null) : $joined;
                 continue;
             }
             $raw = $input[$name] ?? null;

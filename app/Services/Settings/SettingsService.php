@@ -21,7 +21,7 @@ final class SettingsService
         'charge_connect_on_zero'      => ['Charge connection fee on zero-duration calls', 'bool', 'Default off'],
         'rating_tolerance'            => ['Rating discrepancy tolerance', 'decimal', 'Flag when |CGRateS - portal| exceeds this'],
         'prepaid_hard_cap_seconds'    => ['Prepaid hard max call duration (s)', 'int', ''],
-        'default_media_policy'        => ['Default media policy', 'media', 'direct | relay | record'],
+        'default_media_policy'        => ['Default media policy', 'media', 'Used by every trunk/customer with Media = Default. Changing this updates them immediately (no per-trunk copy).'],
         'recording_retention_days'    => ['Recording retention (days)', 'int', ''],
     ];
 

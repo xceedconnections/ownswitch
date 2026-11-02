@@ -51,4 +51,56 @@
         form.addEventListener('input', calc);
         calc();
     }
+
+    /* Magnus-style multi-select chips (codecs, etc.) — textContent only, no innerHTML */
+    document.querySelectorAll('[data-os-multiselect]').forEach(function (wrap) {
+        if (wrap.getAttribute('data-readonly') === '1') { return; }
+        var hidden = wrap.querySelector('input[type="hidden"]');
+        var chips = wrap.querySelector('[data-chips]');
+        var add = wrap.querySelector('[data-add]');
+        var tpl = wrap.querySelector('[data-chip-tpl]');
+        if (!hidden || !chips || !add || !tpl) { return; }
+
+        var sync = function () {
+            var vals = [];
+            chips.querySelectorAll('.os-ms-chip').forEach(function (chip) {
+                var v = chip.getAttribute('data-value');
+                if (v) { vals.push(v); }
+            });
+            hidden.value = vals.join(',');
+            Array.prototype.forEach.call(add.options, function (opt) {
+                if (!opt.value) { return; }
+                opt.disabled = vals.indexOf(opt.value) !== -1;
+            });
+            add.value = '';
+        };
+
+        add.addEventListener('change', function () {
+            var v = add.value;
+            if (!v) { return; }
+            var already = false;
+            chips.querySelectorAll('.os-ms-chip').forEach(function (chip) {
+                if (chip.getAttribute('data-value') === v) { already = true; }
+            });
+            if (already) { sync(); return; }
+            var label = add.options[add.selectedIndex] ? add.options[add.selectedIndex].textContent : v;
+            var node = tpl.content.firstElementChild.cloneNode(true);
+            node.setAttribute('data-value', v);
+            node.querySelector('.os-ms-chip-label').textContent = label;
+            var btn = node.querySelector('[data-remove]');
+            if (btn) { btn.setAttribute('aria-label', 'Remove ' + v); }
+            chips.appendChild(node);
+            sync();
+        });
+
+        chips.addEventListener('click', function (ev) {
+            var btn = ev.target.closest('[data-remove]');
+            if (!btn || !chips.contains(btn)) { return; }
+            var chip = btn.closest('.os-ms-chip');
+            if (chip) { chip.remove(); }
+            sync();
+        });
+
+        sync();
+    });
 })();

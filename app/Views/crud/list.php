@@ -16,6 +16,12 @@ $cell = static function (array $f, mixed $v): string {
         }
         return e($label);
     }
+    if (($f['type'] ?? '') === 'multiselect' && is_string($v)) {
+        return e($v);
+    }
+    if (($f['name'] ?? '') === 'media_policy' && ($v === null || $v === '')) {
+        return e((string) ($f['options'][''] ?? 'Default'));
+    }
     if (($f['type'] ?? '') === 'number') {
         return '<span class="os-mono">' . e($v) . '</span>';
     }

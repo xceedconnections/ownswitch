@@ -11,6 +11,8 @@ use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
 use Ownswitch\Services\Routing\OpensipsRoutingSync;
 use Ownswitch\Support\Crypto;
+use Ownswitch\Support\MediaPolicy;
+use Ownswitch\Support\SipCodecs;
 
 /**
  * Providers (kind=carrier) and SIP trunks (kind=trunk).
@@ -48,7 +50,6 @@ final class CarrierController extends CrudController
         if ($this->kind !== 'trunk') {
             return [
                 ['name' => 'name', 'label' => 'Provider name', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'e.g. Voxbone, Bandwidth, Local DID provider'],
-                ['name' => 'contact_email', 'label' => 'Contact email', 'type' => 'email', 'max' => 190],
                 $status,
                 ['name' => 'notes', 'label' => 'Notes', 'type' => 'textarea', 'max' => 2000],
             ];
@@ -57,6 +58,7 @@ final class CarrierController extends CrudController
         foreach ($this->db()->query('SELECT id, name FROM carriers ORDER BY name LIMIT 500')->fetchAll() as $c) {
             $carriers[$c['id']] = $c['name'];
         }
+        $globalMedia = MediaPolicy::resolve(null, $this->db());
         return [
             ['name' => 'carrier_id', 'label' => 'Provider', 'type' => 'select', 'required' => true, 'options' => $carriers, 'list' => true],
             ['name' => 'name', 'label' => 'Trunk name', 'required' => true, 'max' => 120, 'list' => true],
@@ -72,13 +74,16 @@ final class CarrierController extends CrudController
             ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Encrypted at rest. Leave blank on edit to keep current password.'],
             ['name' => 'outbound_proxy', 'label' => 'Outbound proxy (optional)', 'max' => 190, 'help' => 'Only if vendor gave a separate proxy host'],
             ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 1, 'max' => 1000000, 'required' => true, 'default' => '100'],
-            ['name' => 'codecs', 'label' => 'Codecs', 'max' => 190, 'default' => 'PCMA,PCMU', 'help' => 'Comma-separated, e.g. PCMA,PCMU,G729'],
-            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Inherit', 'direct' => 'Direct', 'relay' => 'Relay', 'record' => 'Record']],
+            ['name' => 'codecs', 'label' => 'Codecs', 'type' => 'multiselect', 'wide' => true, 'max' => 190, 'default' => 'PCMA,PCMU', 'options' => SipCodecs::OPTIONS, 'help' => 'Pick codecs (G.711/ulaw/alaw, G.729, …). Click × to remove.'],
+            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'default' => '', 'options' => [
+                '' => 'Default (Settings: ' . $globalMedia . ')',
+                'direct' => 'Direct',
+                'relay' => 'Relay',
+                'record' => 'Record',
+            ], 'help' => 'Default follows Settings → Default media policy. Changing that setting updates every trunk left on Default.'],
             ['name' => 'initial_increment', 'label' => 'Buy increment I (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6'],
             ['name' => 'subsequent_increment', 'label' => 'Buy increment S (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6'],
-            ['name' => 'default_rate', 'label' => 'Fallback buy rate / min', 'type' => 'number'],
             ['name' => 'connect_fee', 'label' => 'Buy connection fee', 'type' => 'number', 'default' => '0'],
-            ['name' => 'priority', 'label' => 'Priority', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Lower = tried first'],
             $status,
         ];
     }
@@ -96,6 +101,15 @@ final class CarrierController extends CrudController
                 }
             }
             $data['connect_fee'] = $data['connect_fee'] ?? '0';
+            if ($existing === null) {
+                $data['priority'] = $data['priority'] ?? 100;
+            }
+            $data['media_policy'] = MediaPolicy::normalizeStored(isset($data['media_policy']) ? (string) $data['media_policy'] : null);
+            if (array_key_exists('codecs', $data)) {
+                $data['codecs'] = SipCodecs::toStorage($data['codecs']);
+            } elseif ($existing === null) {
+                $data['codecs'] = SipCodecs::toStorage('PCMA,PCMU');
+            }
             $mode = (string) ($data['auth_mode'] ?? 'ip');
             if (in_array($mode, ['register', 'invite'], true)) {
                 $user = trim((string) ($data['auth_username'] ?? ($existing['auth_username'] ?? '')));
@@ -103,9 +117,6 @@ final class CarrierController extends CrudController
                 if ($user === '' || (!$hasSecret && $existing === null)) {
                     throw new \DomainException('Register / Invite digest modes require Username and Password.');
                 }
-            }
-            if ($mode === 'ip') {
-                // keep credentials optional for IP peers
             }
         } else {
             $data = $this->autoCode($data, $existing, 'carriers');
@@ -163,5 +174,20 @@ final class CarrierController extends CrudController
                 App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
             }
         }
+    }
+
+    protected function formValues(Request $r, ?array $existing, array $values): array
+    {
+        if ($this->kind !== 'trunk') {
+            return $values;
+        }
+        if (array_key_exists('codecs', $values) || $existing === null) {
+            $raw = $values['codecs'] ?? ($existing['codecs'] ?? 'PCMA,PCMU');
+            $values['codecs'] = SipCodecs::toStorage($raw) ?? 'PCMA,PCMU';
+        }
+        if (MediaPolicy::isDefault(isset($values['media_policy']) ? (string) $values['media_policy'] : null)) {
+            $values['media_policy'] = '';
+        }
+        return $values;
     }
 }

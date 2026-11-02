@@ -245,9 +245,22 @@ abstract class CrudController extends BaseController
     /** @param array<string,mixed>|null $existing @param array<string,mixed> $values @param array<string,string> $errors */
     protected function form(Request $r, ?array $existing, array $values, array $errors, int $status = 200): Response
     {
+        $values = $this->formValues($r, $existing, $values);
         return $this->view('crud/form', [
             'title' => ($existing ? 'Edit ' : 'New ') . $this->singular, 'base' => $this->base, 'singular' => $this->singular,
             'fields' => $this->fields($r), 'values' => $values, 'errors' => $errors, 'existing' => $existing,
         ] + $this->extra($r), $status);
+    }
+
+    /**
+     * Hook: normalise values before the form renders (aliases, defaults, etc.).
+     *
+     * @param array<string,mixed>|null $existing
+     * @param array<string,mixed> $values
+     * @return array<string,mixed>
+     */
+    protected function formValues(Request $r, ?array $existing, array $values): array
+    {
+        return $values;
     }
 }
