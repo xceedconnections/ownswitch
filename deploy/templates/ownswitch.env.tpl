@@ -25,7 +25,9 @@ DB_PASSWORD=@@MYSQL_OWNSWITCH_PASSWORD@@
 DB_NAME=@@DB_OWNSWITCH@@
 DB_USER=ownswitch
 
-# --- OpenSIPS database (provisioning projection only; portal writes via controlled provisioner) ---
+# --- OpenSIPS (portal provisions subscriber/address/drouting into this DB) ---
+OPENSIPS_ENABLED=1
+OPENSIPS_SIP_DOMAIN=@@OWNSWITCH_DOMAIN@@
 OPENSIPS_DB_HOST=127.0.0.1
 OPENSIPS_DB_PORT=3306
 OPENSIPS_DB_DATABASE=@@DB_OPENSIPS@@
@@ -35,6 +37,7 @@ OPENSIPS_DB_NAME=@@DB_OPENSIPS@@
 OPENSIPS_DB_USER=opensips
 OPENSIPS_MI_FIFO=@@OPENSIPS_FIFO@@
 OPENSIPS_MI_HTTP_URL=@@OPENSIPS_MI_HTTP_URL@@
+OPENSIPS_MI_URL=@@OPENSIPS_MI_HTTP_URL@@
 OPENSIPS_SIP_PORT=@@SIP_PORT@@
 
 # --- CGRateS (JSON-RPC over loopback only) ---

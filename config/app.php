@@ -26,14 +26,16 @@ return [
 
     'integrations' => [
         'opensips' => [
-            'enabled'    => (bool) Env::get('OPENSIPS_ENABLED', false),
-            'sip_domain' => Env::get('OPENSIPS_SIP_DOMAIN', 'sip.example.test'),
-            'mi_url'     => Env::get('OPENSIPS_MI_URL', ''),
+            // Accept 1/true/yes; fall back to enabled when OpenSIPS DB password exists (legacy installs).
+            'enabled'    => (bool) Env::get('OPENSIPS_ENABLED', Env::get('OPENSIPS_DB_PASSWORD', '') !== ''),
+            'sip_domain' => (string) (Env::get('OPENSIPS_SIP_DOMAIN')
+                ?: (parse_url((string) Env::get('APP_URL', ''), PHP_URL_HOST) ?: 'localhost')),
+            'mi_url'     => (string) (Env::get('OPENSIPS_MI_URL') ?: Env::get('OPENSIPS_MI_HTTP_URL', '')),
             'db' => [
                 'host'     => Env::get('OPENSIPS_DB_HOST', '127.0.0.1'),
                 'port'     => (int) Env::get('OPENSIPS_DB_PORT', 3306),
-                'database' => Env::get('OPENSIPS_DB_DATABASE', 'opensips'),
-                'username' => Env::get('OPENSIPS_DB_USERNAME', ''),
+                'database' => Env::get('OPENSIPS_DB_DATABASE', Env::get('OPENSIPS_DB_NAME', 'opensips')),
+                'username' => Env::get('OPENSIPS_DB_USERNAME', Env::get('OPENSIPS_DB_USER', '')),
                 'password' => Env::get('OPENSIPS_DB_PASSWORD', ''),
             ],
         ],

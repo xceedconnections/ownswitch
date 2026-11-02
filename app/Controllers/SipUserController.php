@@ -62,7 +62,12 @@ final class SipUserController extends CrudController
             $username = (string) $data['username'];
         } else {
             $username = (string) $existing['username'];
-            $domain = (string) $existing['domain'];
+            // Password change: re-bind HA1 to the configured SIP domain/realm (must match OpenSIPS www_authorize).
+            if ($pw !== null && $pw !== '') {
+                $data['domain'] = $domain;
+            } else {
+                $domain = (string) $existing['domain'];
+            }
         }
         if ($pw !== null && $pw !== '') {
             [$ha1, $ha1b] = OpensipsProvisioner::ha1($username, $domain, (string) $pw);
