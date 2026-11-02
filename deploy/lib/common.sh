@@ -181,9 +181,16 @@ init_config() {
   : "${CGRATES_BIN_TARBALL_URL:=}"
   : "${CGRATES_BIN_TARBALL_SHA256:=}"
   : "${OPENSIPS_VERSION_SERIES:=3.6}"
-  : "${MYSQL_INSTALL_METHOD:=apt-config}"           # apt-config | direct
-  : "${MYSQL_APT_CONFIG_VERSION:=0.8.33-1}"
+  # "direct" imports a fresh keyring (avoids EXPKEYSIG from stale mysql-apt-config packages).
+  : "${MYSQL_INSTALL_METHOD:=direct}"               # direct | apt-config
+  # 0.8.40+ embeds the renewed MySQL APT signing key (older builds hit EXPKEYSIG B7B3B788A8D3785C).
+  : "${MYSQL_APT_CONFIG_VERSION:=0.8.40-1}"
   : "${MYSQL_APT_CONFIG_SHA256:=}"
+  # Upgrade persisted stale values from earlier installer runs.
+  case "${MYSQL_APT_CONFIG_VERSION}" in
+    0.8.3[0-9]-*|0.8.2*|0.8.1*|0.8.0*) MYSQL_APT_CONFIG_VERSION="0.8.40-1" ;;
+  esac
+  [[ "${MYSQL_INSTALL_METHOD}" == "apt-config" && "${FORCE_MYSQL_DIRECT:-0}" == "1" ]] && MYSQL_INSTALL_METHOD="direct"
   : "${MYSQL_OPENSIPS_AUTH_PLUGIN:=mysql_native_password}"
   : "${MYSQL_BUFFER_POOL_PCT:=25}"
   : "${REDIS_CGR_DB:=10}"
