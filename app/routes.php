@@ -6,12 +6,15 @@ use Ownswitch\Controllers\AuthController;
 use Ownswitch\Controllers\BillingController;
 use Ownswitch\Controllers\CarrierController;
 use Ownswitch\Controllers\CdrController;
+use Ownswitch\Controllers\CustomRateController;
 use Ownswitch\Controllers\CustomerController;
 use Ownswitch\Controllers\DashboardController;
 use Ownswitch\Controllers\FraudController;
 use Ownswitch\Controllers\InvoiceController;
 use Ownswitch\Controllers\IpAuthController;
 use Ownswitch\Controllers\LedgerController;
+use Ownswitch\Controllers\ModuleScaffoldController;
+use Ownswitch\Controllers\PrefixController;
 use Ownswitch\Controllers\RatePlanController;
 use Ownswitch\Controllers\RecordingController;
 use Ownswitch\Controllers\ReportController;
@@ -20,9 +23,9 @@ use Ownswitch\Controllers\RoutingController;
 use Ownswitch\Controllers\SettingsController;
 use Ownswitch\Controllers\SipUserController;
 use Ownswitch\Controllers\SystemController;
-use Ownswitch\Controllers\PrefixController;
 use Ownswitch\Controllers\TariffController;
 use Ownswitch\Controllers\TariffImportController;
+use Ownswitch\Http\Response;
 use Ownswitch\Router;
 use Ownswitch\Support\Menu;
 
@@ -54,16 +57,23 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/account/password', [AuthController::class, 'passwordForm']);
     $r->post('/account/password', [AuthController::class, 'passwordChange']);
 
-    // Customers & access
-    $crud($r, '/customers', new CustomerController(), $role(Menu::RESELLER_UP));
+    // Clients — Magnus Users (+ legacy /customers redirects)
+    $users = new CustomerController();
+    $crud($r, '/users', $users, $role(Menu::RESELLER_UP));
+    $r->get('/customers', static fn () => Response::redirect(url('/users')));
+    $r->get('/customers/create', static fn () => Response::redirect(url('/users/create')));
+    $r->get('/customers/{id}/edit', static function ($req, array $p) {
+        return Response::redirect(url('/users/' . (int) $p['id'] . '/edit'));
+    });
     $crud($r, '/resellers', new ResellerController(), $STAFF);
     $crud($r, '/sip-users', new SipUserController(), $role(Menu::SIP_USERS));
-    $crud($r, '/ip-auth', new IpAuthController(), $role(Menu::SIP_USERS));
+    $crud($r, '/ip-auth', new IpAuthController(), $role(Menu::SIP_USERS)); // CallerID / IP allowlist
 
-    // Rates (Magnus: Plans → Tariffs → Prefixes)
+    // Rates
     $crud($r, '/rate-plans', new RatePlanController(), $STAFF);
     $crud($r, '/prefixes', new PrefixController(), $STAFF);
     $crud($r, '/tariffs', new TariffController('customer'), $STAFF);
+    $crud($r, '/custom-rates', new CustomRateController(), $STAFF);
     $crud($r, '/carrier-tariffs', new TariffController('carrier'), $STAFF);
     $ti = new TariffImportController();
     $r->get('/tariffs/import', [$ti, 'form'], [$STAFF]);
@@ -71,7 +81,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->post('/tariffs/import/preview', [$ti, 'preview'], [$STAFF]);
     $r->post('/tariffs/import/commit', [$ti, 'commit'], [$STAFF]);
 
-    // Routes (Magnus: Providers → Trunks → Trunk Groups)
+    // Routes
     $crud($r, '/carriers', new CarrierController('carrier'), $STAFF);
     $crud($r, '/trunks', new CarrierController('trunk'), $STAFF);
     $sim = new RoutingController('rules');
@@ -80,7 +90,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $crud($r, '/routing/plans', new RoutingController('plans'), $STAFF);
     $crud($r, '/routing', $sim, $STAFF);
 
-    // CDR & reports
+    // Reports
     $cdr = new CdrController();
     $all = $role(Menu::ALL);
     $r->get('/cdrs', [$cdr, 'index'], [$all]);
@@ -105,7 +115,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->post('/invoices/generate', [$inv, 'generate'], [$role(Menu::RESELLER_UP)]);
     $r->get('/invoices/{id}', [$inv, 'show'], [$invRoles]);
 
-    // Media & fraud
+    // Media & fraud (under Reports in menu)
     $rec = new RecordingController();
     $recRoles = $role(['super_admin', 'admin', 'reseller', 'customer_owner']);
     $r->get('/recordings', [$rec, 'index'], [$recRoles]);
@@ -115,9 +125,12 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->post('/fraud/scan', [$fraud, 'scan'], [$STAFF]);
     $r->post('/fraud/{id}/ack', [$fraud, 'acknowledge'], [$role(Menu::RESELLER_UP)]);
 
-    // System
+    // Settings
     $r->get('/system/status', [new SystemController(), 'status'], [$STAFF]);
     $settings = new SettingsController();
     $r->get('/settings', [$settings, 'edit'], [$STAFF]);
     $r->post('/settings', [$settings, 'update'], [$STAFF]);
+
+    // Magnus scaffold modules (every remaining menu item)
+    $r->get('/modules/{slug}', [new ModuleScaffoldController(), 'show'], [$STAFF]);
 });

@@ -10,13 +10,14 @@ use Ownswitch\Repositories\CustomerRepository;
 use Ownswitch\Repositories\ResellerRepository;
 use Ownswitch\Support\TenantScope;
 
+/** Magnus “Users” (clients) — Ownswitch customers table. */
 final class CustomerController extends CrudController
 {
-    protected string $base = '/customers';
-    protected string $singular = 'Customer';
-    protected string $plural = 'Customers';
+    protected string $base = '/users';
+    protected string $singular = 'User';
+    protected string $plural = 'Users';
     protected array $writeRoles = ['super_admin', 'admin', 'reseller'];
-    protected string $emptyHint = 'No customers yet. Create a customer, assign a Plan, then add SIP Users or IP Auth.';
+    protected string $emptyHint = 'No users yet. Magnus flow: create a User, assign Plan + Trunk Group, add SIP Users, then Refill credit.';
 
     protected function repo(): BaseRepository
     {
@@ -32,7 +33,7 @@ final class CustomerController extends CrudController
     {
         $staff = $this->scope($r)->isStaff();
         $f = [
-            ['name' => 'name', 'label' => 'Customer name', 'required' => true, 'max' => 120, 'list' => true],
+            ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
             ['name' => 'contact_email', 'label' => 'Email', 'type' => 'email', 'max' => 190, 'list' => true],
         ];
         if ($staff) {
@@ -43,11 +44,11 @@ final class CustomerController extends CrudController
             $f[] = ['name' => 'reseller_id', 'label' => 'Reseller', 'type' => 'select', 'options' => $res, 'list' => true];
         }
         array_push($f,
-            ['name' => 'billing_mode', 'label' => 'Billing type', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true],
+            ['name' => 'billing_mode', 'label' => 'Type paid', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true],
             ['name' => 'currency', 'label' => 'Currency', 'required' => true, 'max' => 3, 'pattern' => '/^[A-Z]{3}$/', 'default' => 'USD', 'list' => true],
             ['name' => 'timezone', 'label' => 'Timezone', 'required' => true, 'max' => 64, 'default' => 'UTC'],
-            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Suspended', 'closed' => 'Closed'], 'list' => true],
-            ['name' => 'credit_limit', 'label' => 'Credit limit (postpaid)', 'type' => 'number', 'default' => '0'],
+            ['name' => 'status', 'label' => 'Active', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Suspended', 'closed' => 'Closed'], 'list' => true],
+            ['name' => 'credit_limit', 'label' => 'Credit limit', 'type' => 'number', 'default' => '0'],
             ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true],
         );
         if ($staff) {
@@ -55,18 +56,18 @@ final class CustomerController extends CrudController
             foreach ($this->db()->query('SELECT id, name FROM rate_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
                 $plans[$p['id']] = $p['name'];
             }
-            $routes = ['' => '— select route group —'];
+            $routes = ['' => '— select trunk group —'];
             foreach ($this->db()->query('SELECT id, name FROM routing_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
                 $routes[$p['id']] = $p['name'];
             }
             array_push($f,
                 ['name' => 'rate_plan_id', 'label' => 'Plan', 'type' => 'select', 'options' => $plans, 'list' => true, 'help' => 'Magnus plan — Tariffs under this plan set sell price by Destination'],
-                ['name' => 'routing_plan_id', 'label' => 'Trunk group', 'type' => 'select', 'options' => $routes, 'help' => 'Magnus trunk group — which trunks are tried for outbound calls'],
+                ['name' => 'routing_plan_id', 'label' => 'Trunk group', 'type' => 'select', 'options' => $routes, 'help' => 'Default trunk group when a Tariff has none set'],
             );
         }
         array_push($f,
-            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Default (from Settings)', 'direct' => 'Direct', 'relay' => 'Relay (RTPengine)', 'record' => 'Record'], 'help' => 'Default follows Settings → Default media policy.'],
-            ['name' => 'recording_enabled', 'label' => 'Allow recording', 'type' => 'checkbox'],
+            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Default (from Settings)', 'direct' => 'Direct', 'relay' => 'Relay (RTPengine)', 'record' => 'Record'], 'help' => 'Default follows Settings → Configuration → Default media policy.'],
+            ['name' => 'recording_enabled', 'label' => 'Record call', 'type' => 'checkbox'],
         );
         return $f;
     }

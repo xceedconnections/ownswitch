@@ -7,13 +7,15 @@ $roleLabels = [
 ];
 $icons = [
     '/' => 'bi-speedometer2',
+    '/users' => 'bi-people',
     '/customers' => 'bi-people',
     '/resellers' => 'bi-diagram-3',
     '/sip-users' => 'bi-person-badge',
-    '/ip-auth' => 'bi-shield-lock',
+    '/ip-auth' => 'bi-telephone-inbound',
     '/rate-plans' => 'bi-tags',
     '/prefixes' => 'bi-hash',
     '/tariffs' => 'bi-currency-dollar',
+    '/custom-rates' => 'bi-sliders',
     '/carrier-tariffs' => 'bi-cash-stack',
     '/tariffs/import' => 'bi-filetype-csv',
     '/carriers' => 'bi-hdd-network',
@@ -33,6 +35,15 @@ $icons = [
     '/system/status' => 'bi-activity',
     '/settings' => 'bi-gear',
 ];
+$iconFor = static function (string $path) use ($icons): string {
+    if (isset($icons[$path])) {
+        return $icons[$path];
+    }
+    if (str_starts_with($path, '/modules/')) {
+        return 'bi-grid';
+    }
+    return 'bi-circle';
+};
 $initials = static function (string $name): string {
     $parts = preg_split('/\s+/', trim($name)) ?: [];
     $a = strtoupper(substr($parts[0] ?? 'U', 0, 1));
@@ -96,7 +107,7 @@ $initials = static function (string $name): string {
                     <div class="os-nav-section"><?= e($section['label']) ?></div>
                     <ul class="nav flex-column mb-1">
                         <?php foreach ($section['items'] as $item):
-                            $icon = $icons[$item['path']] ?? 'bi-circle';
+                            $icon = $iconFor($item['path']);
                             ?>
                             <li class="nav-item">
                                 <a class="nav-link os-nav-link<?= nav_active($item['path']) ?>" href="<?= e(url($item['path'])) ?>">

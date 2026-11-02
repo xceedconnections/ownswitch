@@ -12,8 +12,8 @@ final class TariffRepository extends BaseRepository
     public static function customer(PDO $pdo): self
     {
         return new self($pdo, 'rate_plan_tariffs',
-            ['rate_plan_id', 'prefix', 'destination', 'rate', 'initial_increment', 'subsequent_increment', 'connect_fee', 'status', 'effective_from', 'effective_to', 'version_id'],
-            'none', ['prefix', 'destination'], ['id', 'prefix', 'destination', 'rate', 'status']);
+            ['rate_plan_id', 'prefix', 'destination', 'routing_plan_id', 'rate', 'initial_increment', 'subsequent_increment', 'connect_fee', 'status', 'effective_from', 'effective_to', 'version_id'],
+            'none', ['prefix', 'destination'], ['id', 'prefix', 'destination', 'rate', 'status', 'routing_plan_id']);
     }
 
     public static function carrier(PDO $pdo): self

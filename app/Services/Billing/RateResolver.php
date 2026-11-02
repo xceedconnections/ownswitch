@@ -23,7 +23,7 @@ final class RateResolver
 
     /**
      * @return array{rate:string,initial:int,subsequent:int,connect_fee:string,min_billable:int,charge_connect_on_zero:bool,
-     *   prefix:string,destination:?string,source:string,rate_plan_id:int,version_id:?int,currency:string}|null
+     *   prefix:string,destination:?string,source:string,rate_plan_id:int,version_id:?int,currency:string,routing_plan_id:?int}|null
      */
     public function customer(int $customerId, string $dst): ?array
     {
@@ -68,13 +68,17 @@ final class RateResolver
             }
             return $this->shape((string) $plan['default_rate'], $defI, $defS, (string) $plan['connect_fee'], $plan, '', null, 'plan_default', $versionId);
         }
-        return $this->shape(
+        $shaped = $this->shape(
             (string) $row['rate'],
             $this->positive($row['initial_increment'], $defI),
             $this->positive($row['subsequent_increment'], $defS),
             $row['connect_fee'] !== null ? (string) $row['connect_fee'] : (string) $plan['connect_fee'],
             $plan, (string) $row['prefix'], $row['destination'] ?? null, $source, $versionId
         );
+        if ($source === 'tariff' && !empty($row['routing_plan_id'])) {
+            $shaped['routing_plan_id'] = (int) $row['routing_plan_id'];
+        }
+        return $shaped;
     }
 
     /**
@@ -152,6 +156,7 @@ final class RateResolver
             'charge_connect_on_zero' => (bool) $plan['charge_connect_on_zero'] || $this->settings->bool('charge_connect_on_zero'),
             'prefix' => $prefix, 'destination' => $dest, 'source' => $source,
             'rate_plan_id' => (int) $plan['id'], 'version_id' => $versionId, 'currency' => (string) $plan['currency'],
+            'routing_plan_id' => null,
         ];
     }
 }

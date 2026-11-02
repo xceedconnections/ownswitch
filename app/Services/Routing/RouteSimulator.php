@@ -64,15 +64,23 @@ final class RouteSimulator
             $out['customer_rate'] = $rate + ['sample_seconds' => $sampleSeconds, 'sample_total' => $r['total'], 'sample_billable' => $r['billable_seconds']];
         }
 
-        if (!$cust['routing_plan_id']) {
-            $out['notes'][] = 'Customer has no routing plan assigned.';
+        // Magnus: tariff trunk group wins when set; else customer's trunk group.
+        $tgId = null;
+        if ($rate !== null && !empty($rate['routing_plan_id'])) {
+            $tgId = (int) $rate['routing_plan_id'];
+            $out['notes'][] = 'Using Trunk Group from matched Tariff (Magnus tariff→trunk group).';
+        } elseif (!empty($cust['routing_plan_id'])) {
+            $tgId = (int) $cust['routing_plan_id'];
+        }
+        if (!$tgId) {
+            $out['notes'][] = 'No Trunk Group on tariff or user — cannot route.';
             return $out;
         }
         $plan = $this->pdo->prepare("SELECT id, name, strategy FROM routing_plans WHERE id = ? AND status = 'active'");
-        $plan->execute([(int) $cust['routing_plan_id']]);
+        $plan->execute([$tgId]);
         $pl = $plan->fetch(PDO::FETCH_ASSOC);
         if (!$pl) {
-            $out['notes'][] = 'Routing plan is inactive or missing.';
+            $out['notes'][] = 'Trunk Group is inactive or missing.';
             return $out;
         }
         $out['strategy'] = $pl['strategy'];

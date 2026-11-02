@@ -34,7 +34,7 @@ final class SipUserController extends CrudController
     {
         $f = [];
         if (!$this->scope($r)->isCustomerRole()) {
-            $f[] = ['name' => 'customer_id', 'label' => 'Customer', 'type' => 'select', 'required' => true, 'options' => $this->customerOptions($r), 'readonly_on_edit' => true, 'list' => true];
+            $f[] = ['name' => 'customer_id', 'label' => 'User', 'type' => 'select', 'required' => true, 'options' => $this->customerOptions($r), 'readonly_on_edit' => true, 'list' => true];
         }
         array_push($f,
             ['name' => 'username', 'label' => 'SIP username', 'required' => true, 'max' => 64, 'pattern' => '/^[A-Za-z0-9._-]{3,64}$/', 'readonly_on_edit' => true, 'list' => true, 'help' => 'Account used to register — e.g. 1001 or office1'],

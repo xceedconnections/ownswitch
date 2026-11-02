@@ -13,10 +13,10 @@ use Ownswitch\Repositories\IpEndpointRepository;
 final class IpAuthController extends CrudController
 {
     protected string $base = '/ip-auth';
-    protected string $singular = 'IP endpoint';
-    protected string $plural = 'IP Authentication';
+    protected string $singular = 'CallerID / IP';
+    protected string $plural = 'CallerID';
     protected array $writeRoles = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech'];
-    protected string $emptyHint = 'No IP endpoints. Add the public IP (or CIDR) of a customer PBX to allow calls without SIP registration.';
+    protected string $emptyHint = 'Magnus CallerID / IP auth. Add the public IP (or CIDR) of a user PBX to allow calls without SIP REGISTER.';
 
     protected function repo(): BaseRepository
     {

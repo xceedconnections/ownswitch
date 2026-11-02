@@ -12,7 +12,7 @@ use Ownswitch\Repositories\TariffRepository;
 
 /**
  * MagnusBilling-style Tariffs (sell) or Provider Rates (buy).
- * Destination is chosen from the global Prefixes list (prefix + name only).
+ * Destination from Prefixes; sell tariffs optionally bind a Trunk Group.
  */
 final class TariffController extends CrudController
 {
@@ -23,8 +23,8 @@ final class TariffController extends CrudController
         $this->singular = $carrier ? 'Provider rate' : 'Tariff';
         $this->plural = $carrier ? 'Provider Rates' : 'Tariffs';
         $this->emptyHint = $carrier
-            ? 'No provider rates. Add buy rates per Prefix for each Provider (independent of customer sell rates).'
-            : 'No tariffs yet. Magnus flow: create Prefixes first, then add a Tariff (Plan + Destination + sell price + billing blocks).';
+            ? 'No provider rates. Add buy rates per Prefix for each Provider.'
+            : 'No tariffs yet. Magnus: Prefixes → Tariff (Plan + Destination + Trunk Group + sell price).';
     }
 
     protected function repo(): BaseRepository
@@ -49,7 +49,7 @@ final class TariffController extends CrudController
         }
         $prefixes = (new PrefixRepository($this->db()))->options();
         $pattern = '/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/';
-        return [
+        $fields = [
             [
                 'name' => $carrier ? 'carrier_id' : 'rate_plan_id',
                 'label' => $carrier ? 'Provider' : 'Plan',
@@ -70,8 +70,24 @@ final class TariffController extends CrudController
                 'wide' => true,
                 'help' => $prefixes === []
                     ? 'No Prefixes yet — create them under Rates → Prefixes first.'
-                    : 'Pick a Prefix (dial code + name). Rates are not stored on the Prefix itself.',
+                    : 'Pick a Prefix (dial code + name).',
             ],
+        ];
+        if (!$carrier) {
+            $groups = ['' => '— use user’s Trunk Group —'];
+            foreach ($this->db()->query('SELECT id, name FROM routing_plans ORDER BY name LIMIT 500')->fetchAll() as $g) {
+                $groups[$g['id']] = $g['name'];
+            }
+            $fields[] = [
+                'name' => 'routing_plan_id',
+                'label' => 'Trunk group',
+                'type' => 'select',
+                'options' => $groups,
+                'list' => true,
+                'help' => 'Magnus trunk group for this tariff. Blank = customer’s Trunk Group.',
+            ];
+        }
+        $fields = array_merge($fields, [
             [
                 'name' => 'rate',
                 'label' => $carrier ? 'Buy price / min' : 'Sell price / min',
@@ -85,7 +101,8 @@ final class TariffController extends CrudController
             ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true],
             ['name' => 'effective_from', 'label' => 'Valid from (UTC)', 'pattern' => $pattern, 'help' => 'Optional YYYY-MM-DD'],
             ['name' => 'effective_to', 'label' => 'Valid to (UTC)', 'pattern' => $pattern],
-        ];
+        ]);
+        return $fields;
     }
 
     protected function prepare(Request $r, array $data, ?array $existing): array
@@ -97,6 +114,10 @@ final class TariffController extends CrudController
         }
         $data['prefix'] = $prefix;
         $data['destination'] = $dest;
+        if ($this->kind === 'customer') {
+            $tg = $data['routing_plan_id'] ?? null;
+            $data['routing_plan_id'] = ($tg === null || $tg === '') ? null : (int) $tg;
+        }
         return $data;
     }
 
@@ -117,5 +138,4 @@ final class TariffController extends CrudController
             (new RatePlanRepository($this->db()))->createVersion((int) $row['rate_plan_id'], (int) ($this->user($r)['id'] ?? 0) ?: null);
         }
     }
-
 }

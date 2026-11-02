@@ -16,11 +16,11 @@ $tile = static function (string $label, mixed $value, string $href = '', string 
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title">Dashboard</h1>
-        <p class="os-page-sub">Live platform overview · times in UTC</p>
+        <p class="os-page-sub">MagnusBilling-style ops · times in UTC</p>
     </div>
     <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>"><i class="bi bi-telephone-forward me-1"></i>CDRs</a>
-        <a class="btn btn-primary btn-sm" href="<?= e(url('/customers')) ?>"><i class="bi bi-people me-1"></i>Customers</a>
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>"><i class="bi bi-telephone-forward me-1"></i>CDR</a>
+        <a class="btn btn-primary btn-sm" href="<?= e(url('/users')) ?>"><i class="bi bi-people me-1"></i>Users</a>
     </div>
 </div>
 
@@ -31,45 +31,31 @@ $tile = static function (string $label, mixed $value, string $href = '', string 
 <?php endif; ?>
 
 <div class="os-panel mb-4 p-3 p-md-4">
-    <div class="os-section-label mb-2">Quick setup (MagnusBilling callflow)</div>
+    <div class="os-section-label mb-2">First call (MagnusBilling order)</div>
     <ol class="mb-0 ps-3 small">
-        <li class="mb-1"><a href="<?= e(url('/customers')) ?>">Add Customer</a> + credit (<a href="<?= e(url('/billing/topup')) ?>">Refills</a>)</li>
-        <li class="mb-1"><a href="<?= e(url('/sip-users')) ?>">Add SIP User</a> — phone / softphone account</li>
-        <li class="mb-1"><a href="<?= e(url('/carriers')) ?>">Add Provider</a> → <a href="<?= e(url('/trunks')) ?>">Trunk</a></li>
-        <li class="mb-1"><a href="<?= e(url('/routing/plans')) ?>">Trunk Group</a> + <a href="<?= e(url('/routing')) ?>">Routes</a> (prefix → trunk)</li>
-        <li class="mb-1"><a href="<?= e(url('/prefixes')) ?>">Prefixes</a> — dial code + destination name only</li>
-        <li class="mb-1"><a href="<?= e(url('/rate-plans')) ?>">Plan</a> → <a href="<?= e(url('/tariffs')) ?>">Tariffs</a> — Plan + Destination + sell price</li>
-        <li class="mb-1"><a href="<?= e(url('/carrier-tariffs')) ?>">Provider Rates</a> — buy price per prefix</li>
-        <li>Assign Plan + Trunk Group on the Customer, then place a call</li>
+        <li class="mb-1"><a href="<?= e(url('/users')) ?>">Clients → Users</a> — create user</li>
+        <li class="mb-1"><a href="<?= e(url('/rate-plans')) ?>">Rates → Plans</a> — create plan, assign on User</li>
+        <li class="mb-1"><a href="<?= e(url('/sip-users')) ?>">Clients → SIP Users</a> — softphone account</li>
+        <li class="mb-1"><a href="<?= e(url('/carriers')) ?>">Routes → Providers</a> → <a href="<?= e(url('/trunks')) ?>">Trunks</a> → <a href="<?= e(url('/routing/plans')) ?>">Trunk Groups</a></li>
+        <li class="mb-1"><a href="<?= e(url('/prefixes')) ?>">Rates → Prefixes</a> (code + name) → <a href="<?= e(url('/tariffs')) ?>">Tariffs</a> (Plan + Destination + Trunk Group + sell price)</li>
+        <li class="mb-1"><a href="<?= e(url('/carrier-tariffs')) ?>">Routes → Provider Rates</a> — buy price</li>
+        <li class="mb-1"><a href="<?= e(url('/billing/topup')) ?>">Billing → Refills</a> — add credit</li>
+        <li>Register softphone and place a call · check <a href="<?= e(url('/cdrs')) ?>">Reports → CDR</a></li>
     </ol>
 </div>
 
 <p class="os-section-label">Platform</p>
 <div class="row g-3 mb-4">
-    <?php $tile('Customers', $counts['customers'], '/customers'); ?>
+    <?php $tile('Users', $counts['customers'], '/users'); ?>
     <?php $tile('SIP Users', $counts['sip'], '/sip-users'); ?>
-    <?php if ($counts['resellers'] !== null) { $tile('Resellers', $counts['resellers'], '/resellers'); } ?>
-    <?php if ($counts['carriers'] !== null) { $tile('Providers', $counts['carriers'], '/carriers'); } ?>
-    <?php $tile('Open fraud alerts', $counts['openFraud'], '/fraud', 'Review signaling alerts'); ?>
+    <?php $tile('Providers', $counts['carriers'] ?? ($counts['providers'] ?? '—'), '/carriers'); ?>
+    <?php $tile('CDRs (all time)', $totalCdrs, '/cdrs'); ?>
 </div>
 
 <p class="os-section-label">Today (UTC)</p>
-<?php if ($totalCdrs === 0): ?>
-    <div class="os-panel">
-        <div class="os-empty">
-            <div class="os-empty-title">No call records yet</div>
-            <div>CDRs appear after ingest (<code>php bin/worker_cdr.php</code>) or import. Stats stay empty until real traffic arrives.</div>
-        </div>
-    </div>
-<?php else: ?>
-    <div class="row g-3">
-        <?php $tile('Call attempts', $today['attempts'], '/cdrs'); ?>
-        <?php $tile('Answered', $today['answered']); ?>
-        <?php $tile('ASR %', $asr, '/reports/asr-acd'); ?>
-        <?php $tile('Revenue', fmt_money($today['revenue'], 4)); ?>
-        <?php if ($isGlobal): ?>
-            <?php $tile('Provider cost', fmt_money($today['cost'], 4)); ?>
-            <?php $tile('Gross margin', fmt_money(bcsub($today['revenue'], $today['cost'], 6), 4)); ?>
-        <?php endif; ?>
-    </div>
-<?php endif; ?>
+<div class="row g-3 mb-4">
+    <?php $tile('Attempts', $today['attempts']); ?>
+    <?php $tile('Answered', $today['answered']); ?>
+    <?php $tile('ASR', $asr . '%'); ?>
+    <?php $tile('Sell today', $today['revenue'] ?? '0'); ?>
+</div>
