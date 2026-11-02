@@ -11,12 +11,10 @@ use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
 use Ownswitch\Services\Routing\OpensipsRoutingSync;
 use Ownswitch\Support\Crypto;
-use Ownswitch\Support\MediaPolicy;
-use Ownswitch\Support\SipCodecs;
 use Ownswitch\Support\SipPeerOptions;
 
 /**
- * Providers (kind=carrier) and SIP trunks (kind=trunk) — Magnus field set.
+ * Providers + Trunks — OpenSIPS drouting / registrant fields only (no Asterisk peer junk).
  */
 final class CarrierController extends CrudController
 {
@@ -27,7 +25,7 @@ final class CarrierController extends CrudController
         $this->singular = $trunk ? 'Trunk' : 'Provider';
         $this->plural = $trunk ? 'Trunks' : 'Providers';
         $this->emptyHint = $trunk
-            ? 'No trunks yet. IP peering: Register trunk = No. Digest account: Register trunk = Yes + username/password.'
+            ? 'No trunks. OpenSIPS: Host/port, optional digest REGISTER, strip/prefix, From rewrite, probe.'
             : 'No providers yet. Add the upstream carrier, then add Trunks.';
     }
 
@@ -43,11 +41,11 @@ final class CarrierController extends CrudController
 
     protected function fields(Request $r): array
     {
-        $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'section' => 'General', 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
+        $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
         if ($this->kind !== 'trunk') {
             return [
-                ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true, 'section' => 'General'],
-                ['name' => 'notes', 'label' => 'Description', 'type' => 'textarea', 'max' => 2000, 'section' => 'General'],
+                ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
+                ['name' => 'notes', 'label' => 'Description', 'type' => 'textarea', 'max' => 2000],
                 $status,
             ];
         }
@@ -55,45 +53,28 @@ final class CarrierController extends CrudController
         foreach ($this->db()->query('SELECT id, name FROM carriers ORDER BY name LIMIT 500')->fetchAll() as $c) {
             $carriers[$c['id']] = $c['name'];
         }
-        $yn = SipPeerOptions::YES_NO;
         return [
-            // General (Magnus)
-            ['name' => 'carrier_id', 'label' => 'Provider', 'type' => 'select', 'required' => true, 'options' => $carriers, 'list' => true, 'section' => 'General'],
-            ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true, 'section' => 'General'],
-            ['name' => 'auth_username', 'label' => 'Username', 'max' => 120, 'section' => 'General'],
-            ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Leave blank on edit to keep current.', 'section' => 'General'],
-            ['name' => 'host', 'label' => 'Host', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true, 'section' => 'General'],
-            ['name' => 'port', 'label' => 'Port', 'type' => 'int', 'min' => 1, 'max' => 65535, 'required' => true, 'default' => '5060', 'list' => true, 'section' => 'General'],
-            ['name' => 'transport', 'label' => 'Transport', 'type' => 'select', 'required' => true, 'options' => ['udp' => 'UDP', 'tcp' => 'TCP', 'tls' => 'TLS'], 'default' => 'udp', 'section' => 'General'],
-            ['name' => 'add_prefix', 'label' => 'Add prefix', 'max' => 32, 'section' => 'General', 'help' => 'Prepended to dialled number (OpenSIPS pri_prefix)'],
-            ['name' => 'remove_prefix', 'label' => 'Remove prefix', 'max' => 32, 'section' => 'General', 'help' => 'Digits stripped from RURI before send (OpenSIPS strip)'],
-            ['name' => 'codecs', 'label' => 'Codec', 'type' => 'multiselect', 'wide' => true, 'max' => 190, 'default' => 'PCMA,PCMU', 'options' => SipCodecs::OPTIONS, 'add_label' => '+ Add codec…', 'section' => 'General'],
-            ['name' => 'provider_tech', 'label' => 'Provider tech', 'type' => 'select', 'required' => true, 'options' => SipPeerOptions::PROVIDER_TECH, 'default' => 'sip', 'section' => 'General'],
-            ['name' => 'auth_mode', 'label' => 'Register trunk', 'type' => 'select', 'required' => true, 'list' => true, 'default' => 'ip', 'section' => 'General', 'options' => [
-                'ip' => 'No (IP peer)',
-                'register' => 'Yes (user/pass REGISTER)',
+            ['name' => 'carrier_id', 'label' => 'Provider', 'type' => 'select', 'required' => true, 'options' => $carriers, 'list' => true],
+            ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
+            ['name' => 'host', 'label' => 'Host', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true],
+            ['name' => 'port', 'label' => 'Port', 'type' => 'int', 'min' => 1, 'max' => 65535, 'required' => true, 'default' => '5060', 'list' => true],
+            ['name' => 'transport', 'label' => 'Transport', 'type' => 'select', 'required' => true, 'options' => ['udp' => 'UDP', 'tcp' => 'TCP', 'tls' => 'TLS'], 'default' => 'udp'],
+            ['name' => 'auth_mode', 'label' => 'Auth mode', 'type' => 'select', 'required' => true, 'list' => true, 'default' => 'ip', 'options' => [
+                'ip' => 'IP peer (vendor allowlists us)',
+                'register' => 'Outbound REGISTER (user/pass)',
                 'invite' => 'Invite digest only',
-            ]],
+            ], 'help' => 'OpenSIPS: IP → address table; Register → uac_registrant'],
+            ['name' => 'auth_username', 'label' => 'Username', 'max' => 120],
+            ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Leave blank on edit to keep current.'],
+            ['name' => 'add_prefix', 'label' => 'Add prefix', 'max' => 32, 'help' => 'OpenSIPS dr_gateways.pri_prefix'],
+            ['name' => 'remove_prefix', 'label' => 'Remove prefix', 'max' => 32, 'help' => 'OpenSIPS dr_gateways.strip (digit count)'],
+            ['name' => 'from_user', 'label' => 'From user', 'max' => 64, 'help' => 'Rewrite outbound From user'],
+            ['name' => 'from_domain', 'label' => 'From domain', 'max' => 128],
+            ['name' => 'cid_add_prefix', 'label' => 'CID add prefix', 'max' => 32],
+            ['name' => 'cid_remove_prefix', 'label' => 'CID remove prefix', 'max' => 32],
+            ['name' => 'qualify', 'label' => 'Probe gateway', 'type' => 'select', 'options' => SipPeerOptions::YES_NO, 'default' => 'yes', 'help' => 'OpenSIPS probe_mode'],
+            ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Soft limit for portal/reporting'],
             $status,
-
-            // Supplementary
-            ['name' => 'from_user', 'label' => 'Fromuser', 'max' => 64, 'section' => 'Supplementary info', 'help' => 'Rewrite outbound From user (OpenSIPS)'],
-            ['name' => 'from_domain', 'label' => 'Fromdomain', 'max' => 128, 'section' => 'Supplementary info'],
-            ['name' => 'cid_add_prefix', 'label' => 'CID Add prefix', 'max' => 32, 'section' => 'Supplementary info'],
-            ['name' => 'cid_remove_prefix', 'label' => 'CID Remove prefix', 'max' => 32, 'section' => 'Supplementary info'],
-            ['name' => 'context', 'label' => 'Context', 'max' => 64, 'default' => 'billing', 'section' => 'Supplementary info'],
-            ['name' => 'dtmfmode', 'label' => 'Dtmfmode', 'type' => 'select', 'options' => SipPeerOptions::DTMF, 'default' => 'RFC2833', 'section' => 'Supplementary info'],
-            ['name' => 'insecure', 'label' => 'Insecure', 'max' => 64, 'default' => 'port,invite', 'section' => 'Supplementary info'],
-            ['name' => 'max_channels', 'label' => 'Max use', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'section' => 'Supplementary info', 'help' => '−1 / large = unlimited style; 0 blocks new calls'],
-            ['name' => 'nat', 'label' => 'NAT', 'max' => 64, 'default' => 'force_rport,comedia', 'section' => 'Supplementary info'],
-            ['name' => 'directmedia', 'label' => 'Directmedia', 'type' => 'select', 'options' => $yn, 'default' => 'no', 'section' => 'Supplementary info'],
-            ['name' => 'qualify', 'label' => 'Qualify', 'type' => 'select', 'options' => $yn, 'default' => 'yes', 'section' => 'Supplementary info', 'help' => 'Yes → OpenSIPS gateway probe_mode'],
-            ['name' => 'peer_type', 'label' => 'Type', 'type' => 'select', 'options' => SipPeerOptions::PEER_TYPE, 'default' => 'peer', 'section' => 'Supplementary info'],
-            ['name' => 'sendrpid', 'label' => 'Sendrpid', 'type' => 'select', 'options' => $yn, 'default' => 'no', 'section' => 'Supplementary info'],
-            ['name' => 'addparameter', 'label' => 'Addparameter', 'max' => 255, 'placeholder' => 'Dial parameter', 'section' => 'Supplementary info'],
-
-            // Asterisk extra
-            ['name' => 'asterisk_extra', 'label' => 'Parameters', 'type' => 'textarea', 'wide' => true, 'rows' => 8, 'max' => 8000, 'section' => 'Asterisk extra config', 'help' => 'Free-form peer lines; stored and pushed into gateway attrs'],
         ];
     }
 
@@ -116,12 +97,7 @@ final class CarrierController extends CrudController
                 $data['subsequent_increment'] = $data['subsequent_increment'] ?? 6;
                 $data['media_policy'] = null;
             }
-            if (array_key_exists('codecs', $data)) {
-                $data['codecs'] = SipCodecs::toStorage($data['codecs']);
-            } elseif ($existing === null) {
-                $data['codecs'] = SipCodecs::toStorage('PCMA,PCMU');
-            }
-            foreach (['add_prefix', 'remove_prefix', 'from_user', 'from_domain', 'cid_add_prefix', 'cid_remove_prefix', 'addparameter', 'asterisk_extra'] as $k) {
+            foreach (['add_prefix', 'remove_prefix', 'from_user', 'from_domain', 'cid_add_prefix', 'cid_remove_prefix'] as $k) {
                 if (array_key_exists($k, $data) && ($data[$k] === null || $data[$k] === '')) {
                     $data[$k] = null;
                 }
@@ -148,7 +124,7 @@ final class CarrierController extends CrudController
         }
         $prov = OpensipsProvisioner::fromConfig();
         if (!$prov->enabled()) {
-            return 'Trunk saved in portal only — OpenSIPS provisioning is disabled. Enable OPENSIPS_ENABLED and re-save, or run: php bin/sync-opensips-trunks.php';
+            return 'Trunk saved in portal only — OpenSIPS provisioning disabled.';
         }
         try {
             $row = $this->repo()->findInternal($id);
@@ -159,19 +135,10 @@ final class CarrierController extends CrudController
             if ($sync['warnings'] !== []) {
                 App::session()->flash('warning', 'Trunk saved with warnings: ' . mb_substr(implode(' | ', $sync['warnings']), 0, 300));
             }
-            $mode = (string) ($row['auth_mode'] ?? 'ip');
-            if ($mode === 'ip') {
-                return 'Trunk pushed to OpenSIPS (strip/prefix/From/CID/qualify applied). IP peer: vendor must allowlist this server SIP IP.';
-            }
-            if ($mode === 'register') {
-                return 'Trunk pushed to OpenSIPS with outbound REGISTER + peer parameters.';
-            }
-            return 'Trunk pushed to OpenSIPS (invite digest) with peer parameters.';
+            return 'Trunk pushed to OpenSIPS (gateway + routes + auth).';
         } catch (\Throwable $e) {
             error_log('[ownswitch] OpenSIPS trunk sync: ' . $e->getMessage());
-            $hint = preg_replace('/\s+/', ' ', $e->getMessage()) ?? $e->getMessage();
-            App::session()->flash('warning', 'Saved in portal, but OpenSIPS sync failed: ' . mb_substr($hint, 0, 280)
-                . ' — run: sudo bash /opt/ownswitch-src/deploy/fix-drouting-schema.sh');
+            App::session()->flash('warning', 'Saved, but OpenSIPS sync failed: ' . mb_substr($e->getMessage(), 0, 280));
             return null;
         }
     }
@@ -190,20 +157,5 @@ final class CarrierController extends CrudController
                 App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
             }
         }
-    }
-
-    protected function formValues(Request $r, ?array $existing, array $values): array
-    {
-        if ($this->kind !== 'trunk') {
-            return $values;
-        }
-        if (array_key_exists('codecs', $values) || $existing === null) {
-            $raw = $values['codecs'] ?? ($existing['codecs'] ?? 'PCMA,PCMU');
-            $values['codecs'] = SipCodecs::toStorage($raw) ?? 'PCMA,PCMU';
-        }
-        if (MediaPolicy::isDefault(isset($values['media_policy']) ? (string) $values['media_policy'] : null)) {
-            $values['media_policy'] = '';
-        }
-        return $values;
     }
 }

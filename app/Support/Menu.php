@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Ownswitch\Support;
 
 /**
- * Navigation — only items with a live operational engine (no empty Magnus scaffolds).
+ * Navigation — OpenSIPS-backed features only.
  */
 final class Menu
 {
@@ -15,6 +15,8 @@ final class Menu
     public const SIP_USERS = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech'];
     public const FINANCE = ['super_admin', 'admin', 'reseller', 'customer_owner', 'reporter'];
     public const LEDGER_READ = ['super_admin', 'admin', 'reseller', 'customer_owner', 'reporter'];
+    public const DID_STAFF = ['super_admin', 'admin', 'reseller'];
+    public const DID_VIEW = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech'];
 
     /** @return list<array{label:string,items:list<array{label:string,path:string}>}> */
     public static function for(string $role): array
@@ -26,6 +28,11 @@ final class Menu
                 ['SIP Users', '/sip-users', self::SIP_USERS],
                 ['Calls Online', '/calls-online', self::SIP_USERS],
                 ['CallerID', '/ip-auth', self::SIP_USERS],
+            ]],
+            ['DIDs', [
+                ['DID Providers', '/did-providers', self::DID_STAFF],
+                ['DIDs', '/dids', self::DID_STAFF],
+                ['My DIDs', '/did-assignments', self::DID_VIEW],
             ]],
             ['Billing', [
                 ['Refills', '/billing/refill', self::STAFF],

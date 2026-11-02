@@ -25,6 +25,7 @@ use Ownswitch\Controllers\SipUserController;
 use Ownswitch\Controllers\SystemController;
 use Ownswitch\Controllers\TariffController;
 use Ownswitch\Controllers\CallsOnlineController;
+use Ownswitch\Controllers\DidController;
 use Ownswitch\Controllers\PrefixImportController;
 use Ownswitch\Controllers\TariffImportController;
 use Ownswitch\Http\Response;
@@ -69,8 +70,15 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     });
     $crud($r, '/resellers', new ResellerController(), $STAFF);
     $crud($r, '/sip-users', new SipUserController(), $role(Menu::SIP_USERS));
-    $r->get('/calls-online', [new CallsOnlineController(), 'index'], [$role(Menu::SIP_USERS)]);
+    $callsOnline = new CallsOnlineController();
+    $r->get('/calls-online', [$callsOnline, 'index'], [$role(Menu::SIP_USERS)]);
+    $r->post('/calls-online/hangup', [$callsOnline, 'hangup'], [$role(Menu::SIP_USERS)]);
     $crud($r, '/ip-auth', new IpAuthController(), $role(Menu::SIP_USERS)); // CallerID / IP allowlist
+
+    // DIDs (inbound)
+    $crud($r, '/did-providers', new DidController('providers'), $role(Menu::DID_STAFF));
+    $crud($r, '/dids', new DidController('dids'), $role(Menu::DID_STAFF));
+    $crud($r, '/did-assignments', new DidController('assignments'), $role(Menu::DID_VIEW));
 
     // Rates
     $crud($r, '/rate-plans', new RatePlanController(), $STAFF);

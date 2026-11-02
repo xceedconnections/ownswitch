@@ -46,6 +46,7 @@ final class CdrController extends BaseController
         }
         return $this->view('cdr/search', [
             'title' => 'CDR Search', 'result' => $res, 'f' => $f, 'customers' => $customers, 'carriers' => $carriers,
+            // Charge (sell) always shown; carrier cost/margin only for staff/global
             'dispositions' => CdrSearchService::DISPOSITIONS, 'showCost' => $scope->isGlobal(), 'query' => $r->query,
         ]);
     }

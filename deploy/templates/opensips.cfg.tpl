@@ -106,6 +106,9 @@ modparam("drouting", "db_url", "@@OPENSIPS_DB_URL@@")
 # Gateway attrs (from_user / from_domain / CID rewrite) pushed by Ownswitch trunk sync
 modparam("drouting", "gw_attrs_avp", '$avp(dr_gw_attrs)')
 
+# DID → SIP user aliases (Ownswitch DID assignments)
+@@OPENSIPS_ALIAS_DB_BLOCK@@
+
 # Outbound REGISTER towards providers that require digest registration (Magnus user/pass trunks).
 # Optional: package opensips-uac-module. If the .so is missing, comment these two lines.
 @@OPENSIPS_UAC_BLOCK@@
@@ -231,7 +234,10 @@ route {
 route[inbound_from_carrier] {
 	record_route();
 	create_dialog("B");
+	# Rewrite DID (R-URI user) → SIP username via dbaliases (no-op if alias_db not loaded)
+	@@OPENSIPS_ALIAS_LOOKUP@@
 	if (!lookup("location")) {
+		xlog("L_WARN", "inbound: no registration for $rU\n");
 		send_reply(404, "Not Found");
 		exit;
 	}

@@ -310,30 +310,15 @@ final class OpensipsProvisioner
         return min(32, strlen($p));
     }
 
-    /** @param array<string,mixed> $trunk */
+    /** @param array<string,mixed> $trunk OpenSIPS-applied attrs only (From / CID rewrite). */
     public static function trunkAttrs(array $trunk): string
     {
         $parts = [];
-        $map = [
-            'fu' => 'from_user',
-            'fd' => 'from_domain',
-            'cidadd' => 'cid_add_prefix',
-            'cidrem' => 'cid_remove_prefix',
-            'codecs' => 'codecs',
-            'param' => 'addparameter',
-            'dm' => 'directmedia',
-            'dtmf' => 'dtmfmode',
-            'ctx' => 'context',
-        ];
-        foreach ($map as $k => $col) {
+        foreach (['fu' => 'from_user', 'fd' => 'from_domain', 'cidadd' => 'cid_add_prefix', 'cidrem' => 'cid_remove_prefix'] as $k => $col) {
             $v = trim((string) ($trunk[$col] ?? ''));
             if ($v !== '') {
                 $parts[] = $k . '=' . rawurlencode($v);
             }
-        }
-        $extra = trim((string) ($trunk['asterisk_extra'] ?? ''));
-        if ($extra !== '') {
-            $parts[] = 'extra=' . rawurlencode(mb_substr(preg_replace('/\s+/', ' ', $extra) ?? $extra, 0, 120));
         }
         return implode(';', $parts);
     }
@@ -538,6 +523,84 @@ final class OpensipsProvisioner
         if ($this->tableExists('ownswitch_sip')) {
             $this->db()->prepare('DELETE FROM ownswitch_sip WHERE username = ?')->execute([$username]);
         }
+    }
+
+    /** Map DID digits → SIP AOR via OpenSIPS dbaliases (alias_db module). */
+    public function syncDidAlias(string $didNorm, string $sipUsername, string $domain): void
+    {
+        $db = $this->db();
+        $this->ensureDbAliases();
+        $aliasUser = preg_replace('/\D+/', '', $didNorm) ?? '';
+        if ($aliasUser === '' || $sipUsername === '') {
+            throw new \InvalidArgumentException('DID alias requires digits and SIP username');
+        }
+        $db->prepare('DELETE FROM dbaliases WHERE alias_username = ?')->execute([$aliasUser]);
+        // Also store +prefixed form if different
+        $db->prepare('DELETE FROM dbaliases WHERE alias_username = ?')->execute(['+' . $aliasUser]);
+        $ins = $db->prepare('INSERT INTO dbaliases (alias_username, alias_domain, username, domain) VALUES (?,?,?,?)');
+        $ins->execute([$aliasUser, $domain, $sipUsername, $domain]);
+        $ins->execute(['+' . $aliasUser, $domain, $sipUsername, $domain]);
+        $this->mi('alias_db_reload') || $this->mi('domain_reload');
+    }
+
+    public function removeDidAlias(string $didNorm): void
+    {
+        if (!$this->tableExists('dbaliases')) {
+            return;
+        }
+        $aliasUser = preg_replace('/\D+/', '', $didNorm) ?? '';
+        if ($aliasUser === '') {
+            return;
+        }
+        $this->db()->prepare('DELETE FROM dbaliases WHERE alias_username IN (?,?)')->execute([$aliasUser, '+' . $aliasUser]);
+        $this->mi('alias_db_reload');
+    }
+
+    /**
+     * Hang up a live dialog. Tries dlg_end_dlg with callid (OpenSIPS 3.x).
+     *
+     * @return array{ok:bool,detail:string}
+     */
+    public function endDialog(string $callId, ?string $fromTag = null, ?string $toTag = null): array
+    {
+        if ($callId === '') {
+            return ['ok' => false, 'detail' => 'Missing Call-ID'];
+        }
+        // OpenSIPS 3.6: dlg_end_dlg params often { callid, from_tag } or dialog hash
+        $attempts = [];
+        if ($fromTag !== null && $fromTag !== '') {
+            $attempts[] = ['dlg_end_dlg', ['callid' => $callId, 'fhtag' => $fromTag]];
+            $attempts[] = ['dlg_end_dlg', [$callId, $fromTag]];
+        }
+        $attempts[] = ['dlg_end_dlg', ['callid' => $callId]];
+        $attempts[] = ['dlg_end_dlg', [$callId]];
+        foreach ($attempts as [$method, $params]) {
+            $r = $this->miCall($method, is_array($params) ? $params : [$params]);
+            if ($r !== null && !isset($r['error'])) {
+                return ['ok' => true, 'detail' => 'Dialog terminate requested'];
+            }
+            $detail = is_array($r['error'] ?? null) ? (string) ($r['error']['message'] ?? json_encode($r['error'])) : (string) ($r['error'] ?? 'no response');
+            $last = $detail;
+        }
+        return ['ok' => false, 'detail' => $last ?? 'dlg_end_dlg failed'];
+    }
+
+    private function ensureDbAliases(): void
+    {
+        if ($this->tableExists('dbaliases')) {
+            return;
+        }
+        $this->db()->exec(
+            'CREATE TABLE IF NOT EXISTS dbaliases (
+                id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+                alias_username VARCHAR(64) NOT NULL DEFAULT \'\',
+                alias_domain VARCHAR(64) NOT NULL DEFAULT \'\',
+                username VARCHAR(64) NOT NULL DEFAULT \'\',
+                domain VARCHAR(64) NOT NULL DEFAULT \'\',
+                KEY alias_user_idx (alias_username, alias_domain),
+                KEY user_idx (username, domain)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
     }
 
     private function ensureSubscriberMediaColumn(): void

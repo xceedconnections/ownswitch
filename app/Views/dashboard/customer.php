@@ -7,7 +7,13 @@ $cur = $customer['currency'] ?? '';
         <h1 class="os-page-title">Welcome<?= $customer ? ', ' . e($customer['name']) : '' ?></h1>
         <p class="os-page-sub">Account usage and balance at a glance</p>
     </div>
-    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>"><i class="bi bi-telephone-forward me-1"></i>View CDRs</a>
+    <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/calls-online')) ?>"><i class="bi bi-broadcast me-1"></i>Live calls</a>
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>"><i class="bi bi-telephone-forward me-1"></i>CDRs</a>
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/reports/summary-day')) ?>"><i class="bi bi-graph-up me-1"></i>Reports</a>
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/ledger')) ?>"><i class="bi bi-wallet2 me-1"></i>Ledger</a>
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/did-assignments')) ?>"><i class="bi bi-telephone me-1"></i>My DIDs</a>
+    </div>
 </div>
 
 <?php if (!$customer): ?>

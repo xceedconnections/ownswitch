@@ -194,6 +194,27 @@ else
   export OPENSIPS_NAT_REGISTER_BLOCK='# no nathelper'
 fi
 
+# DID aliases (alias_db) — package often ships with opensips-mysql-module / alias_db.so
+apt_install_optional opensips-alias-db-module 2>/dev/null || true
+if [[ -f "${mod_dir}/alias_db.so" ]]; then
+  export OPENSIPS_ALIAS_DB_BLOCK="loadmodule \"alias_db.so\"
+modparam(\"alias_db\", \"db_url\", \"${OPENSIPS_DB_URL}\")"
+  export OPENSIPS_ALIAS_LOOKUP='if (alias_db_lookup("dbaliases")) {
+		xlog("L_INFO", "DID alias hit: now RURI=$ru\n");
+	}'
+  mysql_root "${DB_OPENSIPS}" -e "CREATE TABLE IF NOT EXISTS dbaliases (
+    id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+    alias_username VARCHAR(64) NOT NULL DEFAULT '',
+    alias_domain VARCHAR(64) NOT NULL DEFAULT '',
+    username VARCHAR(64) NOT NULL DEFAULT '',
+    domain VARCHAR(64) NOT NULL DEFAULT '',
+    KEY alias_user_idx (alias_username, alias_domain)
+  ) ENGINE=InnoDB" 2>/dev/null || true
+else
+  export OPENSIPS_ALIAS_DB_BLOCK='# alias_db.so missing — DID→SIP rewrite disabled until opensips-alias-db-module is installed'
+  export OPENSIPS_ALIAS_LOOKUP='# no alias_db'
+fi
+
 # Render to a temp file first and validate BEFORE touching the live config.
 tmp_cfg="$(mktemp /tmp/opensips.cfg.XXXXXX)"
 trap 'rm -f "$tmp_cfg"' EXIT
