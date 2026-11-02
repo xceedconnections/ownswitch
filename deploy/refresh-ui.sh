@@ -102,6 +102,12 @@ echo "== Verify =="
 echo "layout markers: $(grep -c 'os-auth-page\|os-topbar\|os-brand-mark' "$OWN_OPT/current/app/Views/layout.php" || true)"
 echo "css bytes: $(wc -c < "$OWN_OPT/current/public/assets/css/app.css")"
 ls -la "$OWN_OPT/current/public/assets/css/app.css" "$OWN_OPT/current/public/assets/js/app.js"
+# Apply DB migrations (e.g. trunk auth_mode) when present
+if [[ -f "$REL/bin/migrate.php" ]]; then
+  runuser -u ownswitch -- env OWNSWITCH_ENV_FILE="${OWN_ETC}/ownswitch.env" \
+    php "$REL/bin/migrate.php" 2>/dev/null || php "$REL/bin/migrate.php" || true
+fi
+
 DOMAIN="$(grep -E '^OWNSWITCH_DOMAIN=' "$OWN_ETC/install.conf" 2>/dev/null | cut -d= -f2- || true)"
 DOMAIN="${DOMAIN:-voip.xceedconnections.com}"
 echo

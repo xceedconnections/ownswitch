@@ -70,11 +70,19 @@ final class IpAuthController extends CrudController
         $row = $this->repo()->findInternal($id);
         if ($row && $prov->enabled()) {
             try {
+                // OpenSIPS permissions group 1 = all customer IP peers (see opensips.cfg.tpl).
                 if ($existing) {
-                    $prov->removeAddress((int) $existing['customer_id'], (string) $existing['ip_address'], (int) $existing['mask'], (int) $existing['port']);
+                    $prov->removeAddress(OpensipsProvisioner::GRP_CUSTOMER, (string) $existing['ip_address'], (int) $existing['mask'], (int) $existing['port']);
                 }
                 if ($row['status'] === 'active') {
-                    $prov->upsertAddress((int) $row['customer_id'], (string) $row['ip_address'], (int) $row['mask'], (int) $row['port'], (string) $row['proto']);
+                    $prov->upsertAddress(
+                        OpensipsProvisioner::GRP_CUSTOMER,
+                        (string) $row['ip_address'],
+                        (int) $row['mask'],
+                        (int) $row['port'],
+                        (string) $row['proto'],
+                        'customer:' . (int) $row['customer_id']
+                    );
                 }
                 $prov->reloadAddresses();
             } catch (\Throwable) {
@@ -89,7 +97,7 @@ final class IpAuthController extends CrudController
         $prov = OpensipsProvisioner::fromConfig();
         if ($prov->enabled()) {
             try {
-                $prov->removeAddress((int) $row['customer_id'], (string) $row['ip_address'], (int) $row['mask'], (int) $row['port']);
+                $prov->removeAddress(OpensipsProvisioner::GRP_CUSTOMER, (string) $row['ip_address'], (int) $row['mask'], (int) $row['port']);
                 $prov->reloadAddresses();
             } catch (\Throwable) {
                 App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');

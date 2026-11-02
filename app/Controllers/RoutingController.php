@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace Ownswitch\Controllers;
 
+use Ownswitch\App;
 use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
+use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CustomerRepository;
 use Ownswitch\Services\Billing\RateResolver;
 use Ownswitch\Services\Billing\RatingService;
+use Ownswitch\Services\Routing\OpensipsRoutingSync;
 use Ownswitch\Services\Routing\RouteSimulator;
 use Ownswitch\Services\Settings\SettingsService;
 
@@ -74,6 +77,34 @@ final class RoutingController extends CrudController
             $data['is_demo'] = $existing['is_demo'] ?? 0;
         }
         return $data;
+    }
+
+    protected function afterSave(Request $r, int $id, array $data, ?array $existing): ?string
+    {
+        if ($this->kind === 'rules') {
+            $this->pushRoutes();
+        }
+        return null;
+    }
+
+    protected function afterDelete(Request $r, array $row): void
+    {
+        if ($this->kind === 'rules') {
+            $this->pushRoutes();
+        }
+    }
+
+    private function pushRoutes(): void
+    {
+        $prov = OpensipsProvisioner::fromConfig();
+        if (!$prov->enabled()) {
+            return;
+        }
+        try {
+            (new OpensipsRoutingSync($this->db(), $prov))->syncAll();
+        } catch (\Throwable $e) {
+            App::session()->flash('warning', 'Saved, but OpenSIPS route sync failed: ' . (App::config('app.debug') ? $e->getMessage() : 'run php bin/sync-opensips-trunks.php'));
+        }
     }
 
     /** GET /routing/simulate */

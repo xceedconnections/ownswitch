@@ -112,6 +112,13 @@ apply_schema_once standard subscriber
 for mod in auth_db usrloc dialog permissions drouting dispatcher rtpengine dialplan domain group; do
   apply_schema_once "$mod"
 done
+# Outbound REGISTER to providers (optional but needed for auth_mode=register trunks)
+if apt_install_optional opensips-uac-module 2>/dev/null || apt-get install -y opensips-uac-module 2>/dev/null; then
+  apply_schema_once uac_registrant || apply_schema_once uac || true
+  note_change "opensips-uac-module present"
+else
+  log_warn "opensips-uac-module not installed — IP peer trunks still work; Register-mode trunks will not"
+fi
 ensure_subscriber_schema
 
 # Make sure the portal/runtime account can use everything created by root
@@ -147,6 +154,14 @@ loadmodule "mi_http.so"
 modparam("mi_http", "root", "mi")'
 else
   export OPENSIPS_MI_HTTP_BLOCK='# mi_http not installed (opensips-http-modules) - MI available via FIFO only'
+fi
+
+if [[ -f "${mod_dir}/uac_registrant.so" ]]; then
+  export OPENSIPS_UAC_BLOCK="loadmodule \"uac_registrant.so\"
+modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
+modparam(\"uac_registrant\", \"timer_interval\", 60)"
+else
+  export OPENSIPS_UAC_BLOCK='# uac_registrant.so not installed — IP peer trunks OK; Register-mode needs opensips-uac-module'
 fi
 
 # Render to a temp file first and validate BEFORE touching the live config.

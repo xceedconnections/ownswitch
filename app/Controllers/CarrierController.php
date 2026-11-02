@@ -4,14 +4,20 @@ declare(strict_types=1);
 
 namespace Ownswitch\Controllers;
 
+use Ownswitch\App;
 use Ownswitch\Http\Request;
+use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
+use Ownswitch\Services\Routing\OpensipsRoutingSync;
 use Ownswitch\Support\Crypto;
 
 /**
- * Providers (kind=carrier) and their SIP trunks (kind=trunk).
- * UI naming matches MagnusBilling "Provider" / "Trunk".
+ * Providers (kind=carrier) and SIP trunks (kind=trunk).
+ *
+ * Important: IP-to-IP trunks do NOT REGISTER to the vendor. The vendor must allowlist
+ * this switch's public SIP IP. Use auth_mode=register only when the vendor gave a
+ * SIP username/password that must REGISTER (Magnus "User" style).
  */
 final class CarrierController extends CrudController
 {
@@ -22,8 +28,8 @@ final class CarrierController extends CrudController
         $this->singular = $trunk ? 'Trunk' : 'Provider';
         $this->plural = $trunk ? 'Trunks' : 'Providers';
         $this->emptyHint = $trunk
-            ? 'No trunks yet. Add a Provider first, then create a Trunk with host, user and password.'
-            : 'No providers yet. Add the upstream carrier/provider you buy minutes from, then add Trunks.';
+            ? 'No trunks yet. IP peering: set Auth mode = IP peer (vendor allowlists your public IP). Digest account: Auth mode = Register + username/password.'
+            : 'No providers yet. Add the upstream carrier you buy minutes from, then add Trunks.';
     }
 
     protected function repo(): BaseRepository
@@ -33,7 +39,7 @@ final class CarrierController extends CrudController
 
     protected function filterColumns(): array
     {
-        return $this->kind === 'trunk' ? ['carrier_id', 'status'] : ['status'];
+        return $this->kind === 'trunk' ? ['carrier_id', 'status', 'auth_mode'] : ['status'];
     }
 
     protected function fields(Request $r): array
@@ -53,20 +59,26 @@ final class CarrierController extends CrudController
         }
         return [
             ['name' => 'carrier_id', 'label' => 'Provider', 'type' => 'select', 'required' => true, 'options' => $carriers, 'list' => true],
-            ['name' => 'name', 'label' => 'Trunk name', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'Friendly name, e.g. Provider-Main'],
-            ['name' => 'host', 'label' => 'SIP host / IP', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true],
+            ['name' => 'name', 'label' => 'Trunk name', 'required' => true, 'max' => 120, 'list' => true],
+            ['name' => 'auth_mode', 'label' => 'Auth mode', 'type' => 'select', 'required' => true, 'list' => true, 'default' => 'ip', 'options' => [
+                'ip' => 'IP peer (no REGISTER) — vendor allowlists your public IP',
+                'register' => 'Register — Ownswitch REGISTERs to vendor (user/pass)',
+                'invite' => 'Invite digest only — auth on INVITE, no REGISTER',
+            ], 'help' => 'IP peer will NEVER show as “registered” on Magnus. That is normal. Only Register mode sends REGISTER.'],
+            ['name' => 'host', 'label' => 'SIP host / IP', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true, 'help' => 'Vendor SBC / Magnus IP or hostname'],
             ['name' => 'port', 'label' => 'Port', 'type' => 'int', 'min' => 1, 'max' => 65535, 'required' => true, 'default' => '5060', 'list' => true],
             ['name' => 'transport', 'label' => 'Transport', 'type' => 'select', 'required' => true, 'options' => ['udp' => 'UDP', 'tcp' => 'TCP', 'tls' => 'TLS'], 'default' => 'udp'],
-            ['name' => 'auth_username', 'label' => 'Username', 'max' => 120, 'help' => 'Leave blank for IP-authenticated trunks'],
-            ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Encrypted at rest. Leave blank on edit to keep the current password.'],
+            ['name' => 'auth_username', 'label' => 'Username', 'max' => 120, 'help' => 'Required for Register / Invite digest modes'],
+            ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Encrypted at rest. Leave blank on edit to keep current password.'],
+            ['name' => 'outbound_proxy', 'label' => 'Outbound proxy (optional)', 'max' => 190, 'help' => 'Only if vendor gave a separate proxy host'],
             ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 1, 'max' => 1000000, 'required' => true, 'default' => '100'],
             ['name' => 'codecs', 'label' => 'Codecs', 'max' => 190, 'default' => 'PCMA,PCMU', 'help' => 'Comma-separated, e.g. PCMA,PCMU,G729'],
             ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Inherit', 'direct' => 'Direct', 'relay' => 'Relay', 'record' => 'Record']],
-            ['name' => 'initial_increment', 'label' => 'Buy increment I (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6', 'help' => 'Provider billing: first block'],
-            ['name' => 'subsequent_increment', 'label' => 'Buy increment S (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6', 'help' => 'Provider billing: next blocks'],
-            ['name' => 'default_rate', 'label' => 'Fallback buy rate / min', 'type' => 'number', 'help' => 'Optional if you set Provider Rates per prefix'],
+            ['name' => 'initial_increment', 'label' => 'Buy increment I (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6'],
+            ['name' => 'subsequent_increment', 'label' => 'Buy increment S (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6'],
+            ['name' => 'default_rate', 'label' => 'Fallback buy rate / min', 'type' => 'number'],
             ['name' => 'connect_fee', 'label' => 'Buy connection fee', 'type' => 'number', 'default' => '0'],
-            ['name' => 'priority', 'label' => 'Priority', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Lower number = tried first'],
+            ['name' => 'priority', 'label' => 'Priority', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Lower = tried first'],
             $status,
         ];
     }
@@ -84,10 +96,67 @@ final class CarrierController extends CrudController
                 }
             }
             $data['connect_fee'] = $data['connect_fee'] ?? '0';
+            $mode = (string) ($data['auth_mode'] ?? 'ip');
+            if (in_array($mode, ['register', 'invite'], true)) {
+                $user = trim((string) ($data['auth_username'] ?? ($existing['auth_username'] ?? '')));
+                $hasSecret = !empty($data['auth_secret_enc']) || !empty($existing['auth_secret_enc'] ?? null);
+                if ($user === '' || (!$hasSecret && $existing === null)) {
+                    throw new \DomainException('Register / Invite digest modes require Username and Password.');
+                }
+            }
+            if ($mode === 'ip') {
+                // keep credentials optional for IP peers
+            }
         } else {
             $data = $this->autoCode($data, $existing, 'carriers');
             $data['is_demo'] = $existing['is_demo'] ?? 0;
         }
         return $data;
+    }
+
+    protected function afterSave(Request $r, int $id, array $data, ?array $existing): ?string
+    {
+        if ($this->kind !== 'trunk') {
+            return null;
+        }
+        $prov = OpensipsProvisioner::fromConfig();
+        if (!$prov->enabled()) {
+            return 'Trunk saved in portal only — OpenSIPS provisioning is disabled. Enable OPENSIPS_ENABLED and re-save, or run: php bin/sync-opensips-trunks.php';
+        }
+        try {
+            $row = $this->repo()->findInternal($id);
+            if ($row) {
+                $prov->syncTrunk($row);
+            }
+            // Keep drouting rules in sync (gwlist references)
+            (new OpensipsRoutingSync($this->db(), $prov))->syncAll();
+            $mode = (string) ($row['auth_mode'] ?? 'ip');
+            if ($mode === 'ip') {
+                return 'Trunk pushed to OpenSIPS. IP peer mode: ask your vendor to allowlist THIS server public SIP IP on their Magnus (IP authentication). They will not show “Registered”.';
+            }
+            if ($mode === 'register') {
+                return 'Trunk pushed to OpenSIPS with outbound REGISTER. Check vendor Magnus after ~30s; if still offline, verify user/pass/host and opensips logs.';
+            }
+            return 'Trunk pushed to OpenSIPS (invite digest).';
+        } catch (\Throwable $e) {
+            App::session()->flash('warning', 'Saved in portal, but OpenSIPS sync failed: ' . (App::config('app.debug') ? $e->getMessage() : 'see server log / run php bin/sync-opensips-trunks.php'));
+            return null;
+        }
+    }
+
+    protected function afterDelete(Request $r, array $row): void
+    {
+        if ($this->kind !== 'trunk') {
+            return;
+        }
+        $prov = OpensipsProvisioner::fromConfig();
+        if ($prov->enabled()) {
+            try {
+                $prov->removeTrunk((int) $row['id']);
+                (new OpensipsRoutingSync($this->db(), $prov))->syncAll();
+            } catch (\Throwable) {
+                App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
+            }
+        }
     }
 }

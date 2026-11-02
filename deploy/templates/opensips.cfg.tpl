@@ -97,6 +97,10 @@ modparam("acc", "report_cancels", 0)
 loadmodule "drouting.so"
 modparam("drouting", "db_url", "@@OPENSIPS_DB_URL@@")
 
+# Outbound REGISTER towards providers that require digest registration (Magnus user/pass trunks).
+# Optional: package opensips-uac-module. If the .so is missing, comment these two lines.
+@@OPENSIPS_UAC_BLOCK@@
+
 ####### Routing logic #########
 
 route {
@@ -194,8 +198,9 @@ route {
 	t_on_reply("handle_reply");
 	t_on_failure("carrier_failover");
 
-	if (!do_routing()) {
-		xlog("L_WARN", "no route for $rU (from $fU)\n");
+	# Group "1" is filled by Ownswitch (php bin/sync-opensips-trunks.php / trunk+route save)
+	if (!do_routing("1")) {
+		xlog("L_WARN", "no route for $rU (from $fU) — sync trunks/routes to OpenSIPS\n");
 		send_reply(503, "No Route");
 		exit;
 	}
