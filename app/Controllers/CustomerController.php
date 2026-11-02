@@ -4,20 +4,22 @@ declare(strict_types=1);
 
 namespace Ownswitch\Controllers;
 
+use Ownswitch\App;
 use Ownswitch\Http\Request;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CustomerRepository;
 use Ownswitch\Repositories\ResellerRepository;
+use Ownswitch\Repositories\UserRepository;
 use Ownswitch\Support\TenantScope;
 
-/** Magnus Clients → Users — core fields only. */
+/** Magnus Clients → Users — core fields + portal login (email/password). */
 final class CustomerController extends CrudController
 {
     protected string $base = '/users';
     protected string $singular = 'User';
     protected string $plural = 'Users';
     protected array $writeRoles = ['super_admin', 'admin', 'reseller'];
-    protected string $emptyHint = 'No users yet. Create User → assign Plan → add SIP User → Refill credit.';
+    protected string $emptyHint = 'No users yet. Create User → set Email + Portal password → assign Plan → add SIP User → Refill credit.';
 
     protected function repo(): BaseRepository
     {
@@ -34,7 +36,14 @@ final class CustomerController extends CrudController
         $staff = $this->scope($r)->isStaff();
         $f = [
             ['name' => 'name', 'label' => 'Username', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'Display / account name'],
-            ['name' => 'contact_email', 'label' => 'Email', 'type' => 'email', 'max' => 190, 'list' => true],
+            ['name' => 'contact_email', 'label' => 'Email (portal login)', 'type' => 'email', 'required' => true, 'max' => 190, 'list' => true, 'help' => 'Used to sign in at /login and see CDR, balance, reports'],
+            [
+                'name' => 'portal_password',
+                'label' => 'Portal password',
+                'type' => 'password',
+                'max' => 128,
+                'help' => 'Required on create. On edit, leave blank to keep current. Min 12 chars with upper, lower, digit. User can also change it under their profile menu.',
+            ],
         ];
         if ($staff) {
             $res = ['' => '— none —'];
@@ -78,6 +87,19 @@ final class CustomerController extends CrudController
                 throw new \DomainException('Reseller not found.');
             }
         }
+
+        $pw = isset($data['portal_password']) ? (string) $data['portal_password'] : '';
+        unset($data['portal_password']);
+        $r->setAttr('_portal_password', $pw);
+
+        $email = trim((string) ($data['contact_email'] ?? ''));
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new \DomainException('Email is required for portal login.');
+        }
+        if ($existing === null && $pw === '') {
+            throw new \DomainException('Portal password is required when creating a user.');
+        }
+
         $data = $this->autoCode($data, $existing, 'customers');
         if ($existing === null) {
             $data['currency'] = $data['currency'] ?? 'USD';
@@ -92,6 +114,26 @@ final class CustomerController extends CrudController
     protected function afterSave(Request $r, int $id, array $data, ?array $existing): ?string
     {
         $this->db()->prepare('INSERT IGNORE INTO balances (customer_id, balance, reserved) VALUES (?,0,0)')->execute([$id]);
-        return null;
+
+        $row = $this->repo()->findInternal($id);
+        if ($row === null) {
+            return null;
+        }
+        $pw = $r->attr('_portal_password');
+        $plain = is_string($pw) && $pw !== '' ? $pw : null;
+        $users = new UserRepository($this->db());
+        $res = $users->upsertCustomerPortal(
+            $id,
+            (string) ($row['contact_email'] ?? ''),
+            (string) ($row['name'] ?? ''),
+            $plain,
+            isset($row['reseller_id']) && $row['reseller_id'] !== null ? (int) $row['reseller_id'] : null,
+            (string) ($row['status'] ?? 'active'),
+        );
+        if (!$res['ok']) {
+            App::session()->flash('warning', 'User saved, but portal login failed: ' . $res['detail']);
+            return null;
+        }
+        return $res['detail'] . ' They sign in with email + portal password to view CDR, balance and reports.';
     }
 }

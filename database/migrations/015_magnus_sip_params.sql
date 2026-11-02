@@ -113,18 +113,10 @@ SET @sql := (
 );
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
+-- qualify is reserved in MySQL 8 — applied in 018_fix_qualify_columns.sql (direct ALTER, no PREPARE)
 SET @sql := (
   SELECT IF(COUNT(*) = 0,
-    'ALTER TABLE carrier_trunks ADD COLUMN `qualify` VARCHAR(8) NOT NULL DEFAULT ''yes'' AFTER directmedia',
-    'DO 0')
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'carrier_trunks' AND COLUMN_NAME = 'qualify'
-);
-PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
-
-SET @sql := (
-  SELECT IF(COUNT(*) = 0,
-    'ALTER TABLE carrier_trunks ADD COLUMN peer_type VARCHAR(16) NOT NULL DEFAULT ''peer'' AFTER `qualify`',
+    'ALTER TABLE carrier_trunks ADD COLUMN peer_type VARCHAR(16) NOT NULL DEFAULT ''peer'' AFTER directmedia',
     'DO 0')
   FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'carrier_trunks' AND COLUMN_NAME = 'peer_type'
@@ -222,18 +214,10 @@ SET @sql := (
 );
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
+-- qualify reserved — see 018_fix_qualify_columns.sql
 SET @sql := (
   SELECT IF(COUNT(*) = 0,
-    'ALTER TABLE sip_accounts ADD COLUMN `qualify` VARCHAR(8) NOT NULL DEFAULT ''yes'' AFTER directmedia',
-    'DO 0')
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'sip_accounts' AND COLUMN_NAME = 'qualify'
-);
-PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
-
-SET @sql := (
-  SELECT IF(COUNT(*) = 0,
-    'ALTER TABLE sip_accounts ADD COLUMN routing_plan_id BIGINT UNSIGNED NULL AFTER `qualify`',
+    'ALTER TABLE sip_accounts ADD COLUMN routing_plan_id BIGINT UNSIGNED NULL AFTER directmedia',
     'DO 0')
   FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'sip_accounts' AND COLUMN_NAME = 'routing_plan_id'
