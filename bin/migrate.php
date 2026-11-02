@@ -34,6 +34,13 @@ try {
         echo "Database `{$name}` ready.\n";
     }
     $pdo = App::db();
+    // Migration SQL uses MySQL user-variables + PREPARE/EXECUTE; native prepares leave unbuffered
+    // result sets (HY000/2014). Force emulated + buffered for the CLI migrator only.
+    try {
+        $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
+        $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, true);
+    } catch (\Throwable) {
+    }
 } catch (\Throwable $e) {
     fwrite(STDERR, 'Cannot connect: ' . $e->getMessage() . "\nCheck config/.env (copy config/.env.example) and that MySQL is running. Use --create-db to create the database.\n");
     exit(1);

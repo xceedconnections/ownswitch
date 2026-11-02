@@ -86,6 +86,7 @@ abstract class CrudController extends BaseController
                 is_string($r->query('dir')) ? (string) $r->query('dir') : 'desc',
                 $q
             );
+            $res['rows'] = $this->enrichRows($r, $res['rows']);
         } catch (\PDOException $e) {
             $hint = (stripos($e->getMessage(), "doesn't exist") !== false || stripos($e->getMessage(), 'Base table') !== false)
                 ? 'Database tables missing. On the server run: sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/migrate.php'
@@ -97,6 +98,17 @@ abstract class CrudController extends BaseController
             'fields' => $fields, 'result' => $res, 'q' => $q, 'filters' => $filters, 'canWrite' => $this->canWrite($r),
             'emptyHint' => $this->emptyHint, 'query' => $r->query,
         ] + $this->extra($r));
+    }
+
+    /**
+     * Hook: decorate list rows (e.g. live latency). Must not throw.
+     *
+     * @param list<array<string,mixed>> $rows
+     * @return list<array<string,mixed>>
+     */
+    protected function enrichRows(Request $r, array $rows): array
+    {
+        return $rows;
     }
 
     public function create(Request $r, array $p = []): Response

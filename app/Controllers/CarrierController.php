@@ -10,6 +10,7 @@ use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
 use Ownswitch\Services\Routing\OpensipsRoutingSync;
+use Ownswitch\Services\Sip\SipOptionsProbe;
 use Ownswitch\Support\Crypto;
 use Ownswitch\Support\SipPeerOptions;
 
@@ -74,8 +75,42 @@ final class CarrierController extends CrudController
             ['name' => 'cid_remove_prefix', 'label' => 'CID remove prefix', 'max' => 32],
             ['name' => 'qualify', 'label' => 'Probe gateway', 'type' => 'select', 'options' => SipPeerOptions::YES_NO, 'default' => 'yes', 'help' => 'OpenSIPS probe_mode'],
             ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Soft limit for portal/reporting'],
+            ['name' => 'reg_status', 'label' => 'Link', 'list' => true],
+            ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true],
             $status,
         ];
+    }
+
+    protected function enrichRows(Request $r, array $rows): array
+    {
+        if ($this->kind !== 'trunk' || $rows === []) {
+            return $rows;
+        }
+        $prov = OpensipsProvisioner::fromConfig();
+        $gwStatus = $prov->enabled() ? $prov->gatewayStatuses() : [];
+        foreach ($rows as &$row) {
+            $host = (string) ($row['host'] ?? '');
+            $port = (int) ($row['port'] ?? 5060);
+            $active = ($row['status'] ?? '') === 'active';
+            $gwid = OpensipsProvisioner::gwid((int) ($row['id'] ?? 0));
+            $state = $gwStatus[$gwid] ?? null;
+            $ms = null;
+            if ($active && $host !== '') {
+                $ms = SipOptionsProbe::rttMs($host, $port);
+            }
+            if ($state !== null && $state !== '') {
+                $row['reg_status'] = $state;
+            } elseif (!$active) {
+                $row['reg_status'] = 'disabled';
+            } elseif ($ms !== null) {
+                $row['reg_status'] = 'reachable';
+            } else {
+                $row['reg_status'] = 'no reply';
+            }
+            $row['latency_ms'] = ($ms !== null) ? $ms : (($active && $host !== '') ? 'n/a' : '—');
+        }
+        unset($row);
+        return $rows;
     }
 
     protected function prepare(Request $r, array $data, ?array $existing): array

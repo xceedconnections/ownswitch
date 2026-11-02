@@ -9,6 +9,7 @@ use Ownswitch\Http\Request;
 use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\SipAccountRepository;
+use Ownswitch\Services\Sip\SipOptionsProbe;
 use Ownswitch\Support\MediaPolicy;
 
 /**
@@ -59,10 +60,39 @@ final class SipUserController extends CrudController
                 'help' => 'Same as Default media policy: Default follows Settings; Direct skips media relay; Relay uses RTPengine',
             ],
             ['name' => 'max_channels', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 10000, 'required' => true, 'default' => '2', 'list' => true],
+            ['name' => 'reg_status', 'label' => 'Registration', 'list' => true],
+            ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true],
             ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'],
             ['name' => 'notes', 'label' => 'Description', 'max' => 255],
         );
         return $f;
+    }
+
+    protected function enrichRows(Request $r, array $rows): array
+    {
+        if ($rows === []) {
+            return $rows;
+        }
+        $prov = OpensipsProvisioner::fromConfig();
+        $regs = $prov->enabled() ? $prov->registeredContacts() : [];
+        foreach ($rows as &$row) {
+            $user = strtolower((string) ($row['username'] ?? ''));
+            $reg = $regs[$user] ?? null;
+            if ($reg === null) {
+                $row['reg_status'] = 'offline';
+                $row['latency_ms'] = '—';
+                continue;
+            }
+            $row['reg_status'] = 'registered';
+            $uri = trim((string) ($reg['received'] ?? '')) !== ''
+                ? (string) $reg['received']
+                : (string) ($reg['contact'] ?? '');
+            $ep = SipOptionsProbe::endpointFromUri($uri);
+            $ms = $ep ? SipOptionsProbe::rttMs($ep['host'], $ep['port']) : null;
+            $row['latency_ms'] = $ms ?? 'n/a';
+        }
+        unset($row);
+        return $rows;
     }
 
     protected function prepare(Request $r, array $data, ?array $existing): array

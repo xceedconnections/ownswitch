@@ -24,6 +24,19 @@ final class Migrator
         );
     }
 
+    /** Prefer client-side prepares + buffered results for migration SQL (user vars, PREPARE/EXECUTE). */
+    private function tuneForMigrations(): void
+    {
+        try {
+            $this->pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
+        } catch (\Throwable) {
+        }
+        try {
+            $this->pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, true);
+        } catch (\Throwable) {
+        }
+    }
+
     /** @return list<string> file names sorted */
     public function files(): array
     {
@@ -37,7 +50,13 @@ final class Migrator
     public function applied(): array
     {
         $this->ensureTable();
-        return $this->pdo->query('SELECT migration, checksum FROM schema_migrations')->fetchAll(PDO::FETCH_KEY_PAIR);
+        $st = $this->pdo->query('SELECT migration, checksum FROM schema_migrations');
+        if ($st === false) {
+            return [];
+        }
+        $rows = $st->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+        $st->closeCursor();
+        return $rows;
     }
 
     /** @return list<array{migration:string,status:string}> */
@@ -61,6 +80,7 @@ final class Migrator
      */
     public function migrate(?callable $log = null): array
     {
+        $this->tuneForMigrations();
         $applied = $this->applied();
         $done = [];
         foreach ($this->files() as $f) {
@@ -96,20 +116,35 @@ final class Migrator
     }
 
     /**
-     * Run one SQL statement and fully drain any result sets (SELECT / EXECUTE SELECT 1 / SHOW).
-     * PDO::exec() leaves those open and the next query hits HY000/2014.
+     * Run one SQL statement and fully drain any result sets.
+     * PREPARE/EXECUTE "SELECT 1" and bare SELECTs leave the connection busy (HY000/2014) if undrained.
      */
     private function runStatement(string $sql): void
     {
-        $st = $this->pdo->query($sql);
-        if ($st === false) {
+        $trim = ltrim($sql);
+        // Prefer exec for pure DDL/DML that never returns rows (avoids leftover cursors).
+        if (preg_match('/^(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|REPLACE|TRUNCATE|SET\s+@|SET\s+NAMES|SET\s+time_zone|DO\s|PREPARE\s|DEALLOCATE\s)/i', $trim)
+            && !preg_match('/\bSELECT\b/i', $trim)
+            && !preg_match('/^EXECUTE\b/i', $trim)
+        ) {
+            $this->pdo->exec($sql);
             return;
         }
-        do {
-            // Buffer every rowset so the connection is free for the next statement.
+
+        $st = $this->pdo->query($sql);
+        if (!($st instanceof \PDOStatement)) {
+            return;
+        }
+        try {
             $st->fetchAll();
-        } while ($st->nextRowset());
-        $st->closeCursor();
+            while ($st->nextRowset()) {
+                $st->fetchAll();
+            }
+        } catch (\PDOException) {
+            // Some drivers error on nextRowset() when there is no further set — cursor still closed below.
+        } finally {
+            $st->closeCursor();
+        }
     }
 
     /**

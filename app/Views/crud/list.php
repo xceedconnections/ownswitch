@@ -25,6 +25,25 @@ $cell = static function (array $f, mixed $v): string {
     if (($f['type'] ?? '') === 'number') {
         return '<span class="os-mono">' . e($v) . '</span>';
     }
+    if (($f['name'] ?? '') === 'latency_ms') {
+        if ($v === null || $v === '' || $v === '—') {
+            return '<span class="text-muted">—</span>';
+        }
+        if ($v === 'n/a' || $v === 'offline') {
+            return '<span class="text-muted">' . e((string) $v) . '</span>';
+        }
+        $n = is_numeric($v) ? (int) $v : null;
+        if ($n !== null) {
+            $cls = $n < 80 ? 'success' : ($n < 200 ? 'warning' : 'danger');
+            return '<span class="badge text-bg-' . $cls . ' os-mono">' . e((string) $n) . ' ms</span>';
+        }
+        return '<span class="os-mono">' . e((string) $v) . '</span>';
+    }
+    if (($f['name'] ?? '') === 'reg_status') {
+        $online = ($v === 'registered' || $v === 'online' || $v === 'Active');
+        $cls = $online ? 'success' : 'secondary';
+        return '<span class="badge text-bg-' . $cls . '">' . e((string) $v) . '</span>';
+    }
     return e($v);
 };
 $statusField = null;

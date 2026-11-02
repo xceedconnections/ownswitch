@@ -621,6 +621,95 @@ final class OpensipsProvisioner
         $done = true;
     }
 
+    /**
+     * Registered contacts keyed by username (best contact prefers `received` for NAT).
+     *
+     * @return array<string, array{contact:string, received:string, expires:int}>
+     */
+    public function registeredContacts(): array
+    {
+        if (!$this->enabled() || !$this->tableExists('location')) {
+            return [];
+        }
+        $cols = $this->columns('location');
+        $need = ['username', 'contact'];
+        foreach ($need as $c) {
+            if (!in_array($c, $cols, true)) {
+                return [];
+            }
+        }
+        $hasRecv = in_array('received', $cols, true);
+        $hasExp = in_array('expires', $cols, true);
+        $sql = 'SELECT username, contact'
+            . ($hasRecv ? ', received' : '')
+            . ($hasExp ? ', expires' : '')
+            . ' FROM location';
+        $out = [];
+        foreach ($this->db()->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $u = strtolower((string) ($row['username'] ?? ''));
+            if ($u === '') {
+                continue;
+            }
+            $expires = time() + 60;
+            if ($hasExp) {
+                $raw = $row['expires'] ?? null;
+                if (is_numeric($raw)) {
+                    $expires = (int) $raw;
+                } elseif (is_string($raw) && $raw !== '') {
+                    $ts = strtotime($raw);
+                    $expires = $ts !== false ? $ts : time() + 60;
+                }
+            }
+            if ($expires > 0 && $expires < time()) {
+                continue;
+            }
+            // Prefer freshest / keep first if multiple
+            if (isset($out[$u])) {
+                continue;
+            }
+            $out[$u] = [
+                'contact' => (string) ($row['contact'] ?? ''),
+                'received' => $hasRecv ? (string) ($row['received'] ?? '') : '',
+                'expires' => $expires,
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Gateway probe state from MI dr_gw_status (gwid => Active|Inactive|…).
+     *
+     * @return array<string, string>
+     */
+    public function gatewayStatuses(): array
+    {
+        $r = $this->miCall('dr_gw_status');
+        if ($r === null || isset($r['error'])) {
+            $r = $this->miCall('drouting:gw_status');
+        }
+        if ($r === null || isset($r['error']) || !is_array($r['result'] ?? null)) {
+            return [];
+        }
+        $out = [];
+        $walk = static function ($node) use (&$walk, &$out): void {
+            if (!is_array($node)) {
+                return;
+            }
+            $gwid = $node['gwid'] ?? $node['GW_ID'] ?? $node['ID'] ?? null;
+            $state = $node['State'] ?? $node['state'] ?? $node['Enabled'] ?? $node['enabled'] ?? $node['Status'] ?? $node['status'] ?? null;
+            if (is_string($gwid) && $gwid !== '' && $state !== null && $state !== '') {
+                $out[$gwid] = is_string($state) ? $state : (string) $state;
+            }
+            foreach ($node as $v) {
+                if (is_array($v)) {
+                    $walk($v);
+                }
+            }
+        };
+        $walk($r['result']);
+        return $out;
+    }
+
     /** @return list<string> */
     private function columns(string $table, bool $fresh = false): array
     {
