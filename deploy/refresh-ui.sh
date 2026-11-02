@@ -62,8 +62,16 @@ test -f "$REL/app/Views/layout.php"
 rm -f "$REL/.ownswitch-placeholder"
 ln -sfn "$OWN_VAR/storage" "$REL/storage"
 chown -R root:ownswitch "$REL"
-chmod -R u=rwX,g=rX,o= "$REL"
+# 0751 on the release root: other needs +x to traverse into public (nginx runs as www-data).
+# Do NOT chmod -R o= on $REL itself — that causes static asset 404s.
+chmod 0751 "$REL"
+find "$REL" -mindepth 1 -maxdepth 1 ! -name public ! -name storage -exec chmod -R u=rwX,g=rX,o= {} +
 chmod -R u=rwX,go=rX "$REL/public"
+chmod 0755 /opt/ownswitch /opt/ownswitch/releases 2>/dev/null || true
+# Ensure nginx can read group-owned trees even if a future chmod tightens other.
+if id www-data >/dev/null 2>&1; then
+  usermod -aG ownswitch www-data 2>/dev/null || true
+fi
 
 ln -sfn "$REL" "$OWN_OPT/current"
 echo "Switched current → $REL"

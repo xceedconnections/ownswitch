@@ -162,8 +162,12 @@ test -f "$REL/public/index.php" || { echo "FATAL: rsync failed to copy public/in
 rm -f "$REL/.ownswitch-placeholder"
 ln -sfn "$OWN_VAR/storage" "$REL/storage"
 chown -R root:ownswitch "$REL"
-chmod -R u=rwX,g=rX,o= "$REL"
+# other needs +x on the release root so nginx (www-data) can reach public/
+chmod 0751 "$REL"
+find "$REL" -mindepth 1 -maxdepth 1 ! -name public ! -name storage -exec chmod -R u=rwX,g=rX,o= {} +
 chmod -R u=rwX,go=rX "$REL/public"
+chmod 0755 /opt/ownswitch /opt/ownswitch/releases 2>/dev/null || true
+id www-data >/dev/null 2>&1 && usermod -aG ownswitch www-data 2>/dev/null || true
 
 # Atomic switch
 ln -sfn "$REL" "$OWN_OPT/current"
