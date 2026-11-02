@@ -8,12 +8,12 @@ use Ownswitch\Repositories\PrefixRepository;
 use Ownswitch\Repositories\RatePlanRepository;
 use Ownswitch\Repositories\TariffRepository;
 use Ownswitch\Services\Billing\RatingService;
+use Ownswitch\Support\SpreadsheetReader;
 use PDO;
 use RuntimeException;
 
 /**
- * CSV import/export for customer and carrier tariff tables.
- * Columns: prefix,destination,rate,initial_increment,subsequent_increment,connect_fee,status,effective_from,effective_to
+ * CSV/XLSX import/export for customer and carrier tariff tables, with column mapping.
  */
 final class TariffCsvService
 {
@@ -21,6 +21,8 @@ final class TariffCsvService
         'prefix', 'destination', 'rate', 'initial_increment', 'subsequent_increment',
         'connect_fee', 'status', 'effective_from', 'effective_to',
     ];
+
+    public const REQUIRED = ['prefix', 'rate'];
 
     public function __construct(private PDO $db)
     {
@@ -60,38 +62,89 @@ final class TariffCsvService
     }
 
     /**
-     * Validate then optionally commit. Returns preview structure.
-     *
+     * @param array<string,string> $map field => source header
+     * @return array{ok:bool,errors:list<string>,warnings:list<string>,rows:list<array<string,mixed>>,duplicates:list<string>}
+     */
+    public function previewMapped(string $kind, int $ownerId, array $headers, array $dataRows, array $map): array
+    {
+        $mapped = SpreadsheetReader::mapRows($headers, $dataRows, $map);
+        return $this->previewRows($mapped);
+    }
+
+    /**
      * @return array{ok:bool,errors:list<string>,warnings:list<string>,rows:list<array<string,mixed>>,duplicates:list<string>}
      */
     public function preview(string $kind, int $ownerId, string $csvContents): array
     {
-        $parsed = $this->parse($csvContents);
-        $errors = $parsed['errors'];
-        $warnings = $parsed['warnings'];
-        $rows = $parsed['rows'];
+        $parsed = SpreadsheetReader::fromCsv($csvContents);
+        if ($parsed['error']) {
+            return ['ok' => false, 'errors' => [$parsed['error']], 'warnings' => [], 'rows' => [], 'duplicates' => []];
+        }
+        $map = SpreadsheetReader::guessMap(self::HEADERS, $parsed['headers']);
+        return $this->previewMapped($kind, $ownerId, $parsed['headers'], $parsed['rows'], $map);
+    }
+
+    /**
+     * @param list<array<string,string>> $mapped
+     * @return array{ok:bool,errors:list<string>,warnings:list<string>,rows:list<array<string,mixed>>,duplicates:list<string>}
+     */
+    public function previewRows(array $mapped): array
+    {
+        $errors = [];
+        $warnings = [];
+        $rows = [];
         $seen = [];
         $duplicates = [];
-        foreach ($rows as $i => $row) {
-            $key = $row['prefix'];
-            if (isset($seen[$key])) {
-                $duplicates[] = "Duplicate prefix {$key} (rows {$seen[$key]} and " . ($i + 2) . ')';
+        foreach ($mapped as $i => $assoc) {
+            $lineNo = $i + 2;
+            $prefix = preg_replace('/\D+/', '', (string) ($assoc['prefix'] ?? '')) ?? '';
+            if ($prefix === '') {
+                $errors[] = "Row {$lineNo}: invalid prefix";
+                continue;
+            }
+            $rate = trim((string) ($assoc['rate'] ?? ''));
+            if ($rate === '') {
+                $errors[] = "Row {$lineNo}: rate is required";
+                continue;
+            }
+            $status = strtolower(trim((string) ($assoc['status'] ?? 'active')));
+            if ($status === '') {
+                $status = 'active';
+            }
+            if (!in_array($status, ['active', 'disabled'], true)) {
+                $errors[] = "Row {$lineNo}: status must be active or disabled";
+                continue;
+            }
+            if (isset($seen[$prefix])) {
+                $duplicates[] = "Duplicate prefix {$prefix} (rows {$seen[$prefix]} and {$lineNo})";
             } else {
-                $seen[$key] = $i + 2;
+                $seen[$prefix] = $lineNo;
             }
             try {
-                RatingService::assertDecimal((string) $row['rate'], 'rate');
-                if (bccomp((string) $row['rate'], '0', 8) < 0) {
-                    $errors[] = 'Row ' . ($i + 2) . ': negative rate rejected';
+                RatingService::assertDecimal($rate, 'rate');
+                if (bccomp($rate, '0', 8) < 0) {
+                    $errors[] = "Row {$lineNo}: negative rate rejected";
                 }
             } catch (\Throwable $e) {
-                $errors[] = 'Row ' . ($i + 2) . ': ' . $e->getMessage();
+                $errors[] = "Row {$lineNo}: " . $e->getMessage();
             }
             foreach (['initial_increment', 'subsequent_increment'] as $inc) {
-                if ($row[$inc] !== null && $row[$inc] !== '' && ((int) $row[$inc] <= 0)) {
-                    $errors[] = 'Row ' . ($i + 2) . ": {$inc} must be a positive integer";
+                $v = $assoc[$inc] ?? '';
+                if ($v !== '' && $v !== null && (int) $v <= 0) {
+                    $errors[] = "Row {$lineNo}: {$inc} must be a positive integer";
                 }
             }
+            $rows[] = [
+                'prefix' => $prefix,
+                'destination' => (string) ($assoc['destination'] ?? ''),
+                'rate' => $rate,
+                'initial_increment' => (string) ($assoc['initial_increment'] ?? ''),
+                'subsequent_increment' => (string) ($assoc['subsequent_increment'] ?? ''),
+                'connect_fee' => (string) ($assoc['connect_fee'] ?? ''),
+                'status' => $status,
+                'effective_from' => (string) ($assoc['effective_from'] ?? ''),
+                'effective_to' => (string) ($assoc['effective_to'] ?? ''),
+            ];
         }
         if ($duplicates !== []) {
             $errors = array_merge($errors, $duplicates);
@@ -105,16 +158,12 @@ final class TariffCsvService
         ];
     }
 
-    /**
-     * Commit validated CSV (replace-by-prefix upsert within owner).
-     *
-     * @return int number of rows written
-     */
-    public function import(string $kind, int $ownerId, string $csvContents, int $actorUserId): int
+    /** @param list<array<string,mixed>> $rows */
+    public function importRows(string $kind, int $ownerId, array $rows, int $actorUserId): int
     {
-        $preview = $this->preview($kind, $ownerId, $csvContents);
+        $preview = $this->previewRows(array_map(static fn ($r) => array_map('strval', $r), $rows));
         if (!$preview['ok']) {
-            throw new RuntimeException('CSV validation failed: ' . implode('; ', $preview['errors']));
+            throw new RuntimeException('Validation failed: ' . implode('; ', $preview['errors']));
         }
         $this->db->beginTransaction();
         try {
@@ -135,10 +184,18 @@ final class TariffCsvService
         }
     }
 
+    public function import(string $kind, int $ownerId, string $csvContents, int $actorUserId): int
+    {
+        $preview = $this->preview($kind, $ownerId, $csvContents);
+        if (!$preview['ok']) {
+            throw new RuntimeException('CSV validation failed: ' . implode('; ', $preview['errors']));
+        }
+        return $this->importRows($kind, $ownerId, $preview['rows'], $actorUserId);
+    }
+
     /** @param array<string,mixed> $row */
     private function upsert(string $kind, int $ownerId, array $row): void
     {
-        // Keep Magnus Prefixes catalogue in sync (prefix + destination name only).
         (new PrefixRepository($this->db))->upsert((string) $row['prefix'], (string) ($row['destination'] ?? ''));
         $cols = [
             'prefix' => $row['prefix'],
@@ -182,75 +239,6 @@ final class TariffCsvService
             $st = $this->db->prepare('INSERT INTO tariff_import_batches (kind, owner_id, user_id, row_count, created_at) VALUES (?,?,?,?,UTC_TIMESTAMP())');
             $st->execute([$kind, $ownerId, $actorUserId ?: null, $count]);
         } catch (\Throwable) {
-            // optional table — ignore if migration not present
         }
-    }
-
-    /**
-     * @return array{rows:list<array<string,mixed>>,errors:list<string>,warnings:list<string>}
-     */
-    private function parse(string $csvContents): array
-    {
-        $errors = [];
-        $warnings = [];
-        $rows = [];
-        $fh = fopen('php://temp', 'r+');
-        if ($fh === false) {
-            return ['rows' => [], 'errors' => ['Unable to parse CSV'], 'warnings' => []];
-        }
-        fwrite($fh, $csvContents);
-        rewind($fh);
-        $header = fgetcsv($fh);
-        if ($header === false) {
-            fclose($fh);
-            return ['rows' => [], 'errors' => ['Empty CSV'], 'warnings' => []];
-        }
-        $header = array_map(static fn ($h) => strtolower(trim((string) $h)), $header);
-        foreach (['prefix', 'rate'] as $req) {
-            if (!in_array($req, $header, true)) {
-                $errors[] = "Missing required column: {$req}";
-            }
-        }
-        if ($errors !== []) {
-            fclose($fh);
-            return ['rows' => [], 'errors' => $errors, 'warnings' => $warnings];
-        }
-        $lineNo = 1;
-        while (($data = fgetcsv($fh)) !== false) {
-            $lineNo++;
-            if ($data === [null] || $data === false || (count($data) === 1 && trim((string) $data[0]) === '')) {
-                continue;
-            }
-            $assoc = [];
-            foreach ($header as $i => $name) {
-                $assoc[$name] = isset($data[$i]) ? trim((string) $data[$i]) : '';
-            }
-            $prefix = preg_replace('/\D+/', '', (string) ($assoc['prefix'] ?? '')) ?? '';
-            if ($prefix === '') {
-                $errors[] = "Row {$lineNo}: invalid prefix";
-                continue;
-            }
-            $status = strtolower((string) ($assoc['status'] ?? 'active'));
-            if ($status === '') {
-                $status = 'active';
-            }
-            if (!in_array($status, ['active', 'disabled'], true)) {
-                $errors[] = "Row {$lineNo}: status must be active or disabled";
-                continue;
-            }
-            $rows[] = [
-                'prefix' => $prefix,
-                'destination' => $assoc['destination'] ?? '',
-                'rate' => $assoc['rate'] ?? '',
-                'initial_increment' => $assoc['initial_increment'] ?? '',
-                'subsequent_increment' => $assoc['subsequent_increment'] ?? '',
-                'connect_fee' => $assoc['connect_fee'] ?? '',
-                'status' => $status,
-                'effective_from' => $assoc['effective_from'] ?? '',
-                'effective_to' => $assoc['effective_to'] ?? '',
-            ];
-        }
-        fclose($fh);
-        return ['rows' => $rows, 'errors' => $errors, 'warnings' => $warnings];
     }
 }

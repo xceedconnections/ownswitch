@@ -61,7 +61,8 @@ loadmodule "auth_db.so"
 modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("auth_db", "calculate_ha1", 0)
 modparam("auth_db", "password_column", "ha1")
-modparam("auth_db", "load_credentials", "")
+# Load SIP Directmedia (media_policy column on subscriber) into $avp(os_media)
+modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy")
 # Magnus-style: match subscriber by username only. Softphones often put the
 # server IP in the Domain field while HA1 realm is OWNSWITCH_DOMAIN — use_domain=1 breaks that.
 modparam("auth_db", "use_domain", 0)
@@ -126,7 +127,7 @@ route {
 	# ---- in-dialog requests ----
 	if (has_totag()) {
 		if (loose_route()) {
-			if (is_method("INVITE|ACK|BYE|UPDATE|PRACK")) {
+			if (is_method("INVITE|ACK|BYE|UPDATE|PRACK") && $avp(os_media) != "direct") {
 				rtpengine_manage();
 			}
 			route(relay);
@@ -206,8 +207,12 @@ route {
 	cgrates_acc("cdr|missed");
 	do_accounting("db", "cdr|missed|failed");
 
-	rtpengine_manage();
+	# Media: $avp(os_media) loaded from subscriber.media_policy on digest auth (else relay)
+	if ($avp(os_media) == NULL || $(avp(os_media){s.len}) == 0) {
+		$avp(os_media) = "relay";
+	}
 
+	route(apply_media);
 	t_on_reply("handle_reply");
 	t_on_failure("carrier_failover");
 
@@ -230,9 +235,19 @@ route[inbound_from_carrier] {
 		send_reply(404, "Not Found");
 		exit;
 	}
-	rtpengine_manage();
+	$avp(os_media) = "relay";
+	route(apply_media);
 	t_on_reply("handle_reply");
 	route(relay);
+}
+
+# Direct = skip RTPengine; Relay = rtpengine_manage()
+route[apply_media] {
+	if ($avp(os_media) == "direct") {
+		xlog("L_INFO", "media=direct for $fU (no rtpengine)\n");
+		return;
+	}
+	rtpengine_manage();
 }
 
 # Apply Magnus Fromuser / Fromdomain / CID prefixes from gateway attrs (fu=;fd=;cidadd=;cidrem=)
@@ -279,7 +294,7 @@ route[relay] {
 }
 
 onreply_route[handle_reply] {
-	if (has_body("application/sdp")) {
+	if (has_body("application/sdp") && $avp(os_media) != "direct") {
 		rtpengine_manage();
 	}
 }

@@ -24,6 +24,8 @@ use Ownswitch\Controllers\SettingsController;
 use Ownswitch\Controllers\SipUserController;
 use Ownswitch\Controllers\SystemController;
 use Ownswitch\Controllers\TariffController;
+use Ownswitch\Controllers\CallsOnlineController;
+use Ownswitch\Controllers\PrefixImportController;
 use Ownswitch\Controllers\TariffImportController;
 use Ownswitch\Http\Response;
 use Ownswitch\Router;
@@ -67,6 +69,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     });
     $crud($r, '/resellers', new ResellerController(), $STAFF);
     $crud($r, '/sip-users', new SipUserController(), $role(Menu::SIP_USERS));
+    $r->get('/calls-online', [new CallsOnlineController(), 'index'], [$role(Menu::SIP_USERS)]);
     $crud($r, '/ip-auth', new IpAuthController(), $role(Menu::SIP_USERS)); // CallerID / IP allowlist
 
     // Rates
@@ -77,8 +80,15 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $ti = new TariffImportController();
     $r->get('/tariffs/import', [$ti, 'form'], [$STAFF]);
     $r->get('/tariffs/export', [$ti, 'export'], [$STAFF]);
+    $r->post('/tariffs/import/upload', [$ti, 'upload'], [$STAFF]);
     $r->post('/tariffs/import/preview', [$ti, 'preview'], [$STAFF]);
     $r->post('/tariffs/import/commit', [$ti, 'commit'], [$STAFF]);
+    $pi = new PrefixImportController();
+    $r->get('/prefixes/import', [$pi, 'form'], [$STAFF]);
+    $r->get('/prefixes/export', [$pi, 'export'], [$STAFF]);
+    $r->post('/prefixes/import/upload', [$pi, 'upload'], [$STAFF]);
+    $r->post('/prefixes/import/preview', [$pi, 'preview'], [$STAFF]);
+    $r->post('/prefixes/import/commit', [$pi, 'commit'], [$STAFF]);
 
     // Routes — Providers / Trunk Groups / Provider Rates (legacy paths redirect)
     $providers = new CarrierController('carrier');

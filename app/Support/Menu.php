@@ -24,6 +24,7 @@ final class Menu
                 ['Users', '/users', self::RESELLER_UP],
                 ['Resellers', '/resellers', self::STAFF],
                 ['SIP Users', '/sip-users', self::SIP_USERS],
+                ['Calls Online', '/calls-online', self::SIP_USERS],
                 ['CallerID', '/ip-auth', self::SIP_USERS],
             ]],
             ['Billing', [
@@ -37,7 +38,8 @@ final class Menu
                 ['Tariffs', '/tariffs', self::STAFF],
                 ['Prefixes', '/prefixes', self::STAFF],
                 ['User Custom Rates', '/custom-rates', self::STAFF],
-                ['Import CSV', '/tariffs/import', self::STAFF],
+                ['Import Tariffs', '/tariffs/import', self::STAFF],
+                ['Import Prefixes', '/prefixes/import', self::STAFF],
             ]],
             ['Reports', [
                 ['CDR', '/cdrs', self::ALL],

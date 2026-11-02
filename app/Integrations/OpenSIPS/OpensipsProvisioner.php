@@ -58,6 +58,11 @@ final class OpensipsProvisioner
         return $this->initError;
     }
 
+    public function hasMi(): bool
+    {
+        return $this->miUrl !== '';
+    }
+
     public static function ha1(string $username, string $realm, string $password): array
     {
         return [md5("{$username}:{$realm}:{$password}"), md5("{$username}@{$realm}:{$realm}:{$password}")];
@@ -87,6 +92,21 @@ final class OpensipsProvisioner
         if ($account !== null && in_array('rpid', $cols, true)) {
             $cid = trim((string) ($account['caller_id'] ?? ''));
             $set['rpid'] = $cid !== '' ? $cid : '';
+        }
+        // Ensure media_policy column exists for load_credentials → $avp(os_media)
+        if ($account !== null) {
+            $this->ensureSubscriberMediaColumn();
+            $cols = $this->columns('subscriber');
+            if (in_array('media_policy', $cols, true)) {
+                $mp = strtolower(trim((string) ($account['_effective_media'] ?? $account['media_policy'] ?? 'relay')));
+                if ($mp === '' || $mp === 'default' || $mp === 'inherit') {
+                    $mp = 'relay';
+                }
+                if ($mp === 'record') {
+                    $mp = 'relay';
+                }
+                $set['media_policy'] = in_array($mp, ['direct', 'relay'], true) ? $mp : 'relay';
+            }
         }
 
         if ($id) {
@@ -430,22 +450,121 @@ final class OpensipsProvisioner
 
     public function mi(string $command): bool
     {
+        $r = $this->miCall($command);
+        return $r !== null && !isset($r['error']);
+    }
+
+    /**
+     * JSON-RPC MI call returning decoded body (null on transport failure).
+     *
+     * @param array<int|string,mixed> $params
+     * @return array<string,mixed>|null
+     */
+    public function miCall(string $method, array $params = []): ?array
+    {
         if ($this->miUrl === '') {
-            return false;
+            return null;
+        }
+        $body = ['jsonrpc' => '2.0', 'method' => $method, 'id' => 1];
+        if ($params !== []) {
+            $body['params'] = $params;
         }
         $ctx = stream_context_create(['http' => [
-            'method' => 'POST', 'header' => 'Content-Type: application/json', 'timeout' => 3, 'ignore_errors' => true,
-            'content' => json_encode(['jsonrpc' => '2.0', 'method' => $command, 'id' => 1], JSON_THROW_ON_ERROR),
+            'method' => 'POST',
+            'header' => "Content-Type: application/json\r\n",
+            'timeout' => 5,
+            'ignore_errors' => true,
+            'content' => json_encode($body, JSON_THROW_ON_ERROR),
         ]]);
         $raw = @file_get_contents($this->miUrl, false, $ctx);
-        $r = $raw === false ? null : json_decode($raw, true);
-        return is_array($r) && !isset($r['error']);
+        if ($raw === false) {
+            return null;
+        }
+        $r = json_decode($raw, true);
+        return is_array($r) ? $r : null;
+    }
+
+    /**
+     * Live dialogs from OpenSIPS dlg_list.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function listDialogs(): array
+    {
+        $r = $this->miCall('dlg_list');
+        if ($r === null || isset($r['error'])) {
+            return [];
+        }
+        $result = $r['result'] ?? null;
+        if (!is_array($result)) {
+            return [];
+        }
+        // OpenSIPS may return {Dialogs:[...]} or a bare list
+        if (isset($result['Dialogs']) && is_array($result['Dialogs'])) {
+            return array_values($result['Dialogs']);
+        }
+        if (array_is_list($result)) {
+            return $result;
+        }
+        foreach ($result as $v) {
+            if (is_array($v) && array_is_list($v)) {
+                return $v;
+            }
+        }
+        return [];
+    }
+
+    /** Sync SIP media/call-limit into OpenSIPS for dialplan lookups. */
+    public function syncSipPeerProfile(string $username, string $mediaPolicy, int $maxChannels): void
+    {
+        $db = $this->db();
+        $db->exec(
+            'CREATE TABLE IF NOT EXISTS ownswitch_sip (
+                username VARCHAR(64) NOT NULL PRIMARY KEY,
+                media_policy VARCHAR(16) NOT NULL DEFAULT \'relay\',
+                max_channels INT UNSIGNED NOT NULL DEFAULT 2,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+        $st = $db->prepare(
+            'INSERT INTO ownswitch_sip (username, media_policy, max_channels) VALUES (?,?,?)
+             ON DUPLICATE KEY UPDATE media_policy = VALUES(media_policy), max_channels = VALUES(max_channels)'
+        );
+        $st->execute([$username, $mediaPolicy, max(1, $maxChannels)]);
+    }
+
+    public function removeSipPeerProfile(string $username): void
+    {
+        if ($this->tableExists('ownswitch_sip')) {
+            $this->db()->prepare('DELETE FROM ownswitch_sip WHERE username = ?')->execute([$username]);
+        }
+    }
+
+    private function ensureSubscriberMediaColumn(): void
+    {
+        static $done = false;
+        if ($done || !$this->tableExists('subscriber')) {
+            return;
+        }
+        $cols = $this->columns('subscriber');
+        if (!in_array('media_policy', $cols, true)) {
+            try {
+                $this->db()->exec("ALTER TABLE subscriber ADD COLUMN media_policy VARCHAR(16) NOT NULL DEFAULT 'relay'");
+                $this->columns('subscriber', true);
+            } catch (\Throwable) {
+                // concurrent alter or no DDL rights
+            }
+        }
+        $done = true;
     }
 
     /** @return list<string> */
-    private function columns(string $table): array
+    private function columns(string $table, bool $fresh = false): array
     {
         static $cache = [];
+        if ($fresh) {
+            unset($cache[$table]);
+        }
         if (isset($cache[$table])) {
             return $cache[$table];
         }

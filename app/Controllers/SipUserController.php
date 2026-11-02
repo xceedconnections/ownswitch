@@ -9,16 +9,18 @@ use Ownswitch\Http\Request;
 use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\SipAccountRepository;
-use Ownswitch\Support\SipCodecs;
-use Ownswitch\Support\SipPeerOptions;
+use Ownswitch\Support\MediaPolicy;
 
+/**
+ * SIP Users — only OpenSIPS-relevant fields (auth, host ACL, CallerID, media, call limit).
+ */
 final class SipUserController extends CrudController
 {
     protected string $base = '/sip-users';
     protected string $singular = 'SIP User';
     protected string $plural = 'SIP Users';
     protected array $writeRoles = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech'];
-    protected string $emptyHint = 'No SIP users. Create an account so a phone or PBX can register.';
+    protected string $emptyHint = 'No SIP users. Create an account so a phone or PBX can register to OpenSIPS.';
 
     private ?string $plainPassword = null;
 
@@ -36,47 +38,29 @@ final class SipUserController extends CrudController
     {
         $f = [];
         if (!$this->scope($r)->isCustomerRole()) {
-            $f[] = ['name' => 'customer_id', 'label' => 'User', 'type' => 'select', 'required' => true, 'options' => $this->customerOptions($r), 'readonly_on_edit' => true, 'list' => true, 'section' => 'General'];
+            $f[] = ['name' => 'customer_id', 'label' => 'User', 'type' => 'select', 'required' => true, 'options' => $this->customerOptions($r), 'readonly_on_edit' => true, 'list' => true];
         }
-        $plans = ['' => '— inherit from tariff / user —'];
-        foreach ($this->db()->query('SELECT id, name FROM routing_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
-            $plans[(string) $p['id']] = $p['name'];
-        }
-        $yn = SipPeerOptions::YES_NO;
         array_push($f,
-            // General
-            ['name' => 'username', 'label' => 'SIP user', 'required' => true, 'max' => 64, 'pattern' => '/^[A-Za-z0-9._-]{3,64}$/', 'readonly_on_edit' => true, 'list' => true, 'section' => 'General'],
-            ['name' => 'password', 'label' => 'SIP password', 'type' => 'password', 'max' => 128, 'help' => 'Blank = auto-generate (create) or keep current (edit). Min 12 if typed.', 'section' => 'General'],
-            ['name' => 'caller_id', 'label' => 'CallerID', 'max' => 32, 'pattern' => '/^\+?[0-9]{3,30}$/', 'list' => true, 'section' => 'General'],
-            ['name' => 'alias', 'label' => 'Alias', 'max' => 64, 'section' => 'General'],
-            ['name' => 'disallow', 'label' => 'Disallow', 'max' => 64, 'default' => 'all', 'section' => 'General'],
-            ['name' => 'codecs', 'label' => 'Codec', 'type' => 'multiselect', 'wide' => true, 'max' => 190, 'default' => 'PCMA,PCMU,G729', 'options' => SipCodecs::OPTIONS, 'add_label' => '+ Add codec…', 'section' => 'General'],
-            ['name' => 'sip_host', 'label' => 'Host', 'max' => 190, 'default' => 'dynamic', 'list' => true, 'section' => 'General', 'help' => 'dynamic = register from any IP; or set a fixed IP for IP auth'],
-            ['name' => 'videosupport', 'label' => 'Videosupport', 'type' => 'select', 'options' => $yn, 'default' => 'no', 'section' => 'General'],
-            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active', 'section' => 'General'],
-
-            // NAT
-            ['name' => 'nat', 'label' => 'NAT', 'max' => 64, 'default' => 'force_rport,comedia', 'section' => 'NAT'],
-            ['name' => 'directmedia', 'label' => 'Directmedia', 'type' => 'select', 'options' => $yn, 'default' => 'no', 'section' => 'NAT'],
-            ['name' => 'qualify', 'label' => 'Qualify', 'type' => 'select', 'options' => $yn, 'default' => 'yes', 'section' => 'NAT'],
-
-            // Additional
-            ['name' => 'routing_plan_id', 'label' => 'Trunk groups', 'type' => 'select', 'options' => $plans, 'section' => 'Additional', 'help' => 'Optional force Trunk Group for this SIP user'],
-            ['name' => 'context', 'label' => 'Context', 'max' => 64, 'default' => 'billing', 'section' => 'Additional'],
-            ['name' => 'dtmfmode', 'label' => 'Dtmfmode', 'type' => 'select', 'options' => SipPeerOptions::DTMF, 'default' => 'RFC2833', 'section' => 'Additional'],
-            ['name' => 'insecure', 'label' => 'Insecure', 'max' => 64, 'default' => 'no', 'section' => 'Additional'],
-            ['name' => 'deny_acl', 'label' => 'Deny', 'max' => 255, 'section' => 'Additional'],
-            ['name' => 'permit_acl', 'label' => 'Permit', 'max' => 255, 'section' => 'Additional'],
-            ['name' => 'peer_type', 'label' => 'Type', 'type' => 'select', 'options' => SipPeerOptions::PEER_TYPE, 'default' => 'friend', 'section' => 'Additional'],
-            ['name' => 'allowtransfer', 'label' => 'Allowtransfer', 'type' => 'select', 'options' => $yn, 'default' => 'no', 'section' => 'Additional'],
-            ['name' => 'fake_ring', 'label' => 'Fake Ring', 'type' => 'select', 'options' => $yn, 'default' => 'no', 'section' => 'Additional'],
-            ['name' => 'max_channels', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 10000, 'required' => true, 'default' => '2', 'list' => true, 'section' => 'Additional'],
-            ['name' => 'moh', 'label' => 'MOH', 'max' => 64, 'section' => 'Additional'],
-            ['name' => 'addparameter', 'label' => 'Addparameter', 'max' => 255, 'placeholder' => 'Parameterdial', 'section' => 'Additional'],
-            ['name' => 'notes', 'label' => 'Description', 'max' => 255, 'section' => 'Additional'],
-
-            // Asterisk extra
-            ['name' => 'asterisk_extra', 'label' => 'Parameters', 'type' => 'textarea', 'wide' => true, 'rows' => 8, 'max' => 8000, 'section' => 'Asterisk extra config'],
+            ['name' => 'username', 'label' => 'SIP user', 'required' => true, 'max' => 64, 'pattern' => '/^[A-Za-z0-9._-]{3,64}$/', 'readonly_on_edit' => true, 'list' => true],
+            ['name' => 'password', 'label' => 'SIP password', 'type' => 'password', 'max' => 128, 'help' => 'Blank = auto-generate (create) or keep current (edit). Min 12 if typed.'],
+            ['name' => 'caller_id', 'label' => 'CallerID', 'max' => 32, 'pattern' => '/^\+?[0-9]{3,30}$/', 'list' => true, 'help' => 'Pushed to OpenSIPS subscriber RPID'],
+            ['name' => 'sip_host', 'label' => 'Host', 'max' => 190, 'default' => 'dynamic', 'list' => true, 'help' => 'dynamic = register from any IP; fixed IP enables IP auth in OpenSIPS address table'],
+            [
+                'name' => 'media_policy',
+                'label' => 'Directmedia',
+                'type' => 'select',
+                'options' => [
+                    '' => 'Default (Settings)',
+                    'direct' => 'Direct (no RTPengine)',
+                    'relay' => 'Relay (RTPengine)',
+                ],
+                'default' => '',
+                'list' => true,
+                'help' => 'Same as Default media policy: Default follows Settings; Direct skips media relay; Relay uses RTPengine',
+            ],
+            ['name' => 'max_channels', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 10000, 'required' => true, 'default' => '2', 'list' => true],
+            ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'],
+            ['name' => 'notes', 'label' => 'Description', 'max' => 255],
         );
         return $f;
     }
@@ -109,23 +93,18 @@ final class SipUserController extends CrudController
             $data['password_changed_at'] = gmdate('Y-m-d H:i:s');
             $this->plainPassword = (string) $pw;
         }
-        if (array_key_exists('codecs', $data)) {
-            $data['codecs'] = SipCodecs::toStorage($data['codecs']);
-        } elseif ($existing === null) {
-            $data['codecs'] = SipCodecs::toStorage('PCMA,PCMU,G729');
-        }
-        if (array_key_exists('routing_plan_id', $data)) {
-            $tg = $data['routing_plan_id'];
-            $data['routing_plan_id'] = ($tg === null || $tg === '') ? null : (int) $tg;
+        if (array_key_exists('media_policy', $data)) {
+            $data['media_policy'] = MediaPolicy::normalizeStored(
+                isset($data['media_policy']) ? (string) $data['media_policy'] : null
+            );
+            // SIP users: only default/direct/relay (no record)
+            if ($data['media_policy'] === 'record') {
+                $data['media_policy'] = 'relay';
+            }
         }
         if (isset($data['sip_host'])) {
             $host = trim((string) $data['sip_host']);
             $data['sip_host'] = $host === '' ? 'dynamic' : $host;
-        }
-        foreach (['alias', 'deny_acl', 'permit_acl', 'moh', 'addparameter', 'asterisk_extra'] as $k) {
-            if (array_key_exists($k, $data) && ($data[$k] === null || $data[$k] === '')) {
-                $data[$k] = null;
-            }
         }
         return $data;
     }
@@ -137,11 +116,18 @@ final class SipUserController extends CrudController
         if ($row) {
             if (!$prov->enabled()) {
                 App::session()->flash('warning', 'Saved in portal, but OpenSIPS provisioning is not available: '
-                    . ($prov->initError() !== '' ? $prov->initError() : 'OPENSIPS_ENABLED off')
-                    . '. Run: sudo bash /opt/ownswitch-src/deploy/fix-opensips-provision.sh');
+                    . ($prov->initError() !== '' ? $prov->initError() : 'OPENSIPS_ENABLED off'));
             } else {
                 try {
                     if ($row['status'] === 'active') {
+                        $effective = MediaPolicy::resolve(
+                            isset($row['media_policy']) ? (string) $row['media_policy'] : null,
+                            $this->db()
+                        );
+                        if ($effective === 'record') {
+                            $effective = 'relay';
+                        }
+                        $row['_effective_media'] = $effective;
                         $prov->upsertSubscriber(
                             (string) $row['username'],
                             (string) $row['domain'],
@@ -149,13 +135,18 @@ final class SipUserController extends CrudController
                             (string) $row['ha1b'],
                             $row
                         );
+                        $prov->syncSipPeerProfile(
+                            (string) $row['username'],
+                            $effective,
+                            (int) ($row['max_channels'] ?? 2)
+                        );
                     } else {
                         $prov->removeSubscriber((string) $row['username'], (string) $row['domain']);
+                        $prov->removeSipPeerProfile((string) $row['username']);
                     }
                 } catch (\Throwable $e) {
                     error_log('[ownswitch] OpenSIPS provision SIP user: ' . $e->getMessage());
-                    $hint = preg_replace('/\s+/', ' ', $e->getMessage()) ?? $e->getMessage();
-                    App::session()->flash('warning', 'Saved, but OpenSIPS provisioning failed: ' . mb_substr($hint, 0, 240));
+                    App::session()->flash('warning', 'Saved, but OpenSIPS provisioning failed: ' . mb_substr($e->getMessage(), 0, 240));
                 }
             }
         }
@@ -173,6 +164,7 @@ final class SipUserController extends CrudController
         if ($prov->enabled()) {
             try {
                 $prov->removeSubscriber((string) $row['username'], (string) $row['domain']);
+                $prov->removeSipPeerProfile((string) $row['username']);
             } catch (\Throwable) {
                 App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
             }
@@ -181,12 +173,8 @@ final class SipUserController extends CrudController
 
     protected function formValues(Request $r, ?array $existing, array $values): array
     {
-        if (array_key_exists('codecs', $values) || $existing === null) {
-            $raw = $values['codecs'] ?? ($existing['codecs'] ?? 'PCMA,PCMU,G729');
-            $values['codecs'] = SipCodecs::toStorage($raw) ?? 'PCMA,PCMU,G729';
-        }
-        if (($values['routing_plan_id'] ?? null) === null) {
-            $values['routing_plan_id'] = '';
+        if (MediaPolicy::isDefault(isset($values['media_policy']) ? (string) $values['media_policy'] : null)) {
+            $values['media_policy'] = '';
         }
         return $values;
     }
