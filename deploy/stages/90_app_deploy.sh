@@ -143,7 +143,23 @@ env_changed="${RENDER_CHANGED}"
 # ---------------------------------------------------------------------------
 # 2. Build the release from APP_SRC
 # ---------------------------------------------------------------------------
+# Prefer a tree that actually contains the portal. Mis-persisted APP_SRC (e.g. /opt/ownswitch)
+# previously caused a silent 503 placeholder release.
+if [[ ! -f "${APP_SRC}/public/index.php" && -f "${REPO_ROOT}/public/index.php" ]]; then
+  log_warn "APP_SRC=${APP_SRC} has no public/index.php — using REPO_ROOT=${REPO_ROOT}"
+  APP_SRC="${REPO_ROOT}"
+  export APP_SRC
+fi
+if [[ ! -f "${APP_SRC}/public/index.php" && -f /opt/ownswitch-src/public/index.php ]]; then
+  log_warn "Falling back to /opt/ownswitch-src"
+  APP_SRC=/opt/ownswitch-src
+  export APP_SRC
+fi
+persist_setting APP_SRC "${APP_SRC}"
 [[ -d "${APP_SRC}" ]] || die "APP_SRC=${APP_SRC} is not a directory"
+[[ -f "${APP_SRC}/public/index.php" ]] \
+  || die "APP_SRC=${APP_SRC} has no public/index.php. Clone https://github.com/xceedconnections/ownswitch into /opt/ownswitch-src and re-run stage 90."
+
 stage="$(mktemp -d "${OWN_OPT}/.stage.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 
@@ -155,18 +171,10 @@ rsync -a --delete \
 
 placeholder=0
 if [[ ! -f "${stage}/public/index.php" ]]; then
-  placeholder=1
-  log_warn "No public/index.php in ${APP_SRC} - deploying a PLACEHOLDER release (application not yet implemented)."
-  install -d "${stage}/public"
-  cat >"${stage}/public/index.php" <<'PHP'
-<?php
-// Ownswitch placeholder: infrastructure is installed, application code has not been deployed yet.
-http_response_code(503);
-header('Content-Type: text/plain; charset=utf-8');
-echo "Ownswitch is installed but the application has not been deployed yet.\n";
-PHP
-  : >"${stage}/.ownswitch-placeholder"
+  die "rsync from ${APP_SRC} did not produce public/index.php (refusing placeholder)"
 fi
+# Remove any previous placeholder marker from older releases after we switch
+rm -f "${OWN_OPT}/current/.ownswitch-placeholder" 2>/dev/null || true
 
 if [[ -f "${stage}/composer.json" ]]; then
   log_info "composer install --no-dev"

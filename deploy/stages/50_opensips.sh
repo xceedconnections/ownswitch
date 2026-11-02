@@ -44,13 +44,43 @@ if (( fresh_install )); then systemctl stop opensips >/dev/null 2>&1 || true; fi
 # ---------------------------------------------------------------------------
 mysql_root -e 'SELECT 1' >/dev/null 2>&1 || die "MySQL not reachable - run stage 30 first"
 
-mapfile -t sql_files < <(dpkg -L opensips-mysql-module 2>/dev/null | grep -E '/mysql/[a-z0-9_]+-create\.sql$' || true)
+mapfile -t sql_files < <(dpkg -L opensips-mysql-module 2>/dev/null | grep -E '\.sql$' || true)
 if ((${#sql_files[@]} == 0)); then
-  mapfile -t sql_files < <(find /usr/share/opensips -type f -name '*-create.sql' -path '*mysql*' 2>/dev/null | sort || true)
+  mapfile -t sql_files < <(find /usr/share/opensips /usr/share/opensips-mysql-module \
+    -type f \( -name '*-create.sql' -o -name '*create*.sql' \) 2>/dev/null | sort || true)
 fi
 ((${#sql_files[@]})) || die "OpenSIPS MySQL schema files not found (package opensips-mysql-module)"
+log_info "Found ${#sql_files[@]} OpenSIPS SQL schema file(s)"
 
-schema_file() { local n=$1 f; for f in "${sql_files[@]}"; do [[ "$(basename "$f")" == "${n}-create.sql" ]] && { echo "$f"; return 0; }; done; return 1; }
+schema_file() {
+  local n=$1 f base
+  for f in "${sql_files[@]}"; do
+    base="$(basename "$f")"
+    case "$base" in
+      "${n}-create.sql"|"${n}.sql"|"opensips-${n}-create.sql"|"${n}-create.mysql.sql") echo "$f"; return 0 ;;
+    esac
+  done
+  # Last resort: file whose name contains the module and 'create'
+  for f in "${sql_files[@]}"; do
+    base="$(basename "$f")"
+    [[ "$base" == *"${n}"*create* ]] && { echo "$f"; return 0; }
+  done
+  return 1
+}
+
+# If subscriber is missing, apply ANY sql file that creates it
+ensure_subscriber_schema() {
+  mysql_table_exists "${DB_OPENSIPS}" subscriber && return 0
+  local f
+  for f in "${sql_files[@]}"; do
+    if grep -qiE 'create table.*subscriber' "$f"; then
+      log_info "Applying subscriber DDL from ${f}"
+      mysql_root "${DB_OPENSIPS}" <"$f" || true
+    fi
+  done
+  mysql_table_exists "${DB_OPENSIPS}" subscriber \
+    || die "Could not create opensips.subscriber from packaged SQL files: ${sql_files[*]}"
+}
 
 apply_schema_once() { # module [required_table]
   local mod=$1 want=${2:-} f first
@@ -82,8 +112,7 @@ apply_schema_once standard subscriber
 for mod in auth_db usrloc dialog permissions drouting dispatcher rtpengine dialplan domain group; do
   apply_schema_once "$mod"
 done
-mysql_table_exists "${DB_OPENSIPS}" subscriber \
-  || die "OpenSIPS schema incomplete: opensips.subscriber missing after apply"
+ensure_subscriber_schema
 
 # Make sure the portal/runtime account can use everything created by root
 mysql_root -e "FLUSH PRIVILEGES"
