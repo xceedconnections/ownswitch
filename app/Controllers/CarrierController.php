@@ -9,18 +9,21 @@ use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
 use Ownswitch\Support\Crypto;
 
-/** Carriers (kind=carrier) and their SIP trunks (kind=trunk). */
+/**
+ * Providers (kind=carrier) and their SIP trunks (kind=trunk).
+ * UI naming matches MagnusBilling "Provider" / "Trunk".
+ */
 final class CarrierController extends CrudController
 {
     public function __construct(private string $kind = 'carrier')
     {
         $trunk = $kind === 'trunk';
         $this->base = $trunk ? '/trunks' : '/carriers';
-        $this->singular = $trunk ? 'Trunk' : 'Carrier';
-        $this->plural = $trunk ? 'Trunks' : 'Carriers';
+        $this->singular = $trunk ? 'Trunk' : 'Provider';
+        $this->plural = $trunk ? 'Trunks' : 'Providers';
         $this->emptyHint = $trunk
-            ? 'No trunks. Add a carrier first, then define its SIP trunk(s) with carrier-side increments.'
-            : 'No carriers. Add the upstream providers you buy termination from.';
+            ? 'No trunks yet. Add a Provider first, then create a Trunk with host, user and password.'
+            : 'No providers yet. Add the upstream carrier/provider you buy minutes from, then add Trunks.';
     }
 
     protected function repo(): BaseRepository
@@ -38,8 +41,7 @@ final class CarrierController extends CrudController
         $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
         if ($this->kind !== 'trunk') {
             return [
-                ['name' => 'code', 'label' => 'Code', 'required' => true, 'max' => 32, 'pattern' => '/^[A-Za-z0-9_-]{2,32}$/', 'readonly_on_edit' => true, 'list' => true],
-                ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
+                ['name' => 'name', 'label' => 'Provider name', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'e.g. Voxbone, Bandwidth, Local DID provider'],
                 ['name' => 'contact_email', 'label' => 'Contact email', 'type' => 'email', 'max' => 190],
                 $status,
                 ['name' => 'notes', 'label' => 'Notes', 'type' => 'textarea', 'max' => 2000],
@@ -50,21 +52,21 @@ final class CarrierController extends CrudController
             $carriers[$c['id']] = $c['name'];
         }
         return [
-            ['name' => 'carrier_id', 'label' => 'Carrier', 'type' => 'select', 'required' => true, 'options' => $carriers, 'list' => true],
-            ['name' => 'name', 'label' => 'Trunk name', 'required' => true, 'max' => 120, 'list' => true],
-            ['name' => 'host', 'label' => 'Host / IP', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true],
+            ['name' => 'carrier_id', 'label' => 'Provider', 'type' => 'select', 'required' => true, 'options' => $carriers, 'list' => true],
+            ['name' => 'name', 'label' => 'Trunk name', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'Friendly name, e.g. Provider-Main'],
+            ['name' => 'host', 'label' => 'SIP host / IP', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true],
             ['name' => 'port', 'label' => 'Port', 'type' => 'int', 'min' => 1, 'max' => 65535, 'required' => true, 'default' => '5060', 'list' => true],
-            ['name' => 'transport', 'label' => 'Transport', 'type' => 'select', 'required' => true, 'options' => ['udp' => 'UDP', 'tcp' => 'TCP', 'tls' => 'TLS']],
-            ['name' => 'auth_username', 'label' => 'Auth username', 'max' => 120],
-            ['name' => 'auth_secret', 'label' => 'Auth password', 'type' => 'password', 'max' => 190, 'help' => 'Stored encrypted (AES-256-GCM). Leave blank to keep the current secret. Requires APP_KEY.'],
+            ['name' => 'transport', 'label' => 'Transport', 'type' => 'select', 'required' => true, 'options' => ['udp' => 'UDP', 'tcp' => 'TCP', 'tls' => 'TLS'], 'default' => 'udp'],
+            ['name' => 'auth_username', 'label' => 'Username', 'max' => 120, 'help' => 'Leave blank for IP-authenticated trunks'],
+            ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Encrypted at rest. Leave blank on edit to keep the current password.'],
             ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 1, 'max' => 1000000, 'required' => true, 'default' => '100'],
-            ['name' => 'codecs', 'label' => 'Codecs', 'max' => 190, 'help' => 'e.g. PCMA,PCMU,G729'],
-            ['name' => 'media_policy', 'label' => 'Media policy', 'type' => 'select', 'options' => ['' => '- inherit -', 'direct' => 'Direct', 'relay' => 'Relay', 'record' => 'Record']],
-            ['name' => 'initial_increment', 'label' => 'Carrier initial increment I (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6'],
-            ['name' => 'subsequent_increment', 'label' => 'Carrier subsequent increment S (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6'],
-            ['name' => 'default_rate', 'label' => 'Default rate / min (fallback)', 'type' => 'number'],
-            ['name' => 'connect_fee', 'label' => 'Connection fee', 'type' => 'number', 'default' => '0'],
-            ['name' => 'priority', 'label' => 'Priority (lower first)', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true],
+            ['name' => 'codecs', 'label' => 'Codecs', 'max' => 190, 'default' => 'PCMA,PCMU', 'help' => 'Comma-separated, e.g. PCMA,PCMU,G729'],
+            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Inherit', 'direct' => 'Direct', 'relay' => 'Relay', 'record' => 'Record']],
+            ['name' => 'initial_increment', 'label' => 'Buy increment I (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6', 'help' => 'Provider billing: first block'],
+            ['name' => 'subsequent_increment', 'label' => 'Buy increment S (seconds)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'required' => true, 'default' => '6', 'help' => 'Provider billing: next blocks'],
+            ['name' => 'default_rate', 'label' => 'Fallback buy rate / min', 'type' => 'number', 'help' => 'Optional if you set Provider Rates per prefix'],
+            ['name' => 'connect_fee', 'label' => 'Buy connection fee', 'type' => 'number', 'default' => '0'],
+            ['name' => 'priority', 'label' => 'Priority', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Lower number = tried first'],
             $status,
         ];
     }
@@ -83,6 +85,7 @@ final class CarrierController extends CrudController
             }
             $data['connect_fee'] = $data['connect_fee'] ?? '0';
         } else {
+            $data = $this->autoCode($data, $existing, 'carriers');
             $data['is_demo'] = $existing['is_demo'] ?? 0;
         }
         return $data;

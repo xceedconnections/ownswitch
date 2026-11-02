@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Ownswitch\Support;
 
-/** Role-filtered navigation. Route middleware enforces the same rules server-side. */
+/** Role-filtered navigation. MagnusBilling-style section order for day-to-day ops. */
 final class Menu
 {
     public const STAFF = ['super_admin', 'admin'];
@@ -17,39 +17,45 @@ final class Menu
     /** @return list<array{label:string,items:list<array{label:string,path:string}>}> */
     public static function for(string $role): array
     {
+        // Order mirrors MagnusBilling daily workflow:
+        // Customers → SIP Users → Providers → Trunks → Plans → Prefixes → Routes → CDRs → Billing
         $sections = [
-            ['Overview', [['Dashboard', '/', self::ALL]]],
+            ['Overview', [
+                ['Dashboard', '/', self::ALL],
+            ]],
             ['Customers', [
                 ['Customers', '/customers', self::RESELLER_UP],
                 ['Resellers', '/resellers', self::STAFF],
                 ['SIP Users', '/sip-users', self::SIP_USERS],
-                ['IP Authentication', '/ip-auth', self::SIP_USERS],
+                ['IP Auth', '/ip-auth', self::SIP_USERS],
             ]],
-            ['Rates', [
-                ['Rate Plans', '/rate-plans', self::STAFF],
-                ['Customer Tariffs', '/tariffs', self::STAFF],
-                ['Carrier Tariffs', '/carrier-tariffs', self::STAFF],
-                ['Tariff CSV', '/tariffs/import', self::STAFF],
-            ]],
-            ['Carriers & Routing', [
-                ['Carriers', '/carriers', self::STAFF],
+            ['Providers', [
+                ['Providers', '/carriers', self::STAFF],
                 ['Trunks', '/trunks', self::STAFF],
-                ['Routing Plans', '/routing/plans', self::STAFF],
-                ['Routing Rules', '/routing', self::STAFF],
-                ['Route Simulator', '/routing/simulate', self::STAFF],
+                ['Provider Rates', '/carrier-tariffs', self::STAFF],
+            ]],
+            ['Rates & Plans', [
+                ['Plans', '/rate-plans', self::STAFF],
+                ['Prefixes', '/tariffs', self::STAFF],
+                ['Import CSV', '/tariffs/import', self::STAFF],
+            ]],
+            ['Routing', [
+                ['Route Groups', '/routing/plans', self::STAFF],
+                ['Routes', '/routing', self::STAFF],
+                ['Simulator', '/routing/simulate', self::STAFF],
             ]],
             ['CDR & Reports', [
-                ['CDR Search', '/cdrs', self::ALL],
+                ['CDRs', '/cdrs', self::ALL],
                 ['ASR / ACD', '/reports/asr-acd', self::ALL],
-                ['Financial Report', '/reports/financial', self::FINANCE],
+                ['Financial', '/reports/financial', self::FINANCE],
             ]],
             ['Billing', [
+                ['Refill / Adjust', '/billing/topup', self::STAFF],
                 ['Billing Preview', '/billing/preview', self::STAFF],
-                ['Top-up / Adjust', '/billing/topup', self::STAFF],
                 ['Ledger', '/ledger', self::LEDGER_READ],
                 ['Invoices', '/invoices', ['super_admin', 'admin', 'reseller', 'customer_owner']],
             ]],
-            ['Media & Security', [
+            ['Security', [
                 ['Recordings', '/recordings', ['super_admin', 'admin', 'reseller', 'customer_owner']],
                 ['Fraud Alerts', '/fraud', self::RESELLER_UP],
             ]],

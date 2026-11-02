@@ -14,7 +14,7 @@
     <label class="form-label small mb-0">Kind</label>
     <select name="kind" class="form-select form-select-sm">
       <option value="customer" <?= $kind === 'customer' ? 'selected' : '' ?>>Customer (rate plan)</option>
-      <option value="carrier" <?= $kind === 'carrier' ? 'selected' : '' ?>>Carrier</option>
+      <option value="carrier" <?= $kind === 'carrier' ? 'selected' : '' ?>>Provider rates</option>
     </select>
   </div>
   <div class="col-auto">
@@ -31,7 +31,7 @@
       <label class="form-label small mb-0">Kind</label>
       <select name="kind" class="form-select form-select-sm">
         <option value="customer" <?= $kind === 'customer' ? 'selected' : '' ?>>Customer</option>
-        <option value="carrier" <?= $kind === 'carrier' ? 'selected' : '' ?>>Carrier</option>
+        <option value="carrier" <?= $kind === 'carrier' ? 'selected' : '' ?>>Provider rates</option>
       </select>
     </div>
     <div class="col-md-3">

@@ -9,18 +9,18 @@ use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\RatePlanRepository;
 use Ownswitch\Repositories\TariffRepository;
 
-/** Customer sell tariffs (kind=customer) or carrier buy tariffs (kind=carrier). I and S are independent per side. */
+/** Sell prefixes (kind=customer) or provider buy rates (kind=carrier). */
 final class TariffController extends CrudController
 {
     public function __construct(private string $kind = 'customer')
     {
         $carrier = $kind === 'carrier';
         $this->base = $carrier ? '/carrier-tariffs' : '/tariffs';
-        $this->singular = $carrier ? 'Carrier tariff' : 'Customer tariff';
-        $this->plural = $carrier ? 'Carrier Tariffs' : 'Customer Tariffs';
+        $this->singular = $carrier ? 'Provider rate' : 'Prefix';
+        $this->plural = $carrier ? 'Provider Rates' : 'Prefixes';
         $this->emptyHint = $carrier
-            ? 'No carrier tariffs. Add purchase rates per prefix; increments here are the CARRIER side and independent of customer increments.'
-            : 'No customer tariffs. Add per-prefix sell rates to a rate plan. Blank increments inherit the plan defaults.';
+            ? 'No provider rates. Add buy rates per dial prefix for each Provider (independent of customer increments).'
+            : 'No prefixes yet. Add dial prefixes and sell rates under a Plan (like MagnusBilling Tariffs).';
     }
 
     protected function repo(): BaseRepository
@@ -37,28 +37,45 @@ final class TariffController extends CrudController
     {
         $carrier = $this->kind === 'carrier';
         $opts = [];
-        $sql = $carrier ? 'SELECT id, code, name FROM carriers ORDER BY name LIMIT 500' : 'SELECT id, code, name FROM rate_plans ORDER BY name LIMIT 500';
+        $sql = $carrier
+            ? 'SELECT id, name FROM carriers ORDER BY name LIMIT 500'
+            : 'SELECT id, name FROM rate_plans ORDER BY name LIMIT 500';
         foreach ($this->db()->query($sql)->fetchAll() as $x) {
-            $opts[$x['id']] = "{$x['name']} ({$x['code']})";
+            $opts[$x['id']] = $x['name'];
         }
         $pattern = '/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/';
         return [
-            ['name' => $carrier ? 'carrier_id' : 'rate_plan_id', 'label' => $carrier ? 'Carrier' : 'Rate plan', 'type' => 'select', 'required' => true, 'options' => $opts, 'readonly_on_edit' => true, 'list' => true],
-            ['name' => 'prefix', 'label' => 'Prefix', 'type' => 'prefix', 'required' => true, 'readonly_on_edit' => true, 'list' => true, 'help' => 'Digits only, E.164 without +. Longest prefix wins.'],
-            ['name' => 'destination', 'label' => 'Destination', 'max' => 120, 'list' => true],
-            ['name' => 'rate', 'label' => 'Rate per minute', 'type' => 'number', 'required' => true, 'list' => true],
-            ['name' => 'initial_increment', 'label' => 'Initial increment I (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'list' => true, 'help' => 'Blank = inherit'],
-            ['name' => 'subsequent_increment', 'label' => 'Subsequent increment S (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'list' => true],
+            [
+                'name' => $carrier ? 'carrier_id' : 'rate_plan_id',
+                'label' => $carrier ? 'Provider' : 'Plan',
+                'type' => 'select',
+                'required' => true,
+                'options' => $opts,
+                'readonly_on_edit' => true,
+                'list' => true,
+            ],
+            [
+                'name' => 'prefix',
+                'label' => 'Prefix',
+                'type' => 'prefix',
+                'required' => true,
+                'readonly_on_edit' => true,
+                'list' => true,
+                'help' => 'Digits only, no +. Example: 1, 44, 92300. Longest match wins.',
+            ],
+            ['name' => 'destination', 'label' => 'Destination name', 'max' => 120, 'list' => true, 'help' => 'e.g. USA, UK Mobile, Pakistan Mobile'],
+            ['name' => 'rate', 'label' => 'Rate / minute', 'type' => 'number', 'required' => true, 'list' => true],
+            ['name' => 'initial_increment', 'label' => 'Init block (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'list' => true, 'help' => 'Blank = use plan / trunk default'],
+            ['name' => 'subsequent_increment', 'label' => 'Billing block (s)', 'type' => 'int', 'min' => 1, 'max' => 86400, 'list' => true],
             ['name' => 'connect_fee', 'label' => 'Connection fee', 'type' => 'number', 'help' => 'Blank = inherit'],
             ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true],
-            ['name' => 'effective_from', 'label' => 'Effective from (UTC)', 'pattern' => $pattern, 'help' => 'YYYY-MM-DD [HH:MM[:SS]]'],
-            ['name' => 'effective_to', 'label' => 'Effective to (UTC)', 'pattern' => $pattern],
+            ['name' => 'effective_from', 'label' => 'Valid from (UTC)', 'pattern' => $pattern, 'help' => 'Optional YYYY-MM-DD'],
+            ['name' => 'effective_to', 'label' => 'Valid to (UTC)', 'pattern' => $pattern],
         ];
     }
 
     protected function prepare(Request $r, array $data, ?array $existing): array
     {
-        // Increments must come in a pair or not at all? No: a blank half inherits independently. Nothing to enforce.
         return $data;
     }
 

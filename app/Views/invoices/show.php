@@ -9,7 +9,7 @@
 <div class="os-panel col-xl-9">
     <div class="p-3 p-md-4">
         <div class="row mb-3">
-            <div class="col-md-6"><div class="text-muted small">Customer</div><div><?= e($customer['name'] ?? '-') ?> <span class="text-muted">(<?= e($customer['code'] ?? '') ?>)</span></div></div>
+            <div class="col-md-6"><div class="text-muted small">Customer</div><div><?= e($customer['name'] ?? '—') ?></div></div>
             <div class="col-md-3"><div class="text-muted small">Period</div><div class="os-mono"><?= e($inv['period_start']) ?> &ndash; <?= e($inv['period_end']) ?></div></div>
             <div class="col-md-3"><div class="text-muted small">Status</div><div><?= e($inv['status']) ?></div></div>
         </div>

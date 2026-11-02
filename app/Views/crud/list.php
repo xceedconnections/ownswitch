@@ -31,7 +31,7 @@ foreach ($fields as $f) {
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title"><?= e($plural) ?> <span class="os-count"><?= e($result['total']) ?></span></h1>
-        <p class="os-page-sub">Manage <?= e(strtolower($plural)) ?> for this tenant</p>
+        <p class="os-page-sub"><?= e($emptyHint !== '' ? $emptyHint : ('Manage ' . strtolower($plural))) ?></p>
     </div>
     <?php if ($canWrite): ?>
         <a class="btn btn-primary btn-sm" href="<?= e(url($base . '/create')) ?>"><i class="bi bi-plus-lg me-1"></i>New <?= e(strtolower($singular)) ?></a>

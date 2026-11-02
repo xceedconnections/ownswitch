@@ -16,7 +16,7 @@ final class CustomerController extends CrudController
     protected string $singular = 'Customer';
     protected string $plural = 'Customers';
     protected array $writeRoles = ['super_admin', 'admin', 'reseller'];
-    protected string $emptyHint = 'No customers yet. Create the first customer, then add SIP users or IP authentication and assign a rate plan.';
+    protected string $emptyHint = 'No customers yet. Create a customer, assign a Plan, then add SIP Users or IP Auth.';
 
     protected function repo(): BaseRepository
     {
@@ -32,42 +32,41 @@ final class CustomerController extends CrudController
     {
         $staff = $this->scope($r)->isStaff();
         $f = [
-            ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
-            ['name' => 'code', 'label' => 'Code', 'required' => true, 'max' => 32, 'pattern' => '/^[A-Za-z0-9_-]{2,32}$/', 'readonly_on_edit' => true, 'list' => true, 'help' => 'Letters, digits, _ and - only.'],
-            ['name' => 'contact_email', 'label' => 'Contact email', 'type' => 'email', 'max' => 190],
+            ['name' => 'name', 'label' => 'Customer name', 'required' => true, 'max' => 120, 'list' => true],
+            ['name' => 'contact_email', 'label' => 'Email', 'type' => 'email', 'max' => 190, 'list' => true],
         ];
         if ($staff) {
-            $res = ['' => '- direct (no reseller) -'];
+            $res = ['' => '— none —'];
             foreach ((new ResellerRepository($this->db()))->all(TenantScope::global(), [], 500, 'name') as $x) {
                 $res[$x['id']] = $x['name'];
             }
             $f[] = ['name' => 'reseller_id', 'label' => 'Reseller', 'type' => 'select', 'options' => $res, 'list' => true];
         }
         array_push($f,
-            ['name' => 'billing_mode', 'label' => 'Billing mode', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true],
-            ['name' => 'currency', 'label' => 'Currency', 'required' => true, 'max' => 3, 'pattern' => '/^[A-Z]{3}$/', 'default' => 'USD'],
-            ['name' => 'timezone', 'label' => 'Display timezone', 'required' => true, 'max' => 64, 'default' => 'UTC'],
+            ['name' => 'billing_mode', 'label' => 'Billing type', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true],
+            ['name' => 'currency', 'label' => 'Currency', 'required' => true, 'max' => 3, 'pattern' => '/^[A-Z]{3}$/', 'default' => 'USD', 'list' => true],
+            ['name' => 'timezone', 'label' => 'Timezone', 'required' => true, 'max' => 64, 'default' => 'UTC'],
             ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Suspended', 'closed' => 'Closed'], 'list' => true],
             ['name' => 'credit_limit', 'label' => 'Credit limit (postpaid)', 'type' => 'number', 'default' => '0'],
-            ['name' => 'max_concurrent_calls', 'label' => 'Max concurrent calls', 'type' => 'int', 'min' => 1, 'max' => 100000, 'required' => true, 'default' => '10'],
+            ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true],
         );
         if ($staff) {
-            $plans = ['' => '- none -'];
-            foreach ($this->db()->query('SELECT id, code, name FROM rate_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
-                $plans[$p['id']] = "{$p['name']} ({$p['code']})";
+            $plans = ['' => '— select plan —'];
+            foreach ($this->db()->query('SELECT id, name FROM rate_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
+                $plans[$p['id']] = $p['name'];
             }
-            $routes = ['' => '- none -'];
-            foreach ($this->db()->query('SELECT id, code, name FROM routing_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
-                $routes[$p['id']] = "{$p['name']} ({$p['code']})";
+            $routes = ['' => '— select route group —'];
+            foreach ($this->db()->query('SELECT id, name FROM routing_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
+                $routes[$p['id']] = $p['name'];
             }
             array_push($f,
-                ['name' => 'rate_plan_id', 'label' => 'Rate plan', 'type' => 'select', 'options' => $plans],
-                ['name' => 'routing_plan_id', 'label' => 'Routing plan', 'type' => 'select', 'options' => $routes],
+                ['name' => 'rate_plan_id', 'label' => 'Plan (sell rates)', 'type' => 'select', 'options' => $plans, 'list' => true, 'help' => 'Prefixes under this plan are used to charge the customer'],
+                ['name' => 'routing_plan_id', 'label' => 'Route group', 'type' => 'select', 'options' => $routes, 'help' => 'Which trunks are tried for this customer'],
             );
         }
         array_push($f,
-            ['name' => 'media_policy', 'label' => 'Media policy', 'type' => 'select', 'options' => ['' => '- global default -', 'direct' => 'Direct', 'relay' => 'Relay (RTPengine)', 'record' => 'Record']],
-            ['name' => 'recording_enabled', 'label' => 'Recording allowed', 'type' => 'checkbox'],
+            ['name' => 'media_policy', 'label' => 'Media', 'type' => 'select', 'options' => ['' => 'Global default', 'direct' => 'Direct', 'relay' => 'Relay (RTPengine)', 'record' => 'Record']],
+            ['name' => 'recording_enabled', 'label' => 'Allow recording', 'type' => 'checkbox'],
         );
         return $f;
     }
@@ -76,7 +75,7 @@ final class CustomerController extends CrudController
     {
         $scope = $this->scope($r);
         if ($scope->role === 'reseller') {
-            $data['reseller_id'] = $scope->resellerId;   // resellers can only create/keep their own customers
+            $data['reseller_id'] = $scope->resellerId;
         } elseif (!$scope->isStaff()) {
             throw new \DomainException('Not permitted.');
         }
@@ -86,6 +85,7 @@ final class CustomerController extends CrudController
                 throw new \DomainException('Reseller not found.');
             }
         }
+        $data = $this->autoCode($data, $existing, 'customers');
         $data['is_demo'] = $existing['is_demo'] ?? 0;
         return $data;
     }

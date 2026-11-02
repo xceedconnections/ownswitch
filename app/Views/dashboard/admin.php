@@ -26,16 +26,30 @@ $tile = static function (string $label, mixed $value, string $href = '', string 
 
 <?php if ($showDemo): ?>
     <div class="alert os-demo-banner mb-3">
-        <strong>Demo data present.</strong> Rows flagged <code>DEMO</code> came from the seeder and are not production traffic.
+        <strong>Demo data present.</strong> Rows flagged DEMO came from the seeder and are not production traffic.
     </div>
 <?php endif; ?>
+
+<div class="os-panel mb-4 p-3 p-md-4">
+    <div class="os-section-label mb-2">Quick setup (like MagnusBilling)</div>
+    <ol class="mb-0 ps-3 small">
+        <li class="mb-1"><a href="<?= e(url('/carriers')) ?>">Add Provider</a> — who you buy minutes from</li>
+        <li class="mb-1"><a href="<?= e(url('/trunks')) ?>">Add Trunk</a> — SIP host, user, password</li>
+        <li class="mb-1"><a href="<?= e(url('/carrier-tariffs')) ?>">Add Provider Rates</a> — buy prefix / rate</li>
+        <li class="mb-1"><a href="<?= e(url('/rate-plans')) ?>">Add Plan</a> — sell increments (I/S)</li>
+        <li class="mb-1"><a href="<?= e(url('/tariffs')) ?>">Add Prefixes</a> — sell rates per destination</li>
+        <li class="mb-1"><a href="<?= e(url('/routing/plans')) ?>">Add Route Group</a> + <a href="<?= e(url('/routing')) ?>">Routes</a></li>
+        <li class="mb-1"><a href="<?= e(url('/customers')) ?>">Add Customer</a> — assign Plan + Route Group</li>
+        <li><a href="<?= e(url('/sip-users')) ?>">Add SIP User</a> — phone/PBX account</li>
+    </ol>
+</div>
 
 <p class="os-section-label">Platform</p>
 <div class="row g-3 mb-4">
     <?php $tile('Customers', $counts['customers'], '/customers'); ?>
-    <?php $tile('Active SIP users', $counts['sip'], '/sip-users'); ?>
+    <?php $tile('SIP Users', $counts['sip'], '/sip-users'); ?>
     <?php if ($counts['resellers'] !== null) { $tile('Resellers', $counts['resellers'], '/resellers'); } ?>
-    <?php if ($counts['carriers'] !== null) { $tile('Active carriers', $counts['carriers'], '/carriers'); } ?>
+    <?php if ($counts['carriers'] !== null) { $tile('Providers', $counts['carriers'], '/carriers'); } ?>
     <?php $tile('Open fraud alerts', $counts['openFraud'], '/fraud', 'Review signaling alerts'); ?>
 </div>
 
@@ -54,7 +68,7 @@ $tile = static function (string $label, mixed $value, string $href = '', string 
         <?php $tile('ASR %', $asr, '/reports/asr-acd'); ?>
         <?php $tile('Revenue', fmt_money($today['revenue'], 4)); ?>
         <?php if ($isGlobal): ?>
-            <?php $tile('Carrier cost', fmt_money($today['cost'], 4)); ?>
+            <?php $tile('Provider cost', fmt_money($today['cost'], 4)); ?>
             <?php $tile('Gross margin', fmt_money(bcsub($today['revenue'], $today['cost'], 6), 4)); ?>
         <?php endif; ?>
     </div>

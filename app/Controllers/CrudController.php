@@ -8,6 +8,7 @@ use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CustomerRepository;
+use Ownswitch\Support\EntityCode;
 use Ownswitch\Support\Validator;
 
 /**
@@ -208,9 +209,24 @@ abstract class CrudController extends BaseController
     {
         $out = [];
         foreach ((new CustomerRepository($this->db()))->all($this->scope($r), [], 500, 'name') as $c) {
-            $out[$c['id']] = $c['name'] . ' (' . $c['code'] . ')';
+            $out[$c['id']] = (string) $c['name'];
         }
         return $out;
+    }
+
+    /**
+     * Auto-fill an internal unique `code` from the friendly name so operators never type codes.
+     * Keeps existing code on edit.
+     */
+    protected function autoCode(array $data, ?array $existing, string $table): array
+    {
+        if ($existing !== null) {
+            $data['code'] = $existing['code'];
+            return $data;
+        }
+        $base = EntityCode::fromName((string) ($data['name'] ?? 'ITEM'));
+        $data['code'] = EntityCode::unique($this->db(), $table, $base);
+        return $data;
     }
 
     /** @param array<string,mixed>|null $existing @param array<string,mixed> $values @param array<string,string> $errors */

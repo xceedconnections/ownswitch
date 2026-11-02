@@ -20,11 +20,11 @@ final class RoutingController extends CrudController
     {
         $plans = $kind === 'plans';
         $this->base = $plans ? '/routing/plans' : '/routing';
-        $this->singular = $plans ? 'Routing plan' : 'Routing rule';
-        $this->plural = $plans ? 'Routing Plans' : 'Routing Rules';
+        $this->singular = $plans ? 'Route group' : 'Route';
+        $this->plural = $plans ? 'Route Groups' : 'Routes';
         $this->emptyHint = $plans
-            ? 'No routing plans. Create a plan (priority or LCR), add rules, then assign it to customers.'
-            : 'No routing rules. A rule maps a destination prefix to a carrier trunk; several rules for one prefix form the failover order.';
+            ? 'No route groups. Create one (Priority or LCR), add Routes (prefix → trunk), then assign to Customers.'
+            : 'No routes. Map a dial prefix to a Provider Trunk. Multiple routes for the same prefix = failover order.';
     }
 
     protected function repo(): BaseRepository
@@ -44,9 +44,8 @@ final class RoutingController extends CrudController
         $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
         if ($this->kind === 'plans') {
             return [
-                ['name' => 'code', 'label' => 'Code', 'required' => true, 'max' => 32, 'pattern' => '/^[A-Za-z0-9_-]{2,32}$/', 'readonly_on_edit' => true, 'list' => true],
-                ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
-                ['name' => 'strategy', 'label' => 'Strategy', 'type' => 'select', 'required' => true, 'options' => ['priority' => 'Priority / failover', 'lcr' => 'Least-cost routing'], 'list' => true],
+                ['name' => 'name', 'label' => 'Route group name', 'required' => true, 'max' => 120, 'list' => true],
+                ['name' => 'strategy', 'label' => 'Strategy', 'type' => 'select', 'required' => true, 'options' => ['priority' => 'Priority / failover', 'lcr' => 'Least-cost (LCR)'], 'list' => true],
                 $status,
                 ['name' => 'description', 'label' => 'Description', 'max' => 255],
             ];
@@ -60,19 +59,19 @@ final class RoutingController extends CrudController
             $trunks[$t['id']] = "{$t['carrier']} / {$t['name']}";
         }
         return [
-            ['name' => 'routing_plan_id', 'label' => 'Routing plan', 'type' => 'select', 'required' => true, 'options' => $plans, 'list' => true],
-            ['name' => 'prefix', 'label' => 'Prefix', 'type' => 'prefix', 'required' => true, 'list' => true],
-            ['name' => 'carrier_trunk_id', 'label' => 'Carrier trunk', 'type' => 'select', 'required' => true, 'options' => $trunks, 'list' => true],
-            ['name' => 'priority', 'label' => 'Priority (lower = first)', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true],
+            ['name' => 'routing_plan_id', 'label' => 'Route group', 'type' => 'select', 'required' => true, 'options' => $plans, 'list' => true],
+            ['name' => 'prefix', 'label' => 'Prefix', 'type' => 'prefix', 'required' => true, 'list' => true, 'help' => 'Destination dial prefix, e.g. 1 or 44'],
+            ['name' => 'carrier_trunk_id', 'label' => 'Provider trunk', 'type' => 'select', 'required' => true, 'options' => $trunks, 'list' => true],
+            ['name' => 'priority', 'label' => 'Priority', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Lower = tried first'],
             $status,
         ];
     }
 
     protected function prepare(Request $r, array $data, ?array $existing): array
     {
-        $data['is_demo'] = $existing['is_demo'] ?? 0;
-        if ($this->kind !== 'plans') {
-            unset($data['is_demo']);
+        if ($this->kind === 'plans') {
+            $data = $this->autoCode($data, $existing, 'routing_plans');
+            $data['is_demo'] = $existing['is_demo'] ?? 0;
         }
         return $data;
     }

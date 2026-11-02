@@ -9,15 +9,14 @@ use Ownswitch\Http\Request;
 use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\SipAccountRepository;
-use Ownswitch\Services\Auth\SessionService;
 
 final class SipUserController extends CrudController
 {
     protected string $base = '/sip-users';
-    protected string $singular = 'SIP user';
+    protected string $singular = 'SIP User';
     protected string $plural = 'SIP Users';
     protected array $writeRoles = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech'];
-    protected string $emptyHint = 'No SIP users. Create one to let a phone or PBX register with digest authentication. The password is shown only once.';
+    protected string $emptyHint = 'No SIP users. Create an account (like MagnusBilling User) so a phone or PBX can register.';
 
     private ?string $plainPassword = null;
 
@@ -38,10 +37,10 @@ final class SipUserController extends CrudController
             $f[] = ['name' => 'customer_id', 'label' => 'Customer', 'type' => 'select', 'required' => true, 'options' => $this->customerOptions($r), 'readonly_on_edit' => true, 'list' => true];
         }
         array_push($f,
-            ['name' => 'username', 'label' => 'Username', 'required' => true, 'max' => 64, 'pattern' => '/^[A-Za-z0-9._-]{3,64}$/', 'readonly_on_edit' => true, 'list' => true],
-            ['name' => 'password', 'label' => 'Password', 'type' => 'password', 'max' => 128, 'help' => 'Leave blank to generate a strong password (create) or keep the current one (edit). Min 12 characters if set.'],
+            ['name' => 'username', 'label' => 'SIP username', 'required' => true, 'max' => 64, 'pattern' => '/^[A-Za-z0-9._-]{3,64}$/', 'readonly_on_edit' => true, 'list' => true, 'help' => 'Account used to register — e.g. 1001 or office1'],
+            ['name' => 'password', 'label' => 'SIP password', 'type' => 'password', 'max' => 128, 'help' => 'Leave blank to auto-generate a strong password (create) or keep current (edit). Min 12 if typed.'],
             ['name' => 'caller_id', 'label' => 'Caller ID', 'max' => 32, 'pattern' => '/^\+?[0-9]{3,30}$/', 'list' => true],
-            ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 1, 'max' => 10000, 'required' => true, 'default' => '2', 'list' => true],
+            ['name' => 'max_channels', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 10000, 'required' => true, 'default' => '2', 'list' => true],
             ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true],
             ['name' => 'notes', 'label' => 'Notes', 'max' => 255],
         );
@@ -78,7 +77,6 @@ final class SipUserController extends CrudController
     protected function afterSave(Request $r, int $id, array $data, ?array $existing): ?string
     {
         $row = $this->repo()->findInternal($id);
-        $msg = null;
         $prov = OpensipsProvisioner::fromConfig();
         if ($row && $prov->enabled()) {
             try {
@@ -90,10 +88,9 @@ final class SipUserController extends CrudController
             }
         }
         if ($this->plainPassword !== null && $row) {
-            // Shown once; only HA1 digests are persisted.
-            $msg = "SIP user saved. Username: {$row['username']}  Domain: {$row['domain']}  Password (shown once): {$this->plainPassword}";
+            return "SIP user saved. Username: {$row['username']}  Domain: {$row['domain']}  Password (shown once): {$this->plainPassword}";
         }
-        return $msg;
+        return null;
     }
 
     protected function afterDelete(Request $r, array $row): void
