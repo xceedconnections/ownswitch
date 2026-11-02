@@ -136,4 +136,85 @@ final class CustomerController extends CrudController
         }
         return $res['detail'] . ' They sign in with email + portal password to view CDR, balance and reports.';
     }
+
+    protected function beforeDelete(Request $r, array $row): ?string
+    {
+        $id = (int) $row['id'];
+        $pdo = $this->db();
+
+        // Keep billing history: refuse hard-delete when ledger/invoices/payments exist.
+        foreach (
+            [
+                'ledger_entries' => 'ledger entries',
+                'invoices' => 'invoices',
+                'payments' => 'payments',
+            ] as $table => $label
+        ) {
+            try {
+                $st = $pdo->prepare("SELECT COUNT(*) FROM `{$table}` WHERE customer_id = ?");
+                $st->execute([$id]);
+                if ((int) $st->fetchColumn() > 0) {
+                    return "Cannot delete User: {$label} exist. Set Active → Closed instead (keeps CDR/billing history).";
+                }
+            } catch (\PDOException) {
+                // table may not exist yet
+            }
+        }
+
+        $sipUsers = [];
+        try {
+            $st = $pdo->prepare('SELECT username, domain FROM sip_accounts WHERE customer_id = ?');
+            $st->execute([$id]);
+            $sipUsers = $st->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        } catch (\PDOException) {
+        }
+
+        $pdo->beginTransaction();
+        try {
+            // Detach CDRs (nullable FK) so history remains without blocking delete.
+            try {
+                $pdo->prepare('UPDATE cdrs SET customer_id = NULL WHERE customer_id = ?')->execute([$id]);
+            } catch (\PDOException) {
+            }
+            foreach (
+                [
+                    'did_assignments',
+                    'customer_rate_overrides',
+                    'dialplan_rules',
+                    'recordings',
+                    'call_reservations',
+                    'balances',
+                    'ip_endpoints',
+                    'sip_accounts',
+                    'users',
+                ] as $table
+            ) {
+                try {
+                    $pdo->prepare("DELETE FROM `{$table}` WHERE customer_id = ?")->execute([$id]);
+                } catch (\PDOException) {
+                    // optional tables / naming differences
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            return 'Cannot delete User: ' . mb_substr($e->getMessage(), 0, 200);
+        }
+
+        // Best-effort OpenSIPS cleanup for removed SIP peers
+        try {
+            $prov = \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig();
+            if ($prov->enabled()) {
+                foreach ($sipUsers as $s) {
+                    $prov->removeSubscriber((string) $s['username'], (string) $s['domain']);
+                    $prov->removeSipPeerProfile((string) $s['username']);
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        return null;
+    }
 }

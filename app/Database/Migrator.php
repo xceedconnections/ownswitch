@@ -98,7 +98,9 @@ final class Migrator
                         $msg = $e->getMessage();
                         if (str_contains($msg, 'Duplicate column')
                             || str_contains($msg, 'Duplicate key name')
-                            || str_contains($msg, 'already exists')) {
+                            || str_contains($msg, 'already exists')
+                            // Ancient 015 copies: unquoted qualify (MySQL 8 reserved) — skip; 018 adds it.
+                            || (stripos($msg, 'qualify') !== false && str_contains($msg, '1064'))) {
                             continue;
                         }
                         throw $e;
