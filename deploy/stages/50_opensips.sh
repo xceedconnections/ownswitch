@@ -121,6 +121,11 @@ else
 fi
 ensure_subscriber_schema
 
+# SIP Directmedia (Default/Direct/Relay) — loaded into $avp(os_media) via auth_db load_credentials
+mysql_root "${DB_OPENSIPS}" -e \
+  "ALTER TABLE subscriber ADD COLUMN media_policy VARCHAR(16) NOT NULL DEFAULT 'relay'" 2>/dev/null \
+  || log_info "subscriber.media_policy already present (or ALTER skipped)"
+
 # Make sure the portal/runtime account can use everything created by root
 mysql_root -e "FLUSH PRIVILEGES"
 
