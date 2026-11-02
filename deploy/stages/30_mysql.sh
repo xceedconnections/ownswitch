@@ -118,7 +118,10 @@ repo_direct() {
   write_mysql_list
 }
 
-candidate_version() { apt-cache policy mysql-server 2>/dev/null | awk '/Candidate:/ {print $2; exit}'; }
+# Avoid SIGPIPE/exit 141 under `set -o pipefail` when awk exits early.
+candidate_version() {
+  apt-cache policy mysql-server 2>/dev/null | awk '/Candidate:/ {print $2; found=1} END {exit 0}'
+}
 
 mysql_apt_update() {
   if ! apt_update; then

@@ -145,8 +145,8 @@ else add OK "secret leakage" "no DB password found under ${OWN_OPT}/current"; fi
   echo "  OpenSIPS  : ${ov_}"
   echo "  CGRateS   : ${cv_}"
   echo "  PHP       : ${pv_}"
-  echo "  nginx     : $(nginx -v 2>&1 | sed 's/.*nginx\///')"
-  echo "  Redis     : $(redis-server --version 2>/dev/null | sed -n 's/.*v=\([0-9.]*\).*/\1/p')"
+  echo "  nginx     : $(nginx -v 2>&1 | sed -n 's/.*nginx\///p' || echo n/a)"
+  echo "  Redis     : $(redis-server --version 2>/dev/null | sed -n 's/.*v=\([0-9.]*\).*/\1/p' || echo n/a)"
   echo "  RTPengine : $(dpkg-query -W -f='${Version}' rtpengine-daemon 2>/dev/null || dpkg-query -W -f='${Version}' ngcp-rtpengine-daemon 2>/dev/null || echo n/a)"
   echo "  FreeSWITCH: $(is_true "${FREESWITCH_ENABLED}" && cat /usr/local/freeswitch/.ownswitch-installed-version 2>/dev/null || echo disabled)"
   echo

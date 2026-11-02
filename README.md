@@ -21,6 +21,15 @@ That single script clones this repo and installs the full stack (MySQL, Redis, O
 
 Skip FreeSWITCH (faster): add `--no-freeswitch`.
 
+### If install failed (MySQL GPG / incomplete stack)
+
+One command repairs MySQL APT keys, pulls latest code, and resumes from stage 30 automatically:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xceedconnections/ownswitch/main/deploy/repair-and-continue.sh \
+  | sudo bash
+```
+
 ## Quick start (dev / XAMPP)
 
 ```powershell
