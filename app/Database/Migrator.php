@@ -71,7 +71,7 @@ final class Migrator
             $sql = (string) file_get_contents($path);
             try {
                 foreach (self::splitStatements($sql) as $stmt) {
-                    $this->pdo->exec($stmt);
+                    $this->runStatement($stmt);
                 }
             } catch (\PDOException $e) {
                 // Ledger triggers need TRIGGER privilege — skip recording so a privileged re-run can apply later,
@@ -84,14 +84,32 @@ final class Migrator
                 }
                 throw $e;
             }
-            $stmt = $this->pdo->prepare('INSERT INTO schema_migrations (migration, checksum) VALUES (?, ?)');
-            $stmt->execute([$f, hash('sha256', $sql)]);
+            $ins = $this->pdo->prepare('INSERT INTO schema_migrations (migration, checksum) VALUES (?, ?)');
+            $ins->execute([$f, hash('sha256', $sql)]);
+            $ins->closeCursor();
             $done[] = $f;
             if ($log) {
                 $log($f);
             }
         }
         return $done;
+    }
+
+    /**
+     * Run one SQL statement and fully drain any result sets (SELECT / EXECUTE SELECT 1 / SHOW).
+     * PDO::exec() leaves those open and the next query hits HY000/2014.
+     */
+    private function runStatement(string $sql): void
+    {
+        $st = $this->pdo->query($sql);
+        if ($st === false) {
+            return;
+        }
+        do {
+            // Buffer every rowset so the connection is free for the next statement.
+            $st->fetchAll();
+        } while ($st->nextRowset());
+        $st->closeCursor();
     }
 
     /**

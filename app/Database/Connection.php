@@ -25,6 +25,8 @@ final class Connection
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,   // real server-side prepared statements (SQLi hardening)
             PDO::ATTR_STRINGIFY_FETCHES  => false,
+            // Migrations use SELECT/EXECUTE that return rows; unbuffered mode causes HY000/2014.
+            PDO::MYSQL_ATTR_USE_BUFFERED_QUERY => true,
         ]);
         $pdo->exec("SET time_zone = '+00:00'");       // all event times stored in UTC
         $pdo->exec("SET NAMES utf8mb4");
