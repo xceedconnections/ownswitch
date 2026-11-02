@@ -16,7 +16,13 @@ final class DashboardController extends BaseController
     {
         $scope = $this->scope($r);
         $pdo = $this->db();
-        $metrics = (new DashboardMetricsService($pdo))->build($scope);
+
+        try {
+            $metrics = (new DashboardMetricsService($pdo))->build($scope);
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] dashboard build: ' . $e->getMessage());
+            $metrics = DashboardMetricsService::empty();
+        }
 
         $hasDemo = false;
         try {
@@ -32,14 +38,24 @@ final class DashboardController extends BaseController
             'showDemo' => $hasDemo && $scope->isGlobal(),
             'isGlobal' => $scope->isGlobal(),
             'isStaff' => $scope->isStaff(),
+            'counts' => [
+                'customers' => 0,
+                'sip' => 0,
+                'resellers' => null,
+                'carriers' => null,
+                'openFraud' => 0,
+            ],
         ];
 
-        // Platform counts (admin/reseller)
         if (!$scope->isCustomerRole()) {
             $count = static function (\PDO $pdo, string $sql, array $params = []): int {
-                $s = $pdo->prepare($sql);
-                $s->execute($params);
-                return (int) $s->fetchColumn();
+                try {
+                    $s = $pdo->prepare($sql);
+                    $s->execute($params);
+                    return (int) $s->fetchColumn();
+                } catch (\Throwable) {
+                    return 0;
+                }
             };
             [$cuw, $cup] = $scope->where('customer');
             [$sw, $sp] = $scope->where('owned');
@@ -50,29 +66,44 @@ final class DashboardController extends BaseController
                 'carriers' => $scope->isGlobal() ? $count($pdo, "SELECT COUNT(*) FROM carriers WHERE status = 'active'") : null,
                 'openFraud' => $count($pdo, "SELECT COUNT(*) FROM fraud_events WHERE status = 'open' AND ({$sw})", $sp),
             ];
+            return $this->view('dashboard/admin', $data);
         }
 
-        if ($scope->isCustomerRole() && $scope->customerId !== null) {
-            $c = $pdo->prepare('SELECT name, billing_mode, credit_limit, currency, status FROM customers WHERE id = ?');
-            $c->execute([$scope->customerId]);
-            $cust = $c->fetch() ?: null;
-            $ledger = new LedgerService($pdo);
-            $balance = $ledger->balance($scope->customerId);
-            $available = $cust
-                ? $ledger->availableCredit($scope->customerId, (string) $cust['billing_mode'], (string) $cust['credit_limit'])
-                : '0';
-            $daySpend = $metrics['today']['spend'];
+        if ($scope->customerId !== null) {
+            try {
+                $c = $pdo->prepare('SELECT name, billing_mode, credit_limit, currency, status FROM customers WHERE id = ?');
+                $c->execute([$scope->customerId]);
+                $cust = $c->fetch() ?: null;
+            } catch (\Throwable) {
+                $cust = null;
+            }
+            $balance = '0';
+            $available = '0';
+            try {
+                $ledger = new LedgerService($pdo);
+                $balance = $ledger->balance($scope->customerId);
+                $available = $cust
+                    ? $ledger->availableCredit($scope->customerId, (string) $cust['billing_mode'], (string) $cust['credit_limit'])
+                    : '0';
+            } catch (\Throwable) {
+            }
+            $daySpend = (string) ($metrics['today']['spend'] ?? '0');
             $runwayDays = null;
             if (bccomp($daySpend, '0', 6) > 0 && bccomp($available, '0', 6) > 0) {
                 $runwayDays = (float) bcdiv($available, $daySpend, 2);
             }
-            $sip = $pdo->prepare("SELECT COUNT(*) FROM sip_accounts WHERE customer_id = ? AND status = 'active'");
-            $sip->execute([$scope->customerId]);
+            $sipCount = 0;
+            try {
+                $sip = $pdo->prepare("SELECT COUNT(*) FROM sip_accounts WHERE customer_id = ? AND status = 'active'");
+                $sip->execute([$scope->customerId]);
+                $sipCount = (int) $sip->fetchColumn();
+            } catch (\Throwable) {
+            }
             $data['customer'] = $cust;
             $data['balance'] = $balance;
             $data['available'] = $available;
             $data['runwayDays'] = $runwayDays;
-            $data['sipCount'] = (int) $sip->fetchColumn();
+            $data['sipCount'] = $sipCount;
             return $this->view('dashboard/customer', $data);
         }
 
