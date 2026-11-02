@@ -42,8 +42,11 @@ for u in $(systemctl list-unit-files --no-legend 'rtpengine*.service' 2>/dev/nul
 if is_true "${FREESWITCH_ENABLED}"; then svc_check freeswitch 1; fi
 svc_check ownswitch-scheduler.timer 1
 svc_check ownswitch-backup.timer 1
-if [[ -f "${OWN_OPT}/current/bin/worker.php" ]]; then svc_check ownswitch-worker 1
-else add WARN "service ownswitch-worker" "dormant: bin/worker.php not deployed yet"; fi
+if [[ -f "${OWN_OPT}/current/bin/worker.php" || -f "${OWN_OPT}/current/bin/worker_cdr.php" ]]; then
+  svc_check ownswitch-worker 1
+else
+  add WARN "service ownswitch-worker" "dormant: bin/worker.php not deployed yet"
+fi
 
 # ---------------------------------------------------------------------------
 # versions
