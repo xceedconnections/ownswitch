@@ -45,7 +45,13 @@ final class AuthService
             $this->logAttempt($ip, $email, false);
             return $generic;
         }
-        if (!password_verify($password, (string) $user['password_hash']) || $user['status'] !== 'active') {
+        $status = strtolower((string) ($user['status'] ?? ''));
+        if ($status !== 'active') {
+            password_verify($password, self::dummy());
+            $this->logAttempt($ip, $email, false);
+            return ['ok' => false, 'error' => 'This account is disabled. Ask an admin to set the user Active and reset the portal password.'];
+        }
+        if (!password_verify($password, (string) $user['password_hash'])) {
             $this->users->recordFailure((int) $user['id'], (int) ($cfg['max_failed_logins'] ?? 5), (int) ($cfg['lockout_minutes'] ?? 15));
             $this->logAttempt($ip, $email, false);
             return $generic;

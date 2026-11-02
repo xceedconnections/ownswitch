@@ -16,10 +16,12 @@ final class View
             return $content;
         }
         $session = App::session();
+        $user = current_user();
+        $role = is_array($user) ? (string) ($user['role'] ?? '') : '';
         return self::capture($layout, $data + [
             'content' => $content,
             'flashes' => $session->pullFlash(),
-            'menu'    => Menu::for((string) (current_user()['role'] ?? '')),
+            'menu'    => Menu::for($role),
         ] + ['title' => 'Ownswitch']);
     }
 

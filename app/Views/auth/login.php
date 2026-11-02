@@ -3,7 +3,7 @@
     <div class="os-auth-brand">
         <div class="os-brand-mark" aria-hidden="true">Ow</div>
         <h1>Ownswitch</h1>
-        <p>Sign in to your billing portal</p>
+        <p>Sign in with the Email + Portal password from your User profile</p>
     </div>
     <?php if ($error): ?>
         <div class="alert alert-danger py-2" role="alert"><?= e($error) ?></div>
@@ -13,6 +13,7 @@
         <div class="mb-3">
             <label for="email" class="form-label fw-semibold">Email</label>
             <input type="email" class="form-control form-control-lg" id="email" name="email" value="<?= e($email) ?>" required autofocus autocomplete="username" maxlength="190" placeholder="you@company.com">
+            <div class="form-text">Same as “Email (portal login)” on the Users edit screen</div>
         </div>
         <div class="mb-3">
             <label for="password" class="form-label fw-semibold">Password</label>

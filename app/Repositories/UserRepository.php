@@ -130,8 +130,9 @@ final class UserRepository extends BaseRepository
                 'customer_id' => $customerId,
                 'status' => $portalStatus,
                 'failed_logins' => 0,
+                'locked_until' => null,
             ]);
-            return ['ok' => true, 'detail' => 'Portal login created.', 'user_id' => $id];
+            return ['ok' => true, 'detail' => 'Portal login created. Sign in at /login with this email + password.', 'user_id' => $id];
         }
 
         $upd = [
@@ -146,8 +147,11 @@ final class UserRepository extends BaseRepository
             if ($problems) {
                 return ['ok' => false, 'detail' => $problems[0]];
             }
-            $this->setPasswordHash((int) $existing['id'], password_hash($plainPassword, PASSWORD_DEFAULT));
-            return ['ok' => true, 'detail' => 'Portal login and password updated.', 'user_id' => (int) $existing['id']];
+            // Admin reset: always clear lockouts so the new password works immediately.
+            $this->pdo->prepare(
+                'UPDATE users SET password_hash = ?, failed_logins = 0, locked_until = NULL WHERE id = ?'
+            )->execute([password_hash($plainPassword, PASSWORD_DEFAULT), (int) $existing['id']]);
+            return ['ok' => true, 'detail' => 'Portal login and password updated. Sign in at /login with this email + password.', 'user_id' => (int) $existing['id']];
         }
         return ['ok' => true, 'detail' => 'Portal login updated.', 'user_id' => (int) $existing['id']];
     }
