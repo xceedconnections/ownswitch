@@ -80,19 +80,10 @@ CREATE TABLE IF NOT EXISTS uac_registrant (
 SQL
 fi
 
-bash "$SRC/deploy/install.sh" --only 50 --yes --non-interactive || true
+# OpenSIPS sockets + host/cloud UDP path (required for default softphone UDP)
+bash "$SRC/deploy/fix-udp-5060.sh" || true
 systemctl restart opensips
 sleep 2
-
-# Firewall local
-command -v ufw >/dev/null && {
-  ufw allow 5060/udp || true
-  ufw allow 5060/tcp || true
-  ufw allow 30000:40000/udp || true
-}
-# raw iptables accept (helps when ufw inactive)
-iptables -C INPUT -p udp --dport 5060 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 5060 -j ACCEPT || true
-iptables -C INPUT -p tcp --dport 5060 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 5060 -j ACCEPT || true
 
 # Align SIP account domains
 mysql --protocol=socket -uroot ownswitch -e "UPDATE sip_accounts SET domain='${DOMAIN}';" 2>/dev/null || true
@@ -131,25 +122,18 @@ SELECT l_uuid,l_username,r_domain,auth_proxy FROM uac_registrant;
 
 echo
 echo "######################################################################"
-echo " A) SIP USER (softphone)"
+echo " A) SIP USER (softphone) — Transport=UDP port 5060"
 echo "######################################################################"
-echo " 1. Hetzner Cloud → Firewall for THIS server → Inbound ALLOW:"
-echo "      UDP 5060, TCP 5060, UDP 30000-40000"
-echo "    (Cloud firewall is separate from ufw — this is the usual blocker.)"
-echo " 2. Portal → SIP Users → NEW password → Save"
-echo " 3. Softphone:"
-echo "      User/Pass = portal values"
-echo "      Domain   = ${DOMAIN}  OR  ${SIP_IP}"
-echo "      Proxy    = ${SIP_IP}"
-echo "      Port     = 5060   Transport = UDP (or TCP)"
-echo " 4. Test on server after password reset:"
-echo "      sudo bash $SRC/deploy/fix-softphone-now.sh USER 'PASS'"
-echo " 5. System Status must show registered_contacts > 0"
+echo " 1. Softphone: User/Pass from portal · Domain=${DOMAIN} · Proxy=${SIP_IP}"
+echo "      Port=5060 · Transport=UDP"
+echo " 2. If UDP still times out from the internet: put Hetzner API token in"
+echo "      /etc/ownswitch/hcloud.token and re-run: sudo bash $SRC/deploy/fix-udp-5060.sh"
+echo "    Or Console → Firewalls → allow inbound UDP 5060 (Cloud FW ≠ ufw)."
+echo " 3. System Status must show registered_contacts > 0"
 echo
 echo " B) CARRIER → vendor Magnus"
 echo "######################################################################"
-echo " IP peering: vendor allowlists ${SIP_IP}  (will NOT show Registered)"
-echo " User/pass trunk: we set auth_mode=register when username+password present."
-echo "   Check uac_registrant rows above. Vendor should see REGISTER from ${SIP_IP}."
-echo "   journalctl -u opensips -f | grep -i regist"
+echo " IP peer: vendor allowlists ${SIP_IP} — Magnus will NEVER show Registered."
+echo " User/pass: Auth mode=Register; need rows in uac_registrant above."
+echo "   journalctl -u opensips -n 100 --no-pager | grep -iE 'regist|uac'"
 echo "######################################################################"

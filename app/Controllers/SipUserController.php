@@ -101,7 +101,9 @@ final class SipUserController extends CrudController
             }
         }
         if ($this->plainPassword !== null && $row) {
-            return "SIP user saved. Username: {$row['username']}  Domain: {$row['domain']}  Password (shown once): {$this->plainPassword}";
+            $host = (string) App::config('app.integrations.opensips.sip_domain', (string) $row['domain']);
+            return "SIP user saved. Softphone: User={$row['username']}  Pass={$this->plainPassword}  "
+                . "Domain/Realm={$row['domain']}  Server/Proxy={$host}  Port=5060  Transport=UDP";
         }
         return null;
     }

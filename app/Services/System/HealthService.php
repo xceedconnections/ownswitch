@@ -93,7 +93,7 @@ final class HealthService
                 return ['component' => 'OpenSIPS', 'status' => 'warn', 'detail' => $detail . ' — no SIP users in opensips.subscriber (reset SIP password in portal)'];
             }
             if ($loc === 0) {
-                return ['component' => 'OpenSIPS', 'status' => 'warn', 'detail' => $detail . ' — softphone not registered yet (check UDP 5060 firewall + softphone domain)'];
+                return ['component' => 'OpenSIPS', 'status' => 'warn', 'detail' => $detail . ' — softphone not registered (UDP 5060). Run: sudo bash /opt/ownswitch-src/deploy/fix-udp-5060.sh'];
             }
             return ['component' => 'OpenSIPS', 'status' => 'ok', 'detail' => $detail];
         } catch (\Throwable $e) {

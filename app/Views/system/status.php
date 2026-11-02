@@ -7,6 +7,9 @@ $badge = ['ok' => 'success', 'warn' => 'warning', 'fail' => 'danger', 'unconfigu
         <p class="os-page-sub">PHP <?= e($php) ?> · <?= e($time) ?></p>
     </div>
 </div>
+<?php if (!empty($sipTip)): ?>
+<div class="alert alert-warning mb-3" role="alert"><?= e($sipTip) ?></div>
+<?php endif; ?>
 <div class="row g-3">
     <div class="col-lg-8">
         <div class="os-table-wrap">
