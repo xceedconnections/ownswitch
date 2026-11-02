@@ -29,7 +29,10 @@ if (!function_exists('url')) {
 if (!function_exists('asset')) {
     function asset(string $path): string
     {
-        return base_url() . '/assets/' . ltrim($path, '/');
+        $rel = 'assets/' . ltrim($path, '/');
+        $file = OWNSWITCH_ROOT . '/public/' . $rel;
+        $v = is_file($file) ? (string) filemtime($file) : (string) time();
+        return base_url() . '/' . $rel . '?v=' . rawurlencode($v);
     }
 }
 
