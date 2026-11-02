@@ -62,6 +62,7 @@ modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("auth_db", "calculate_ha1", 0)
 modparam("auth_db", "password_column", "ha1")
 modparam("auth_db", "load_credentials", "")
+modparam("auth_db", "use_domain", 1)
 
 loadmodule "usrloc.so"
 modparam("usrloc", "working_mode_preset", "single-instance-sql-write-back")
@@ -69,6 +70,9 @@ modparam("usrloc", "db_url", "@@OPENSIPS_DB_URL@@")
 
 loadmodule "registrar.so"
 modparam("registrar", "max_contacts", 5)
+modparam("registrar", "default_expires", 3600)
+
+@@OPENSIPS_NATHELPER_BLOCK@@
 
 loadmodule "permissions.so"
 modparam("permissions", "db_url", "@@OPENSIPS_DB_URL@@")
@@ -150,13 +154,18 @@ route {
 	}
 
 	if (is_method("REGISTER")) {
+		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td\n");
 		if (!www_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
+			xlog("L_WARN", "REGISTER auth failed for $tU realm=@@OWNSWITCH_DOMAIN@@ src=$si\n");
 			www_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
 			exit;
 		}
+		@@OPENSIPS_NAT_REGISTER_BLOCK@@
 		if (!save("location")) {
+			xlog("L_ERR", "REGISTER save() failed for $tU\n");
 			sl_reply_error();
 		}
+		xlog("L_INFO", "REGISTER OK $tU@$td from $si\n");
 		exit;
 	}
 

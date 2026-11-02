@@ -30,7 +30,7 @@ fresh_install=0; pkg_installed opensips || fresh_install=1
 (( fresh_install )) && apt_update || true
 apt_install opensips opensips-mysql-module opensips-cgrates-module
 # nice-to-have modules (names differ slightly between releases, so failures only warn)
-apt_install_optional opensips-http-modules opensips-restclient-module opensips-json-module opensips-cli
+apt_install_optional opensips-http-modules opensips-restclient-module opensips-json-module opensips-cli opensips-nathelper-module
 
 installed="$(dpkg-query -W -f='${Version}' opensips 2>/dev/null || true)"
 [[ "$installed" == ${OPENSIPS_VERSION_SERIES}.* ]] || die "OpenSIPS ${OPENSIPS_VERSION_SERIES}.x expected, got '${installed}'"
@@ -162,6 +162,17 @@ modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
 modparam(\"uac_registrant\", \"timer_interval\", 60)"
 else
   export OPENSIPS_UAC_BLOCK='# uac_registrant.so not installed — IP peer trunks OK; Register-mode needs opensips-uac-module'
+fi
+
+if [[ -f "${mod_dir}/nathelper.so" ]]; then
+  export OPENSIPS_NATHELPER_BLOCK='loadmodule "nathelper.so"
+modparam("nathelper", "received_avp", "$avp(received)")'
+  export OPENSIPS_NAT_REGISTER_BLOCK='if (nat_uac_test("19")) {
+			fix_nated_register();
+		}'
+else
+  export OPENSIPS_NATHELPER_BLOCK='# nathelper.so not installed (opensips-nathelper-module)'
+  export OPENSIPS_NAT_REGISTER_BLOCK='# no nathelper'
 fi
 
 # Render to a temp file first and validate BEFORE touching the live config.
