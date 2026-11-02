@@ -113,4 +113,269 @@
 
         sync();
     });
+
+    /* Trunk-group waterfall: drag/drop order + on/off + last-hour sort presets */
+    document.querySelectorAll('[data-os-waterfall]').forEach(function (root) {
+        if (root.getAttribute('data-readonly') === '1') { return; }
+        var onList = root.querySelector('[data-wf-on]');
+        var offList = root.querySelector('[data-wf-off]');
+        var onInput = root.querySelector('[data-wf-on-input]');
+        var offInput = root.querySelector('[data-wf-off-input]');
+        var add = root.querySelector('[data-wf-add]');
+        var flow = root.querySelector('[data-wf-flow]');
+        var tpl = root.querySelector('[data-wf-row-tpl]');
+        if (!onList || !offList || !onInput || !offInput || !tpl) { return; }
+
+        var dragEl = null;
+
+        var ordinal = function (n) {
+            var v = n % 100;
+            if (v >= 11 && v <= 13) { return n + 'th'; }
+            return n + (['th', 'st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th'][n % 10] || 'th');
+        };
+
+        var clearEmpty = function () {
+            var empty = root.querySelector('[data-wf-empty-on]');
+            if (onList.children.length === 0) {
+                if (!empty) {
+                    empty = document.createElement('div');
+                    empty.className = 'os-wf-empty';
+                    empty.setAttribute('data-wf-empty-on', '1');
+                    empty.textContent = 'No trunks on yet — add one below, then drag to set order.';
+                    onList.insertAdjacentElement('afterend', empty);
+                }
+            } else if (empty) {
+                empty.remove();
+            }
+        };
+
+        var refreshRanks = function () {
+            var best = null;
+            var bestAsr = -1;
+            Array.prototype.forEach.call(onList.querySelectorAll('[data-wf-row]'), function (row, i) {
+                var rank = row.querySelector('[data-wf-rank]');
+                if (rank) {
+                    rank.textContent = ordinal(i + 1);
+                    rank.classList.remove('is-off');
+                }
+                row.classList.remove('is-off');
+                var tog = row.querySelector('[data-wf-toggle]');
+                if (tog) { tog.checked = true; }
+                var asr = parseFloat(row.getAttribute('data-asr') || '0');
+                var attempts = parseInt(row.getAttribute('data-attempts') || '0', 10);
+                if (attempts > 0 && asr > bestAsr) {
+                    bestAsr = asr;
+                    best = row;
+                }
+            });
+            Array.prototype.forEach.call(offList.querySelectorAll('[data-wf-row]'), function (row) {
+                var rank = row.querySelector('[data-wf-rank]');
+                if (rank) {
+                    rank.textContent = 'Off';
+                    rank.classList.add('is-off');
+                }
+                row.classList.add('is-off');
+                var tog = row.querySelector('[data-wf-toggle]');
+                if (tog) { tog.checked = false; }
+                var top = row.querySelector('[data-wf-top]');
+                if (top) { top.hidden = true; }
+            });
+            Array.prototype.forEach.call(onList.querySelectorAll('[data-wf-row]'), function (row) {
+                var top = row.querySelector('[data-wf-top]');
+                if (top) { top.hidden = row !== best; }
+            });
+        };
+
+        var sync = function () {
+            var onIds = [];
+            var names = [];
+            Array.prototype.forEach.call(onList.querySelectorAll('[data-wf-row]'), function (row) {
+                var id = row.getAttribute('data-id');
+                if (id) {
+                    onIds.push(id);
+                    var nm = row.querySelector('.os-wf-name, [data-wf-name]');
+                    names.push(nm ? nm.textContent : ('#' + id));
+                }
+            });
+            var offIds = [];
+            Array.prototype.forEach.call(offList.querySelectorAll('[data-wf-row]'), function (row) {
+                var id = row.getAttribute('data-id');
+                if (id) { offIds.push(id); }
+            });
+            onInput.value = onIds.join(',');
+            offInput.value = offIds.join(',');
+            if (flow) {
+                flow.textContent = '';
+                if (names.length === 0) {
+                    flow.textContent = 'Add trunks to build your waterfall.';
+                } else {
+                    var lead = document.createElement('span');
+                    lead.textContent = 'Each call → ';
+                    flow.appendChild(lead);
+                    names.forEach(function (name, i) {
+                        if (i > 0) {
+                            var arrow = document.createElement('span');
+                            arrow.textContent = ' → ';
+                            flow.appendChild(arrow);
+                        }
+                        var step = document.createElement('span');
+                        step.className = 'os-wf-step';
+                        var em = document.createElement('em');
+                        em.textContent = String(i + 1);
+                        step.appendChild(em);
+                        var strong = document.createElement('strong');
+                        strong.textContent = name;
+                        step.appendChild(strong);
+                        flow.appendChild(step);
+                    });
+                    var stop = document.createElement('span');
+                    stop.textContent = ' → then stops';
+                    flow.appendChild(stop);
+                }
+            }
+            if (add) {
+                var used = onIds.concat(offIds);
+                Array.prototype.forEach.call(add.options, function (opt) {
+                    if (!opt.value) { return; }
+                    opt.disabled = used.indexOf(opt.value) !== -1;
+                });
+                add.value = '';
+            }
+            refreshRanks();
+            clearEmpty();
+        };
+
+        var bindRow = function (row) {
+            row.setAttribute('draggable', 'true');
+            row.addEventListener('dragstart', function (ev) {
+                dragEl = row;
+                row.classList.add('is-dragging');
+                if (ev.dataTransfer) {
+                    ev.dataTransfer.effectAllowed = 'move';
+                    try { ev.dataTransfer.setData('text/plain', row.getAttribute('data-id') || ''); } catch (e) {}
+                }
+            });
+            row.addEventListener('dragend', function () {
+                row.classList.remove('is-dragging');
+                root.querySelectorAll('.is-drag-over').forEach(function (el) { el.classList.remove('is-drag-over'); });
+                dragEl = null;
+                sync();
+            });
+            var tog = row.querySelector('[data-wf-toggle]');
+            if (tog) {
+                tog.addEventListener('change', function () {
+                    if (tog.checked) {
+                        onList.appendChild(row);
+                    } else {
+                        offList.appendChild(row);
+                    }
+                    sync();
+                });
+            }
+        };
+
+        var placeBefore = function (list, target, moving) {
+            if (!moving || moving === target) { return; }
+            var rect = target.getBoundingClientRect();
+            var before = (window.event && window.event.clientY < rect.top + rect.height / 2);
+            // fallback: use last dragover Y stored on element
+            var y = target._wfY;
+            if (typeof y === 'number') {
+                before = y < rect.top + rect.height / 2;
+            }
+            if (before) {
+                list.insertBefore(moving, target);
+            } else {
+                list.insertBefore(moving, target.nextSibling);
+            }
+        };
+
+        var bindList = function (list) {
+            list.addEventListener('dragover', function (ev) {
+                ev.preventDefault();
+                if (!dragEl) { return; }
+                var target = ev.target.closest('[data-wf-row]');
+                list.querySelectorAll('.is-drag-over').forEach(function (el) { el.classList.remove('is-drag-over'); });
+                if (target && list.contains(target) && target !== dragEl) {
+                    target._wfY = ev.clientY;
+                    target.classList.add('is-drag-over');
+                    placeBefore(list, target, dragEl);
+                } else if (!target) {
+                    list.appendChild(dragEl);
+                }
+            });
+            list.addEventListener('drop', function (ev) {
+                ev.preventDefault();
+                sync();
+            });
+        };
+
+        bindList(onList);
+        bindList(offList);
+        onList.querySelectorAll('[data-wf-row]').forEach(bindRow);
+        offList.querySelectorAll('[data-wf-row]').forEach(bindRow);
+
+        root.querySelectorAll('[data-wf-sort]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var key = btn.getAttribute('data-wf-sort');
+                var rows = Array.prototype.slice.call(onList.querySelectorAll('[data-wf-row]'));
+                rows.sort(function (a, b) {
+                    var av = parseFloat(a.getAttribute(key === 'acd' ? 'data-acd' : 'data-asr') || '0');
+                    var bv = parseFloat(b.getAttribute(key === 'acd' ? 'data-acd' : 'data-asr') || '0');
+                    if (bv !== av) { return bv - av; }
+                    return parseInt(b.getAttribute('data-attempts') || '0', 10) - parseInt(a.getAttribute('data-attempts') || '0', 10);
+                });
+                rows.forEach(function (row) { onList.appendChild(row); });
+                sync();
+            });
+        });
+
+        if (add) {
+            add.addEventListener('change', function () {
+                var v = add.value;
+                if (!v) { return; }
+                var opt = add.options[add.selectedIndex];
+                var node = tpl.content.firstElementChild.cloneNode(true);
+                node.setAttribute('data-id', v);
+                node.setAttribute('data-asr', opt.getAttribute('data-asr') || '0');
+                node.setAttribute('data-acd', opt.getAttribute('data-acd') || '0');
+                node.setAttribute('data-attempts', opt.getAttribute('data-attempts') || '0');
+                var nameEl = node.querySelector('[data-wf-name]');
+                if (nameEl) { nameEl.textContent = opt.getAttribute('data-name') || opt.textContent; }
+                var car = node.querySelector('[data-wf-carrier]');
+                var carrier = opt.getAttribute('data-carrier') || '';
+                if (car) {
+                    if (carrier) {
+                        car.textContent = carrier;
+                        car.hidden = false;
+                    } else {
+                        car.hidden = true;
+                    }
+                }
+                var asr = parseFloat(opt.getAttribute('data-asr') || '0');
+                var meter = node.querySelector('[data-wf-meter]');
+                var fill = node.querySelector('[data-wf-meter-fill]');
+                if (meter) {
+                    meter.classList.remove('is-good', 'is-mid', 'is-low');
+                    meter.classList.add(asr >= 70 ? 'is-good' : (asr >= 40 ? 'is-mid' : 'is-low'));
+                }
+                if (fill) { fill.style.width = Math.max(0, Math.min(100, asr)) + '%'; }
+                var asrEl = node.querySelector('[data-wf-asr]');
+                if (asrEl) { asrEl.textContent = String(Math.round(asr)); }
+                var acdEl = node.querySelector('[data-wf-acd-label]');
+                if (acdEl) { acdEl.textContent = opt.getAttribute('data-acd-label') || '0s'; }
+                var attEl = node.querySelector('[data-wf-attempts]');
+                if (attEl) { attEl.textContent = opt.getAttribute('data-attempts') || '0'; }
+                var shareEl = node.querySelector('[data-wf-share]');
+                if (shareEl) { shareEl.textContent = String(Math.round(parseFloat(opt.getAttribute('data-share') || '0'))); }
+                var tog = node.querySelector('[data-wf-toggle]');
+                if (tog) { tog.setAttribute('aria-label', 'Use ' + (opt.getAttribute('data-name') || v) + ' for calls'); }
+                onList.appendChild(node);
+                bindRow(node);
+                sync();
+            });
+        }
+
+        sync();
+    });
 })();

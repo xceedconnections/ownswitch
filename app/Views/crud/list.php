@@ -19,6 +19,9 @@ $cell = static function (array $f, mixed $v): string {
     if (($f['type'] ?? '') === 'multiselect' && is_string($v)) {
         return e($v);
     }
+    if (($f['name'] ?? '') === 'trunks') {
+        return '<span class="os-trunk-chain">' . e((string) $v) . '</span>';
+    }
     if (($f['name'] ?? '') === 'media_policy' && ($v === null || $v === '')) {
         return e((string) ($f['options'][''] ?? 'Default'));
     }

@@ -24,8 +24,14 @@ final class Validator
             $name = (string) $f['name'];
             $type = (string) ($f['type'] ?? 'text');
             $label = (string) ($f['label'] ?? $name);
+            if (!empty($f['list_only'])) {
+                continue;
+            }
             if (!empty($f['readonly_on_edit']) && $isUpdate) {
                 continue;
+            }
+            if ($type === 'trunk_waterfall') {
+                $type = 'multiselect';
             }
             if ($type === 'checkbox') {
                 $data[$name] = !empty($input[$name]) ? 1 : 0;

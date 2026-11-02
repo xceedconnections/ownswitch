@@ -6,10 +6,16 @@
 $action = $existing ? $base . '/' . (int) $existing['id'] : $base;
 $isEdit = $existing !== null;
 ?>
+<?php
+$formSub = $isEdit ? 'Update existing record' : 'Create a new ' . strtolower($singular);
+if (($base ?? '') === '/trunk-groups') {
+    $formSub = 'Choose which trunks carry your calls and in what order. Each call tries your first trunk; if it can’t connect, it moves to the next one on your list.';
+}
+?>
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title"><?= e($title) ?></h1>
-        <p class="os-page-sub"><?= $isEdit ? 'Update existing record' : 'Create a new ' . e(strtolower($singular)) ?></p>
+        <p class="os-page-sub"><?= e($formSub) ?></p>
     </div>
     <a class="btn btn-outline-secondary btn-sm" href="<?= e(url($base)) ?>"><i class="bi bi-arrow-left me-1"></i>Back</a>
 </div>
@@ -27,7 +33,7 @@ foreach ($fields as $f) {
 $sectionIds = array_keys($sections);
 $useTabs = count($sectionIds) > 1;
 ?>
-<form method="post" action="<?= e(url($action)) ?>" class="os-panel col-xl-10" novalidate>
+<form method="post" action="<?= e(url($action)) ?>" class="os-panel<?= ($base ?? '') === '/trunk-groups' ? ' col-12' : ' col-xl-10' ?>" novalidate>
     <div class="p-3 p-md-4">
         <?= csrf_field() ?>
         <?php if ($useTabs): ?>
@@ -50,6 +56,9 @@ $useTabs = count($sectionIds) > 1;
             <?php if ($useTabs): ?><div class="tab-pane fade<?= $si === 0 ? ' show active' : '' ?>" id="<?= e($tid) ?>" role="tabpanel"><?php endif; ?>
             <div class="row g-3<?= $useTabs ? ' mb-2' : '' ?>">
             <?php foreach ($secFields as $f):
+                if (!empty($f['list_only'])) {
+                    continue;
+                }
                 $name = (string) $f['name'];
                 $type = (string) ($f['type'] ?? 'text');
                 $readonly = $isEdit && !empty($f['readonly_on_edit']);
@@ -60,11 +69,25 @@ $useTabs = count($sectionIds) > 1;
                 $id = 'f_' . $name;
                 $err = $errors[$name] ?? null;
                 $cls = 'form-control' . ($err ? ' is-invalid' : '');
-                $wide = in_array($type, ['textarea', 'password', 'multiselect'], true) || !empty($f['wide']);
+                $wide = in_array($type, ['textarea', 'password', 'multiselect', 'trunk_waterfall'], true) || !empty($f['wide']);
                 $addLabel = (string) ($f['add_label'] ?? ('+ Add ' . strtolower((string) ($f['label'] ?? 'item')) . '…'));
                 ?>
                 <div class="<?= $wide ? 'col-12' : 'col-12 col-md-6' ?>">
-                    <?php if ($type === 'checkbox'): ?>
+                    <?php if ($type === 'trunk_waterfall'):
+                        $wfMeta = $f['trunk_meta'] ?? [];
+                        $wfOpts = $f['options'] ?? [];
+                        $wfOn = [];
+                        if (is_array($val)) {
+                            $wfOn = array_values(array_filter(array_map('strval', $val)));
+                        } else {
+                            $wfOn = array_values(array_filter(array_map('trim', explode(',', (string) $val)), static fn ($x) => $x !== ''));
+                        }
+                        $wfOn = array_values(array_filter($wfOn, static fn ($c) => isset($wfOpts[$c]) || isset($wfMeta[$c])));
+                        $wfOffRaw = (string) ($values['trunk_off_ids'] ?? '');
+                        $wfOff = array_values(array_filter(array_map('trim', explode(',', $wfOffRaw)), static fn ($x) => $x !== '' && !in_array($x, $wfOn, true) && (isset($wfOpts[$x]) || isset($wfMeta[$x]))));
+                        $wfUsed = array_merge($wfOn, $wfOff);
+                        require __DIR__ . '/../routing/_waterfall.php';
+                    elseif ($type === 'checkbox'): ?>
                         <div class="form-check mt-md-4">
                             <input class="form-check-input" type="checkbox" id="<?= e($id) ?>" name="<?= e($name) ?>" value="1"<?= !empty($val) ? ' checked' : '' ?>>
                             <label class="form-check-label" for="<?= e($id) ?>"><?= e($f['label']) ?></label>
@@ -127,7 +150,7 @@ $useTabs = count($sectionIds) > 1;
                         <?php endif; ?>
                     <?php endif; ?>
                     <?php if ($err): ?><div class="invalid-feedback d-block"><?= e($err) ?></div><?php endif; ?>
-                    <?php if (!empty($f['help'])): ?><div class="form-text"><?= e($f['help']) ?></div><?php endif; ?>
+                    <?php if (!empty($f['help']) && $type !== 'trunk_waterfall'): ?><div class="form-text"><?= e($f['help']) ?></div><?php endif; ?>
                 </div>
             <?php endforeach; ?>
             </div>

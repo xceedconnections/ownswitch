@@ -12,7 +12,8 @@ use PDO;
 
 /**
  * Dry-run of what the router would do for (customer, destination): blocks, customer rate,
- * matching rules (longest prefix + trunk-group “*” members), ordered by strategy (priority | lcr | random).
+ * matching rules (longest prefix + trunk-group “*” members), ordered by strategy
+ * (priority | lcr | asr | random).
  * Read-only; never places calls.
  */
 final class RouteSimulator
@@ -134,12 +135,22 @@ final class RouteSimulator
                 ? $this->rating->margin($out['customer_rate']['sample_total'], $r['carrier_sample_cost']) : null;
         }
         unset($r);
-        $out['routes'] = self::order($rules, (string) $pl['strategy']);
+        $strategy = (string) $pl['strategy'];
+        if ($strategy === 'asr') {
+            $stats = (new TrunkHourStatsService($this->pdo))->lastHour(array_map(static fn ($r) => (int) $r['trunk_id'], $rules));
+            foreach ($rules as &$r) {
+                $sid = (string) (int) $r['trunk_id'];
+                $r['hour_asr'] = $stats[$sid]['asr'] ?? -1.0;
+                $r['hour_attempts'] = $stats[$sid]['attempts'] ?? 0;
+            }
+            unset($r);
+        }
+        $out['routes'] = self::order($rules, $strategy);
         return $out;
     }
 
     /**
-     * Order candidates: priority = ascending order; lcr = cheapest first; random = shuffle.
+     * Order candidates: priority = list order; lcr = cheapest first; asr = best connectivity; random = shuffle.
      *
      * @param list<array<string,mixed>> $rules
      * @return list<array<string,mixed>>
@@ -158,6 +169,18 @@ final class RouteSimulator
                     }
                     if ($ca !== null && ($c = bccomp((string) $ca, (string) $cb, 6)) !== 0) {
                         return $c;
+                    }
+                }
+                if ($strategy === 'asr') {
+                    $aa = (float) ($a['hour_asr'] ?? -1);
+                    $ba = (float) ($b['hour_asr'] ?? -1);
+                    if ($aa !== $ba) {
+                        return $ba <=> $aa;
+                    }
+                    $at = (int) ($a['hour_attempts'] ?? 0);
+                    $bt = (int) ($b['hour_attempts'] ?? 0);
+                    if ($at !== $bt) {
+                        return $bt <=> $at;
                     }
                 }
                 return ((int) $a['priority'] <=> (int) $b['priority']) ?: ((int) $a['rule_id'] <=> (int) $b['rule_id']);
