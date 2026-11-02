@@ -62,7 +62,9 @@ modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("auth_db", "calculate_ha1", 0)
 modparam("auth_db", "password_column", "ha1")
 modparam("auth_db", "load_credentials", "")
-modparam("auth_db", "use_domain", 1)
+# Magnus-style: match subscriber by username only. Softphones often put the
+# server IP in the Domain field while HA1 realm is OWNSWITCH_DOMAIN — use_domain=1 breaks that.
+modparam("auth_db", "use_domain", 0)
 
 loadmodule "usrloc.so"
 modparam("usrloc", "working_mode_preset", "single-instance-sql-write-back")
