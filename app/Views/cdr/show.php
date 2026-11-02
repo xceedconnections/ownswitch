@@ -18,11 +18,14 @@ if ($showCost) {
     ];
 }
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h4 mb-0">CDR #<?= e($cdr['id']) ?><?= !empty($cdr['is_demo']) ? ' <span class="badge text-bg-warning">DEMO</span>' : '' ?></h1>
-    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>">&larr; Back</a>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">CDR #<?= e($cdr['id']) ?><?= !empty($cdr['is_demo']) ? ' <span class="badge text-bg-warning">DEMO</span>' : '' ?></h1>
+        <p class="os-page-sub">Full call detail record</p>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>"><i class="bi bi-arrow-left me-1"></i>Back</a>
 </div>
-<div class="card shadow-sm col-xl-8"><table class="table table-sm mb-0">
+<div class="os-panel col-xl-8 overflow-hidden"><table class="table table-sm mb-0 os-table">
     <?php foreach ($rows as $k => $v): ?>
         <tr><th class="w-50 fw-normal text-muted"><?= e($k) ?></th><td class="os-mono"><?= e($v === null || $v === '' ? '-' : $v) ?></td></tr>
     <?php endforeach; ?>

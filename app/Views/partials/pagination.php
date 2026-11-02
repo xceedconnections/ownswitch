@@ -11,8 +11,8 @@ if (($result['pages'] ?? 1) > 1):
     $from = max(1, $cur - 2);
     $to = min($last, $cur + 2);
     ?>
-    <nav class="p-2 border-top" aria-label="Pagination">
-        <ul class="pagination pagination-sm mb-0 justify-content-center">
+    <nav class="px-3 py-3 border-top d-flex justify-content-center" aria-label="Pagination">
+        <ul class="pagination pagination-sm mb-0">
             <li class="page-item<?= $cur <= 1 ? ' disabled' : '' ?>"><a class="page-link" href="<?= e($mk(max(1, $cur - 1))) ?>">&laquo;</a></li>
             <?php if ($from > 1): ?><li class="page-item"><a class="page-link" href="<?= e($mk(1)) ?>">1</a></li><li class="page-item disabled"><span class="page-link">&hellip;</span></li><?php endif; ?>
             <?php for ($i = $from; $i <= $to; $i++): ?>

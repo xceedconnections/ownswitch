@@ -1,10 +1,13 @@
 <?php /** @var array $inv @var list<array> $lines @var array $customer */ ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h4 mb-0">Invoice <span class="os-mono"><?= e($inv['number']) ?></span></h1>
-    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/invoices')) ?>">&larr; Back</a>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Invoice <span class="os-mono"><?= e($inv['number']) ?></span></h1>
+        <p class="os-page-sub">Invoice detail and line items</p>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/invoices')) ?>"><i class="bi bi-arrow-left me-1"></i>Back</a>
 </div>
-<div class="card shadow-sm col-xl-9">
-    <div class="card-body">
+<div class="os-panel col-xl-9">
+    <div class="p-3 p-md-4">
         <div class="row mb-3">
             <div class="col-md-6"><div class="text-muted small">Customer</div><div><?= e($customer['name'] ?? '-') ?> <span class="text-muted">(<?= e($customer['code'] ?? '') ?>)</span></div></div>
             <div class="col-md-3"><div class="text-muted small">Period</div><div class="os-mono"><?= e($inv['period_start']) ?> &ndash; <?= e($inv['period_end']) ?></div></div>

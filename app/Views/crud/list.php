@@ -4,13 +4,9 @@
  * @var list<array<string,mixed>> $fields @var array $result @var string $q @var array $filters @var bool $canWrite @var string $emptyHint @var array $query
  */
 $cols = array_values(array_filter($fields, static fn ($f) => !empty($f['list'])));
-$qs = static function (array $extra) use ($query): string {
-    $p = array_merge(array_filter($query, 'is_string'), $extra);
-    return '?' . http_build_query($p);
-};
 $cell = static function (array $f, mixed $v): string {
     if ($v === null || $v === '') {
-        return '<span class="text-muted">-</span>';
+        return '<span class="text-muted">—</span>';
     }
     if (($f['type'] ?? '') === 'select' && isset($f['options'][$v])) {
         $label = (string) $f['options'][$v];
@@ -32,20 +28,28 @@ foreach ($fields as $f) {
     }
 }
 ?>
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-    <h1 class="h4 mb-0"><?= e($plural) ?> <span class="badge text-bg-light border"><?= e($result['total']) ?></span></h1>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title"><?= e($plural) ?> <span class="os-count"><?= e($result['total']) ?></span></h1>
+        <p class="os-page-sub">Manage <?= e(strtolower($plural)) ?> for this tenant</p>
+    </div>
     <?php if ($canWrite): ?>
-        <a class="btn btn-primary btn-sm" href="<?= e(url($base . '/create')) ?>">+ New <?= e(strtolower($singular)) ?></a>
+        <a class="btn btn-primary btn-sm" href="<?= e(url($base . '/create')) ?>"><i class="bi bi-plus-lg me-1"></i>New <?= e(strtolower($singular)) ?></a>
     <?php endif; ?>
 </div>
 
-<form method="get" class="row g-2 mb-3" action="<?= e(url($base)) ?>">
+<form method="get" class="os-toolbar row g-2 align-items-end" action="<?= e(url($base)) ?>">
     <div class="col-12 col-md-4">
-        <input type="search" class="form-control form-control-sm" name="q" value="<?= e($q) ?>" placeholder="Search..." maxlength="100" aria-label="Search">
+        <label class="form-label small mb-1" for="q">Search</label>
+        <div class="input-group input-group-sm">
+            <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+            <input type="search" class="form-control" id="q" name="q" value="<?= e($q) ?>" placeholder="Search…" maxlength="100" aria-label="Search">
+        </div>
     </div>
     <?php if ($statusField): ?>
-        <div class="col-6 col-md-2">
-            <select name="status" class="form-select form-select-sm" data-autosubmit aria-label="Status">
+        <div class="col-6 col-md-3 col-lg-2">
+            <label class="form-label small mb-1" for="status">Status</label>
+            <select name="status" id="status" class="form-select form-select-sm" data-autosubmit aria-label="Status">
                 <option value="">All statuses</option>
                 <?php foreach ($statusField['options'] as $k => $label): ?>
                     <option value="<?= e($k) ?>"<?= (($filters['status'] ?? '') === (string) $k) ? ' selected' : '' ?>><?= e($label) ?></option>
@@ -56,7 +60,7 @@ foreach ($fields as $f) {
     <div class="col-auto"><button class="btn btn-outline-secondary btn-sm" type="submit">Filter</button></div>
 </form>
 
-<div class="card shadow-sm">
+<div class="os-table-wrap">
     <?php if ($result['total'] === 0): ?>
         <div class="os-empty">
             <div class="os-empty-title">No <?= e(strtolower($plural)) ?> found</div>
@@ -71,7 +75,7 @@ foreach ($fields as $f) {
                 <thead><tr>
                     <th>ID</th>
                     <?php foreach ($cols as $c): ?><th><?= e($c['label']) ?></th><?php endforeach; ?>
-                    <th></th>
+                    <th class="text-end">Actions</th>
                 </tr></thead>
                 <tbody>
                 <?php foreach ($result['rows'] as $row): ?>
@@ -79,11 +83,13 @@ foreach ($fields as $f) {
                         <td class="os-mono"><?= e($row['id']) ?></td>
                         <?php foreach ($cols as $c): ?><td><?= $cell($c, $row[$c['name']] ?? null) ?></td><?php endforeach; ?>
                         <td class="text-end os-actions">
-                            <a class="btn btn-outline-secondary btn-sm" href="<?= e(url($base . '/' . (int) $row['id'] . '/edit')) ?>"><?= $canWrite ? 'Edit' : 'View' ?></a>
+                            <a class="btn btn-outline-secondary btn-sm" href="<?= e(url($base . '/' . (int) $row['id'] . '/edit')) ?>">
+                                <i class="bi bi-<?= $canWrite ? 'pencil' : 'eye' ?> me-1"></i><?= $canWrite ? 'Edit' : 'View' ?>
+                            </a>
                             <?php if ($canWrite): ?>
                                 <form method="post" action="<?= e(url($base . '/' . (int) $row['id'] . '/delete')) ?>" data-confirm="Delete this <?= e(strtolower($singular)) ?>? This cannot be undone.">
                                     <?= csrf_field() ?>
-                                    <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                                    <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
                                 </form>
                             <?php endif; ?>
                         </td>

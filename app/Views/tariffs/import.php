@@ -1,8 +1,12 @@
 <?php
 /** @var string $kind @var int $owner_id @var ?array $preview @var ?string $flash @var ?string $csv_b64 */
 ?>
-<h1 class="h4 mb-1">Tariff CSV import / export</h1>
-<p class="text-muted small">Validate before commit. Duplicate prefixes and negative rates are rejected. Customer and carrier increments are independent.</p>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Tariff CSV import / export</h1>
+        <p class="os-page-sub">Validate before commit · duplicate prefixes and negative rates rejected · independent customer/carrier increments</p>
+    </div>
+</div>
 <?php if (!empty($flash)): ?><div class="alert alert-info"><?= e($flash) ?></div><?php endif; ?>
 
 <form method="get" action="<?= e(url('/tariffs/export')) ?>" class="row g-2 align-items-end mb-4">
@@ -20,7 +24,7 @@
   <div class="col-auto"><button class="btn btn-outline-secondary btn-sm" type="submit">Export CSV</button></div>
 </form>
 
-<form method="post" action="<?= e(url('/tariffs/import/preview')) ?>" enctype="multipart/form-data" class="card card-body shadow-sm mb-4">
+<form method="post" action="<?= e(url('/tariffs/import/preview')) ?>" enctype="multipart/form-data" class="os-panel p-3 p-md-4 mb-4">
   <?= csrf_field() ?>
   <div class="row g-2">
     <div class="col-md-3">

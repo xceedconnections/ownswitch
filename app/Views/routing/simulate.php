@@ -1,8 +1,12 @@
 <?php /** @var array $customers @var ?array $result @var array $values @var ?string $error */ ?>
-<h1 class="h4 mb-1">Route Simulator</h1>
-<p class="text-muted small">Dry run only: shows blocks, the customer rate, matching rules (longest prefix) and the carrier attempt order. No call is placed.</p>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Route Simulator</h1>
+        <p class="os-page-sub">Dry run only — blocks, rates, longest-prefix rules and carrier attempt order. No call is placed.</p>
+    </div>
+</div>
 <?php if ($error): ?><div class="alert alert-danger py-2"><?= e($error) ?></div><?php endif; ?>
-<form method="post" action="<?= e(url('/routing/simulate')) ?>" class="card card-body shadow-sm mb-3">
+<form method="post" action="<?= e(url('/routing/simulate')) ?>" class="os-toolbar mb-3">
     <?= csrf_field() ?>
     <div class="row g-2 align-items-end">
         <div class="col-md-4"><label class="form-label small mb-0" for="customer_id">Customer</label>
@@ -14,7 +18,7 @@
     </div>
 </form>
 <?php if ($result): ?>
-    <div class="card shadow-sm mb-3"><div class="card-body">
+    <div class="os-panel mb-3"><div class="p-3 p-md-4">
         <div class="mb-2"><span class="text-muted">Normalised destination:</span> <span class="os-mono"><?= e($result['destination']) ?></span>
             <?php if (!empty($result['blocked'])): ?><span class="badge text-bg-danger ms-2">BLOCKED</span><?php endif; ?></div>
         <?php foreach ($result['notes'] as $n): ?><div class="alert alert-warning py-1 mb-2"><?= e($n) ?></div><?php endforeach; ?>

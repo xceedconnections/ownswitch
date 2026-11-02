@@ -6,41 +6,46 @@
 $action = $existing ? $base . '/' . (int) $existing['id'] : $base;
 $isEdit = $existing !== null;
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h4 mb-0"><?= e($title) ?></h1>
-    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url($base)) ?>">&larr; Back</a>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title"><?= e($title) ?></h1>
+        <p class="os-page-sub"><?= $isEdit ? 'Update existing record' : 'Create a new ' . e(strtolower($singular)) ?></p>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url($base)) ?>"><i class="bi bi-arrow-left me-1"></i>Back</a>
 </div>
 
 <?php if (!empty($errors['_form'])): ?>
     <div class="alert alert-danger"><?= e($errors['_form']) ?></div>
 <?php endif; ?>
 
-<form method="post" action="<?= e(url($action)) ?>" class="card shadow-sm col-xl-8" novalidate>
-    <div class="card-body">
+<form method="post" action="<?= e(url($action)) ?>" class="os-panel col-xl-8" novalidate>
+    <div class="p-3 p-md-4">
         <?= csrf_field() ?>
+        <div class="row g-3">
         <?php foreach ($fields as $f):
             $name = (string) $f['name'];
             $type = (string) ($f['type'] ?? 'text');
             $readonly = $isEdit && !empty($f['readonly_on_edit']);
             $val = array_key_exists($name, $values) ? $values[$name] : ($f['default'] ?? '');
             if ($type === 'password') {
-                $val = '';   // never echo secrets back
+                $val = '';
             }
             $id = 'f_' . $name;
             $err = $errors[$name] ?? null;
             $cls = 'form-control' . ($err ? ' is-invalid' : '');
+            $wide = in_array($type, ['textarea', 'password'], true) || !empty($f['wide']);
             ?>
-            <div class="mb-3">
+            <div class="<?= $wide ? 'col-12' : 'col-12 col-md-6' ?>">
                 <?php if ($type === 'checkbox'): ?>
-                    <div class="form-check">
+                    <div class="form-check mt-md-4">
                         <input class="form-check-input" type="checkbox" id="<?= e($id) ?>" name="<?= e($name) ?>" value="1"<?= !empty($val) ? ' checked' : '' ?>>
                         <label class="form-check-label" for="<?= e($id) ?>"><?= e($f['label']) ?></label>
                     </div>
                 <?php else: ?>
-                    <label class="form-label" for="<?= e($id) ?>"><?= e($f['label']) ?><?= !empty($f['required']) ? ' <span class="text-danger">*</span>' : '' ?></label>
+                    <label class="form-label fw-semibold" for="<?= e($id) ?>"><?= e($f['label']) ?><?= !empty($f['required']) ? ' <span class="text-danger">*</span>' : '' ?></label>
                     <?php if ($type === 'select'): ?>
                         <select class="form-select<?= $err ? ' is-invalid' : '' ?>" id="<?= e($id) ?>" name="<?= e($name) ?>"<?= $readonly ? ' disabled' : '' ?>>
-                            <?php if (empty($f['required']) && !isset($f['options'][''])): ?><option value="">-</option><?php endif; ?>
+                            <?php if (empty($f['required']) && !isset($f['options'][''])): ?><option value="">—</option><?php endif; ?>
                             <?php foreach ($f['options'] as $k => $label): ?>
                                 <option value="<?= e($k) ?>"<?= ((string) $val === (string) $k) ? ' selected' : '' ?>><?= e($label) ?></option>
                             <?php endforeach; ?>
@@ -60,9 +65,10 @@ $isEdit = $existing !== null;
                 <?php if (!empty($f['help'])): ?><div class="form-text"><?= e($f['help']) ?></div><?php endif; ?>
             </div>
         <?php endforeach; ?>
+        </div>
     </div>
-    <div class="card-footer d-flex gap-2">
-        <button type="submit" class="btn btn-primary" data-once>Save</button>
+    <div class="border-top px-3 px-md-4 py-3 d-flex flex-wrap gap-2 bg-light rounded-bottom">
+        <button type="submit" class="btn btn-primary" data-once><i class="bi bi-check2 me-1"></i>Save</button>
         <a class="btn btn-outline-secondary" href="<?= e(url($base)) ?>">Cancel</a>
     </div>
 </form>

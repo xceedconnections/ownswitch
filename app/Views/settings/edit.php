@@ -1,7 +1,12 @@
 <?php /** @var array $schema @var array $values @var array<string,string> $errors */ ?>
-<h1 class="h4 mb-3">Settings</h1>
-<form method="post" action="<?= e(url('/settings')) ?>" class="card shadow-sm col-xl-8">
-    <div class="card-body">
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Settings</h1>
+        <p class="os-page-sub">Tenant configuration</p>
+    </div>
+</div>
+<form method="post" action="<?= e(url('/settings')) ?>" class="os-panel col-xl-8">
+    <div class="p-3 p-md-4">
         <?= csrf_field() ?>
         <?php foreach ($schema as $key => [$label, $type, $help]):
             $err = $errors[$key] ?? null; $val = $values[$key] ?? ''; ?>
@@ -21,5 +26,5 @@
             </div>
         <?php endforeach; ?>
     </div>
-    <div class="card-footer"><button class="btn btn-primary" type="submit" data-once>Save settings</button></div>
+    <div class="border-top px-3 px-md-4 py-3 bg-light rounded-bottom"><button class="btn btn-primary" type="submit" data-once><i class="bi bi-check2 me-1"></i>Save settings</button></div>
 </form>

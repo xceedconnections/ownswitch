@@ -1,6 +1,11 @@
 <?php /** @var array $result */ $query = $_GET ?? []; ?>
-<h1 class="h4 mb-3">Recordings <span class="badge text-bg-light border"><?= e($result['total']) ?></span></h1>
-<div class="card shadow-sm">
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Recordings <span class="os-count"><?= e($result['total']) ?></span></h1>
+        <p class="os-page-sub">Call recordings when media policy is record</p>
+    </div>
+</div>
+<div class="os-table-wrap">
 <?php if ($result['total'] === 0): ?>
     <div class="os-empty"><div class="os-empty-title">No recordings</div>
         <div>Recordings exist only when a customer or trunk uses the <strong>record</strong> media policy and <code>RECORDINGS_DIR</code> is configured. Access is audited.</div></div>

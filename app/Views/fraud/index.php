@@ -1,12 +1,14 @@
 <?php /** @var array $result @var list<array> $rules @var bool $canManage @var array $filters */ $query = $_GET ?? []; ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h4 mb-0">Fraud Alerts <span class="badge text-bg-light border"><?= e($result['total']) ?></span></h1>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Fraud Alerts <span class="os-count"><?= e($result['total']) ?></span></h1>
+        <p class="os-page-sub">Signalling/CDR-based detection (velocity, short-call ratio, destination spread)</p>
+    </div>
     <?php if ($canManage): ?>
-        <form method="post" action="<?= e(url('/fraud/scan')) ?>"><?= csrf_field() ?><button class="btn btn-outline-primary btn-sm" type="submit" data-once>Scan recent CDRs now</button></form>
+        <form method="post" action="<?= e(url('/fraud/scan')) ?>"><?= csrf_field() ?><button class="btn btn-outline-secondary btn-sm" type="submit" data-once><i class="bi bi-shield-exclamation me-1"></i>Scan recent CDRs</button></form>
     <?php endif; ?>
 </div>
-<p class="text-muted small">Signalling/CDR-based detection only (velocity, short-call ratio, destination spread). No audio analysis is performed.</p>
-<div class="card shadow-sm mb-4">
+<div class="os-table-wrap mb-4">
 <?php if ($result['total'] === 0): ?>
     <div class="os-empty"><div class="os-empty-title">No fraud events</div><div>Nothing has been flagged. Run <code>php bin/worker_cdr.php</code> to ingest CDRs, then scan.</div></div>
 <?php else: ?>
@@ -24,8 +26,8 @@
 <?php endif; ?>
 </div>
 <?php if ($rules): ?>
-    <h2 class="h6 text-uppercase text-muted">Active rules</h2>
-    <div class="card shadow-sm"><div class="table-responsive"><table class="table table-sm mb-0 os-table">
+    <p class="os-section-label">Active rules</p>
+    <div class="os-table-wrap"><div class="table-responsive"><table class="table table-sm mb-0 os-table">
         <thead><tr><th>Code</th><th>Type</th><th class="os-num">Threshold</th><th class="os-num">Window (s)</th><th>Action</th><th>Status</th></tr></thead>
         <tbody><?php foreach ($rules as $r): ?>
             <tr><td class="os-mono"><?= e($r['code']) ?></td><td><?= e($r['rule_type']) ?></td><td class="os-num"><?= e($r['threshold']) ?></td><td class="os-num"><?= e($r['window_seconds']) ?></td><td><?= e($r['action']) ?></td><td><?= e($r['status']) ?></td></tr>

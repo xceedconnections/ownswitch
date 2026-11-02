@@ -8,10 +8,14 @@ $in = static function (string $name, string $label, string $help = '') use ($val
         <?php if ($err): ?><div class="invalid-feedback"><?= e($err) ?></div><?php elseif ($help): ?><div class="form-text"><?= e($help) ?></div><?php endif; ?>
     </div>
 <?php }; ?>
-<h1 class="h4 mb-1">Billing Preview</h1>
-<p class="text-muted small">Uses the canonical <code>RatingService</code> formula: billable = 0 if D=0; I if D&le;I; else I + ceil((D&minus;I)/S)&times;S. Amount = rate &times; billable / 60 + connection fee (when D&gt;0). All math is decimal (bcmath).</p>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Billing Preview</h1>
+        <p class="os-page-sub">Canonical RatingService formula · decimal bcmath · customer and carrier increments independent</p>
+    </div>
+</div>
 
-<form method="post" action="<?= e(url('/billing/preview')) ?>" id="billing-preview-form" class="card card-body shadow-sm mb-3" novalidate>
+<form method="post" action="<?= e(url('/billing/preview')) ?>" id="billing-preview-form" class="os-panel p-3 p-md-4 mb-3" novalidate>
     <?= csrf_field() ?>
     <h2 class="h6 text-uppercase text-muted">Customer side</h2>
     <div class="row g-2 mb-3">
@@ -55,7 +59,7 @@ $in = static function (string $name, string $label, string $help = '') use ($val
                 </dl>
             </div></div></div>
         <?php endif; ?>
-        <div class="col-12"><div class="card shadow-sm"><div class="card-header">Side-by-side comparison (same rate &amp; duration)</div>
+        <div class="col-12"><div class="os-panel"><div class="card-header">Side-by-side comparison (same rate &amp; duration)</div>
             <div class="table-responsive"><table class="table table-sm mb-0 os-table">
                 <thead><tr><th>Increment</th><th class="os-num">Billable s</th><th class="os-num">Usage</th><th class="os-num">Fee</th><th class="os-num">Total</th></tr></thead>
                 <tbody><?php foreach ($result['comparison'] as $label => $x): ?>

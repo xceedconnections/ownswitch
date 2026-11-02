@@ -3,8 +3,13 @@
 $groups = ['day' => 'Day', 'customer' => 'Customer', 'currency' => 'Currency'] + ($canCarrier ? ['carrier' => 'Carrier'] : []);
 $showCost = $res['show_cost'];
 ?>
-<h1 class="h4 mb-3">Financial Report</h1>
-<form method="get" action="<?= e(url('/reports/financial')) ?>" class="card card-body shadow-sm mb-3">
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Financial Report</h1>
+        <p class="os-page-sub">Revenue, cost and margin by period</p>
+    </div>
+</div>
+<form method="get" action="<?= e(url('/reports/financial')) ?>" class="os-toolbar mb-3">
     <div class="row g-2 align-items-end">
         <div class="col-6 col-md-2"><label class="form-label small mb-0" for="from">From</label><input type="date" class="form-control form-control-sm" id="from" name="from" value="<?= e($from) ?>"></div>
         <div class="col-6 col-md-2"><label class="form-label small mb-0" for="to">To</label><input type="date" class="form-control form-control-sm" id="to" name="to" value="<?= e($to) ?>"></div>
@@ -13,7 +18,7 @@ $showCost = $res['show_cost'];
         <div class="col-auto"><button class="btn btn-primary btn-sm" type="submit">Run</button></div>
     </div>
 </form>
-<div class="card shadow-sm">
+<div class="os-table-wrap">
 <?php if (!$res['rows']): ?>
     <div class="os-empty"><div class="os-empty-title">No data</div><div>No CDRs for this period.</div></div>
 <?php else: ?>

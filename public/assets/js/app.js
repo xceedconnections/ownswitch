@@ -1,8 +1,7 @@
-/* Ownswitch UI helpers. No inline JS; no innerHTML with data. */
+/* Ownswitch CRM UI helpers. No inline JS; no innerHTML with untrusted data. */
 (function () {
     'use strict';
 
-    // Confirm destructive actions: <form data-confirm="Delete this?">
     document.addEventListener('submit', function (ev) {
         var msg = ev.target && ev.target.getAttribute ? ev.target.getAttribute('data-confirm') : null;
         if (msg && !window.confirm(msg)) {
@@ -10,19 +9,34 @@
         }
     });
 
-    // Prevent double submits: disable submit buttons once the form is submitted.
     document.addEventListener('submit', function (ev) {
         if (ev.defaultPrevented) { return; }
         var btns = ev.target.querySelectorAll('button[type="submit"][data-once]');
-        btns.forEach(function (b) { window.setTimeout(function () { b.disabled = true; }, 0); });
+        btns.forEach(function (b) {
+            window.setTimeout(function () {
+                b.disabled = true;
+                b.classList.add('disabled');
+            }, 0);
+        });
     });
 
-    // Auto-submit selects marked data-autosubmit (list filters).
     document.querySelectorAll('select[data-autosubmit]').forEach(function (sel) {
         sel.addEventListener('change', function () { if (sel.form) { sel.form.submit(); } });
     });
 
-    // Billing preview: UX-only mirror of the server formula (server always recalculates and is authoritative).
+    // Close mobile offcanvas after nav click
+    var sidebar = document.getElementById('osSidebar');
+    if (sidebar && window.bootstrap) {
+        sidebar.querySelectorAll('a.os-nav-link').forEach(function (link) {
+            link.addEventListener('click', function () {
+                var inst = bootstrap.Offcanvas.getInstance(sidebar);
+                if (inst && window.matchMedia('(max-width: 991.98px)').matches) {
+                    inst.hide();
+                }
+            });
+        });
+    }
+
     var form = document.getElementById('billing-preview-form');
     var hint = document.getElementById('billing-live-hint');
     if (form && hint) {

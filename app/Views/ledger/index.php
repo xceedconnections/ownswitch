@@ -1,18 +1,28 @@
 <?php /** @var array $result @var array $customers @var array $filters @var ?string $balance @var list<string> $types @var bool $canReverse @var array $query */ ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h4 mb-0">Ledger <span class="badge text-bg-light border"><?= e($result['total']) ?></span></h1>
-    <?php if ($balance !== null): ?><div class="fs-5">Balance: <span class="os-mono fw-semibold"><?= e(fmt_money($balance, 6)) ?></span></div><?php endif; ?>
+<div class="os-page-head">
+    <div>
+        <h1 class="os-page-title">Ledger <span class="os-count"><?= e($result['total']) ?></span></h1>
+        <p class="os-page-sub">Append-only balance movements</p>
+    </div>
+    <?php if ($balance !== null): ?>
+        <div class="os-card-stat"><div class="card-body py-2 px-3">
+            <div class="os-stat-label mb-0">Balance</div>
+            <div class="os-stat-value os-mono os-stat-sm"><?= e(fmt_money($balance, 6)) ?></div>
+        </div></div>
+    <?php endif; ?>
 </div>
-<form method="get" action="<?= e(url('/ledger')) ?>" class="row g-2 mb-3">
+<form method="get" action="<?= e(url('/ledger')) ?>" class="os-toolbar row g-2 align-items-end">
     <?php if ($customers): ?>
-        <div class="col-md-4"><select class="form-select form-select-sm" name="customer_id" data-autosubmit aria-label="Customer"><option value="">All customers</option>
+        <div class="col-md-4"><label class="form-label small mb-1" for="customer_id">Customer</label>
+            <select class="form-select form-select-sm" id="customer_id" name="customer_id" data-autosubmit aria-label="Customer"><option value="">All customers</option>
             <?php foreach ($customers as $id => $n): ?><option value="<?= e($id) ?>"<?= ($filters['customer_id'] ?? '') === (string) $id ? ' selected' : '' ?>><?= e($n) ?></option><?php endforeach; ?></select></div>
     <?php endif; ?>
-    <div class="col-md-3"><select class="form-select form-select-sm" name="entry_type" data-autosubmit aria-label="Type"><option value="">All types</option>
+    <div class="col-md-3"><label class="form-label small mb-1" for="entry_type">Type</label>
+        <select class="form-select form-select-sm" id="entry_type" name="entry_type" data-autosubmit aria-label="Type"><option value="">All types</option>
         <?php foreach ($types as $t): ?><option value="<?= e($t) ?>"<?= ($filters['entry_type'] ?? '') === $t ? ' selected' : '' ?>><?= e($t) ?></option><?php endforeach; ?></select></div>
     <div class="col-auto"><button class="btn btn-outline-secondary btn-sm" type="submit">Filter</button></div>
 </form>
-<div class="card shadow-sm">
+<div class="os-table-wrap">
 <?php if ($result['total'] === 0): ?>
     <div class="os-empty"><div class="os-empty-title">No ledger entries</div><div>Entries appear after top-ups and rated calls.</div></div>
 <?php else: ?>
