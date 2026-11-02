@@ -135,12 +135,14 @@ mod_dir="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules
 export OPENSIPS_MPATH="${mod_dir}/"
 [[ -f "${mod_dir}/cgrates.so" ]] || die "cgrates.so missing in ${mod_dir} (package opensips-cgrates-module)"
 
-if [[ "${PRIVATE_IP}" != "${PUBLIC_IP}" ]]; then
-  export SIP_SOCKET_UDP="udp:${PRIVATE_IP}:${SIP_PORT} as ${PUBLIC_IP}:${SIP_PORT}"
-  export SIP_SOCKET_TCP="tcp:${PRIVATE_IP}:${SIP_PORT} as ${PUBLIC_IP}:${SIP_PORT}"
+# Always bind all interfaces and advertise the public IP (Hetzner / cloud safe).
+# Listening only on a private NIC caused softphones to time out even when TCP seemed open.
+if valid_ipv4 "${PUBLIC_IP}"; then
+  export SIP_SOCKET_UDP="udp:0.0.0.0:${SIP_PORT} as ${PUBLIC_IP}:${SIP_PORT}"
+  export SIP_SOCKET_TCP="tcp:0.0.0.0:${SIP_PORT} as ${PUBLIC_IP}:${SIP_PORT}"
 else
-  export SIP_SOCKET_UDP="udp:${PRIVATE_IP}:${SIP_PORT}"
-  export SIP_SOCKET_TCP="tcp:${PRIVATE_IP}:${SIP_PORT}"
+  export SIP_SOCKET_UDP="udp:0.0.0.0:${SIP_PORT}"
+  export SIP_SOCKET_TCP="tcp:0.0.0.0:${SIP_PORT}"
 fi
 export RTPENGINE_SOCK="udp:127.0.0.1:${RTPENGINE_NG_PORT}"
 cpus="$(nproc)"; workers=$(( cpus > 8 ? 8 : cpus )); (( workers >= 2 )) || workers=2
@@ -156,12 +158,24 @@ else
   export OPENSIPS_MI_HTTP_BLOCK='# mi_http not installed (opensips-http-modules) - MI available via FIFO only'
 fi
 
+# Prefer installing UAC so Register-mode trunks can outbound REGISTER to vendors (Magnus).
+apt_install_optional opensips-uac-module || true
 if [[ -f "${mod_dir}/uac_registrant.so" ]]; then
   export OPENSIPS_UAC_BLOCK="loadmodule \"uac_registrant.so\"
 modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
-modparam(\"uac_registrant\", \"timer_interval\", 60)"
+modparam(\"uac_registrant\", \"timer_interval\", 20)
+modparam(\"uac_registrant\", \"hash_size\", 2)"
 else
-  export OPENSIPS_UAC_BLOCK='# uac_registrant.so not installed — IP peer trunks OK; Register-mode needs opensips-uac-module'
+  # refresh mod_dir in case package just landed
+  mod_dir="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -n1)")"
+  if [[ -f "${mod_dir}/uac_registrant.so" ]]; then
+    export OPENSIPS_MPATH="${mod_dir}/"
+    export OPENSIPS_UAC_BLOCK="loadmodule \"uac_registrant.so\"
+modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
+modparam(\"uac_registrant\", \"timer_interval\", 20)"
+  else
+    export OPENSIPS_UAC_BLOCK='# uac_registrant.so not installed — IP peer trunks OK; Register-mode needs opensips-uac-module'
+  fi
 fi
 
 if [[ -f "${mod_dir}/nathelper.so" ]]; then

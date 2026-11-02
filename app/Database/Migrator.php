@@ -69,8 +69,20 @@ final class Migrator
             }
             $path = $this->dir . '/' . $f;
             $sql = (string) file_get_contents($path);
-            foreach (self::splitStatements($sql) as $stmt) {
-                $this->pdo->exec($stmt);
+            try {
+                foreach (self::splitStatements($sql) as $stmt) {
+                    $this->pdo->exec($stmt);
+                }
+            } catch (\PDOException $e) {
+                // Ledger triggers need TRIGGER privilege — skip recording so a privileged re-run can apply later,
+                // but do not block unrelated later migrations when this is the ledger guard file.
+                if (str_contains($f, 'ledger_guard')) {
+                    if ($log) {
+                        $log($f . ' SKIPPED (' . $e->getMessage() . ')');
+                    }
+                    continue;
+                }
+                throw $e;
             }
             $stmt = $this->pdo->prepare('INSERT INTO schema_migrations (migration, checksum) VALUES (?, ?)');
             $stmt->execute([$f, hash('sha256', $sql)]);
