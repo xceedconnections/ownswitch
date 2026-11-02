@@ -138,9 +138,16 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/cdrs/export', [$cdr, 'export'], [$all]);
     $r->get('/cdrs/{id}', [$cdr, 'show'], [$all]);
     $rep = new ReportController();
-    $r->get('/reports/summary-day', [$rep, 'asrAcd'], [$all]);
+    $r->get('/reports/cdr-failed', [$rep, 'cdrFailed'], [$all]);
     $r->get('/reports/asr-acd', static fn () => Response::redirect(url('/reports/summary-day')));
     $r->get('/reports/financial', [$rep, 'financial'], [$role(Menu::FINANCE)]);
+    foreach (array_keys(\Ownswitch\Services\Reports\CallSummaryService::REPORTS) as $slug) {
+        $meta = \Ownswitch\Services\Reports\CallSummaryService::REPORTS[$slug];
+        $repRoles = $meta['staff_only'] ? $STAFF : $all;
+        $r->get('/reports/' . $slug, static function ($req, array $p) use ($rep, $slug) {
+            return $rep->callSummary($req, ['slug' => $slug]);
+        }, [$repRoles]);
+    }
 
     // Billing
     $bill = new BillingController();
