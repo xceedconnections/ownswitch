@@ -63,7 +63,10 @@ final class OpensipsProvisioner
         return [md5("{$username}:{$realm}:{$password}"), md5("{$username}@{$realm}:{$realm}:{$password}")];
     }
 
-    public function upsertSubscriber(string $username, string $domain, string $ha1, string $ha1b): void
+    /**
+     * @param array<string,mixed>|null $account Ownswitch sip_accounts row (CallerID → rpid, etc.)
+     */
+    public function upsertSubscriber(string $username, string $domain, string $ha1, string $ha1b, ?array $account = null): void
     {
         $db = $this->db();
         if (!$this->tableExists('subscriber')) {
@@ -81,6 +84,10 @@ final class OpensipsProvisioner
         if (in_array('password', $cols, true)) {
             $set['password'] = '';
         }
+        if ($account !== null && in_array('rpid', $cols, true)) {
+            $cid = trim((string) ($account['caller_id'] ?? ''));
+            $set['rpid'] = $cid !== '' ? $cid : '';
+        }
 
         if ($id) {
             $parts = [];
@@ -91,28 +98,39 @@ final class OpensipsProvisioner
             }
             $vals[] = $id;
             $db->prepare('UPDATE subscriber SET ' . implode(',', $parts) . ' WHERE id = ?')->execute($vals);
-            return;
+        } else {
+            $insert = ['username' => $username, 'domain' => $domain] + $set;
+            foreach (['email_address', 'rpid'] as $opt) {
+                if (in_array($opt, $cols, true) && !array_key_exists($opt, $insert)) {
+                    $insert[$opt] = '';
+                }
+            }
+            $cnames = array_keys($insert);
+            $sql = 'INSERT INTO subscriber (' . implode(',', array_map(static fn ($c) => "`{$c}`", $cnames)) . ') VALUES ('
+                . implode(',', array_fill(0, count($cnames), '?')) . ')';
+            $db->prepare($sql)->execute(array_values($insert));
         }
 
-        $insert = ['username' => $username, 'domain' => $domain] + $set;
-        // Optional NOT NULL columns with empty defaults on some schemas
-        foreach (['email_address', 'rpid'] as $opt) {
-            if (in_array($opt, $cols, true) && !array_key_exists($opt, $insert)) {
-                $insert[$opt] = '';
+        // Fixed-host SIP users → permissions address (customer group)
+        if ($account !== null && $this->tableExists('address')) {
+            $host = trim((string) ($account['sip_host'] ?? 'dynamic'));
+            $ctx = 'sip:' . $username;
+            $db->prepare('DELETE FROM address WHERE grp = ? AND context_info = ?')->execute([self::GRP_CUSTOMER, $ctx]);
+            if ($host !== '' && strtolower($host) !== 'dynamic' && filter_var($host, FILTER_VALIDATE_IP)) {
+                $this->upsertAddress(self::GRP_CUSTOMER, $host, str_contains($host, ':') ? 128 : 32, 0, 'any', $ctx);
             }
         }
-        $cnames = array_keys($insert);
-        $sql = 'INSERT INTO subscriber (' . implode(',', array_map(static fn ($c) => "`{$c}`", $cnames)) . ') VALUES ('
-            . implode(',', array_fill(0, count($cnames), '?')) . ')';
-        $db->prepare($sql)->execute(array_values($insert));
     }
 
     public function removeSubscriber(string $username, string $domain): void
     {
-        if (!$this->tableExists('subscriber')) {
-            return;
+        $db = $this->db();
+        if ($this->tableExists('subscriber')) {
+            $db->prepare('DELETE FROM subscriber WHERE username = ? AND domain = ?')->execute([$username, $domain]);
         }
-        $this->db()->prepare('DELETE FROM subscriber WHERE username = ? AND domain = ?')->execute([$username, $domain]);
+        if ($this->tableExists('address')) {
+            $db->prepare('DELETE FROM address WHERE grp = ? AND context_info = ?')->execute([self::GRP_CUSTOMER, 'sip:' . $username]);
+        }
     }
 
     public function upsertAddress(int $group, string $ip, int $mask, int $port, string $proto, string $context = ''): void
@@ -173,7 +191,11 @@ final class OpensipsProvisioner
             throw new \RuntimeException('opensips.dr_gateways missing — run: sudo bash /opt/ownswitch-src/deploy/fix-drouting-schema.sh');
         }
 
-        $this->upsertGateway($gwid, $address, substr((string) $trunk['name'], 0, 120));
+        $strip = self::stripDigits((string) ($trunk['remove_prefix'] ?? ''));
+        $pri = trim((string) ($trunk['add_prefix'] ?? ''));
+        $probe = strtolower((string) ($trunk['qualify'] ?? 'yes')) === 'yes' ? 1 : 0;
+        $attrs = self::trunkAttrs($trunk);
+        $this->upsertGateway($gwid, $address, substr((string) $trunk['name'], 0, 120), $strip, $pri !== '' ? $pri : null, $probe, $attrs);
 
         if (filter_var($host, FILTER_VALIDATE_IP) && $this->tableExists('address')) {
             try {
@@ -201,8 +223,15 @@ final class OpensipsProvisioner
         }
     }
 
-    private function upsertGateway(string $gwid, string $address, string $desc): void
-    {
+    private function upsertGateway(
+        string $gwid,
+        string $address,
+        string $desc,
+        int $strip = 0,
+        ?string $priPrefix = null,
+        int $probeMode = 0,
+        ?string $attrs = null,
+    ): void {
         $db = $this->db();
         $cols = $this->columns('dr_gateways');
         if (!in_array('gwid', $cols, true) || !in_array('address', $cols, true)) {
@@ -214,7 +243,10 @@ final class OpensipsProvisioner
 
         $fields = ['type' => 0, 'address' => $address];
         if (in_array('strip', $cols, true)) {
-            $fields['strip'] = 0;
+            $fields['strip'] = max(0, $strip);
+        }
+        if (in_array('pri_prefix', $cols, true)) {
+            $fields['pri_prefix'] = $priPrefix;
         }
         if (in_array('state', $cols, true)) {
             $fields['state'] = 0;
@@ -223,7 +255,10 @@ final class OpensipsProvisioner
             $fields['description'] = $desc;
         }
         if (in_array('probe_mode', $cols, true)) {
-            $fields['probe_mode'] = 0;
+            $fields['probe_mode'] = $probeMode > 0 ? 1 : 0;
+        }
+        if (in_array('attrs', $cols, true)) {
+            $fields['attrs'] = $attrs !== null && $attrs !== '' ? mb_substr($attrs, 0, 250) : null;
         }
 
         if ($rowId) {
@@ -239,19 +274,48 @@ final class OpensipsProvisioner
         }
 
         $insert = ['gwid' => $gwid] + $fields;
-        if (in_array('pri_prefix', $cols, true)) {
-            $insert['pri_prefix'] = null;
-        }
-        if (in_array('attrs', $cols, true)) {
-            $insert['attrs'] = null;
-        }
-        if (in_array('socket', $cols, true)) {
+        if (in_array('socket', $cols, true) && !array_key_exists('socket', $insert)) {
             $insert['socket'] = null;
         }
         $names = array_keys($insert);
         $sql = 'INSERT INTO dr_gateways (' . implode(',', array_map(static fn ($c) => "`{$c}`", $names)) . ') VALUES ('
             . implode(',', array_fill(0, count($names), '?')) . ')';
         $db->prepare($sql)->execute(array_values($insert));
+    }
+
+    /** Digits to strip from RURI = length of remove_prefix (Magnus). */
+    public static function stripDigits(string $removePrefix): int
+    {
+        $p = preg_replace('/\D+/', '', $removePrefix) ?? '';
+        return min(32, strlen($p));
+    }
+
+    /** @param array<string,mixed> $trunk */
+    public static function trunkAttrs(array $trunk): string
+    {
+        $parts = [];
+        $map = [
+            'fu' => 'from_user',
+            'fd' => 'from_domain',
+            'cidadd' => 'cid_add_prefix',
+            'cidrem' => 'cid_remove_prefix',
+            'codecs' => 'codecs',
+            'param' => 'addparameter',
+            'dm' => 'directmedia',
+            'dtmf' => 'dtmfmode',
+            'ctx' => 'context',
+        ];
+        foreach ($map as $k => $col) {
+            $v = trim((string) ($trunk[$col] ?? ''));
+            if ($v !== '') {
+                $parts[] = $k . '=' . rawurlencode($v);
+            }
+        }
+        $extra = trim((string) ($trunk['asterisk_extra'] ?? ''));
+        if ($extra !== '') {
+            $parts[] = 'extra=' . rawurlencode(mb_substr(preg_replace('/\s+/', ' ', $extra) ?? $extra, 0, 120));
+        }
+        return implode(';', $parts);
     }
 
     public function removeTrunk(int $trunkId): void

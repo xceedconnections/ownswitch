@@ -106,7 +106,12 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/routing/plans/{id}/edit', static function ($req, array $p) {
         return Response::redirect(url('/trunk-groups/' . (int) $p['id'] . '/edit'));
     });
-    $crud($r, '/routing', $sim, $STAFF);
+    // Legacy /routing CRUD removed — Trunk Groups cover multi-trunk failover
+    $r->get('/routing', static fn () => Response::redirect(url('/trunk-groups')));
+    $r->get('/routing/create', static fn () => Response::redirect(url('/trunk-groups/create')));
+    $r->get('/routing/{id}/edit', static function ($req, array $p) {
+        return Response::redirect(url('/trunk-groups'));
+    });
 
     // Reports
     $cdr = new CdrController();

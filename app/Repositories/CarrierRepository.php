@@ -18,7 +18,10 @@ final class CarrierRepository extends BaseRepository
     public static function trunks(PDO $pdo): self
     {
         return new self($pdo, 'carrier_trunks',
-            ['carrier_id', 'name', 'host', 'port', 'transport', 'auth_username', 'auth_secret_enc', 'auth_mode', 'outbound_proxy',
+            ['carrier_id', 'name', 'host', 'port', 'transport', 'provider_tech', 'add_prefix', 'remove_prefix',
+                'from_user', 'from_domain', 'cid_add_prefix', 'cid_remove_prefix', 'context', 'dtmfmode', 'insecure',
+                'nat', 'directmedia', 'qualify', 'peer_type', 'sendrpid', 'addparameter', 'asterisk_extra',
+                'auth_username', 'auth_secret_enc', 'auth_mode', 'outbound_proxy',
                 'register_status', 'register_checked_at', 'max_channels', 'codecs', 'media_policy',
                 'initial_increment', 'subsequent_increment', 'default_rate', 'connect_fee', 'priority', 'status'],
             'none', ['name', 'host'], ['id', 'name', 'host', 'auth_mode', 'status', 'carrier_id']);

@@ -31,11 +31,13 @@
     </div>
     <?php if (!empty($result['routes'])): ?>
         <div class="table-responsive"><table class="table table-sm mb-0 os-table">
-            <thead><tr><th>#</th><th>Carrier / trunk</th><th>Host</th><th>Rule prefix</th><th class="os-num">Priority</th><th class="os-num">Carrier rate</th><th>I/S</th><th class="os-num">Sample cost</th><th class="os-num">Sample margin</th></tr></thead>
+            <thead><tr><th>#</th><th>Carrier / trunk</th><th>Host</th><th>Dialled out</th><th>From</th><th class="os-num">Priority</th><th class="os-num">Carrier rate</th><th class="os-num">Sample cost</th></tr></thead>
             <tbody><?php foreach ($result['routes'] as $rt): ?>
                 <tr><td><?= e($rt['attempt_order']) ?></td><td><?= e($rt['carrier_name']) ?> / <?= e($rt['trunk_name']) ?></td><td class="os-mono"><?= e($rt['host']) ?>:<?= e($rt['port']) ?></td>
-                    <td class="os-mono"><?= e($rt['prefix']) ?></td><td class="os-num"><?= e($rt['priority']) ?></td><td class="os-num os-mono"><?= e($rt['carrier_rate'] ?? 'unrated') ?></td>
-                    <td class="os-mono"><?= e($rt['carrier_increment'] ?? '-') ?></td><td class="os-num os-mono"><?= e($rt['carrier_sample_cost'] ?? '-') ?></td><td class="os-num os-mono"><?= e($rt['sample_margin'] ?? '-') ?></td></tr>
+                    <td class="os-mono"><?= e($rt['dialled_out'] ?? $result['destination'] ?? '') ?></td>
+                    <td class="os-mono"><?= e($rt['from_rewrite'] ?? '—') ?></td>
+                    <td class="os-num"><?= e($rt['priority']) ?></td><td class="os-num os-mono"><?= e($rt['carrier_rate'] ?? 'unrated') ?></td>
+                    <td class="os-num os-mono"><?= e($rt['carrier_sample_cost'] ?? '-') ?></td></tr>
             <?php endforeach; ?></tbody>
         </table></div>
     <?php endif; ?></div>

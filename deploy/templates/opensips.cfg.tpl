@@ -102,6 +102,8 @@ modparam("acc", "report_cancels", 0)
 # dynamic routing (carrier selection / failover) - data loaded from the opensips DB
 loadmodule "drouting.so"
 modparam("drouting", "db_url", "@@OPENSIPS_DB_URL@@")
+# Gateway attrs (from_user / from_domain / CID rewrite) pushed by Ownswitch trunk sync
+modparam("drouting", "gw_attrs_avp", '$avp(dr_gw_attrs)')
 
 # Outbound REGISTER towards providers that require digest registration (Magnus user/pass trunks).
 # Optional: package opensips-uac-module. If the .so is missing, comment these two lines.
@@ -210,12 +212,14 @@ route {
 	t_on_failure("carrier_failover");
 
 	# Group "1" is filled by Ownswitch (php bin/sync-opensips-trunks.php / trunk+route save)
+	# strip + pri_prefix are applied by drouting from dr_gateways
 	if (!do_routing("1")) {
 		xlog("L_WARN", "no route for $rU (from $fU) — sync trunks/routes to OpenSIPS\n");
 		send_reply(503, "No Route");
 		exit;
 	}
 
+	route(apply_trunk_attrs);
 	route(relay);
 }
 
@@ -229,6 +233,42 @@ route[inbound_from_carrier] {
 	rtpengine_manage();
 	t_on_reply("handle_reply");
 	route(relay);
+}
+
+# Apply Magnus Fromuser / Fromdomain / CID prefixes from gateway attrs (fu=;fd=;cidadd=;cidrem=)
+route[apply_trunk_attrs] {
+	if ($avp(dr_gw_attrs) == NULL) {
+		return;
+	}
+	$var(attrs) = $avp(dr_gw_attrs);
+	$var(fu) = $(var(attrs){param.value,fu});
+	$var(fd) = $(var(attrs){param.value,fd});
+	$var(cidadd) = $(var(attrs){param.value,cidadd});
+	$var(cidrem) = $(var(attrs){param.value,cidrem});
+
+	$var(user) = $fU;
+	if ($var(cidrem) != NULL && $(var(cidrem){s.len}) > 0) {
+		$var(cidrem) = $(var(cidrem){s.unescape.param});
+		if ($(var(user){s.substr,0,$(var(cidrem){s.len})}) == $var(cidrem)) {
+			$var(user) = $(var(user){s.substr,$(var(cidrem){s.len}),0});
+		}
+	}
+	if ($var(cidadd) != NULL && $(var(cidadd){s.len}) > 0) {
+		$var(user) = $(var(cidadd){s.unescape.param}) + $var(user);
+	}
+	if ($var(fu) != NULL && $(var(fu){s.len}) > 0) {
+		$var(user) = $(var(fu){s.unescape.param});
+	}
+	$var(dom) = $fd;
+	if ($var(fd) != NULL && $(var(fd){s.len}) > 0) {
+		$var(dom) = $(var(fd){s.unescape.param});
+	}
+	if (($var(fu) != NULL && $(var(fu){s.len}) > 0) || ($var(fd) != NULL && $(var(fd){s.len}) > 0)
+		|| ($var(cidadd) != NULL && $(var(cidadd){s.len}) > 0) || ($var(cidrem) != NULL && $(var(cidrem){s.len}) > 0)) {
+		remove_hf("From");
+		append_hf("From: <$var(user)@$var(dom)>;tag=$ft\r\n");
+		xlog("L_INFO", "trunk From rewrite → $var(user)@$var(dom)\n");
+	}
 }
 
 route[relay] {
@@ -250,6 +290,7 @@ failure_route[carrier_failover] {
 	}
 	# try next gateway of the selected route
 	if (use_next_gw()) {
+		route(apply_trunk_attrs);
 		t_on_failure("carrier_failover");
 		t_relay();
 		exit;

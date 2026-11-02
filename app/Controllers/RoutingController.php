@@ -69,6 +69,7 @@ final class RoutingController extends CrudController
                     'type' => 'multiselect',
                     'wide' => true,
                     'required' => true,
+                    'add_label' => '+ Add trunk…',
                     'options' => $trunks,
                     'help' => 'Select one or more trunks. Used when a Tariff points at this Trunk Group.',
                 ],

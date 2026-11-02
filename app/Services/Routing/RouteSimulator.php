@@ -87,7 +87,8 @@ final class RouteSimulator
         $out['plan'] = $pl['name'];
 
         $st = $this->pdo->prepare(
-            "SELECT r.id AS rule_id, r.prefix, r.priority, t.id AS trunk_id, t.name AS trunk_name, t.host, t.port, t.max_channels, ca.name AS carrier_name
+            "SELECT r.id AS rule_id, r.prefix, r.priority, t.id AS trunk_id, t.name AS trunk_name, t.host, t.port, t.max_channels,
+                    t.add_prefix, t.remove_prefix, t.from_user, t.from_domain, t.qualify, ca.name AS carrier_name
              FROM routing_rules r JOIN carrier_trunks t ON t.id = r.carrier_trunk_id AND t.status = 'active'
              JOIN carriers ca ON ca.id = t.carrier_id AND ca.status = 'active'
              WHERE r.routing_plan_id = ? AND r.status = 'active' AND (r.prefix IN ({$in}) OR r.prefix = '*')"
@@ -107,6 +108,22 @@ final class RouteSimulator
             $rules = array_values(array_filter($rules, static fn ($r) => (string) $r['prefix'] === '*'));
             $out['notes'][] = 'Using Trunk Group member trunks (catch-all).';
         }
+        foreach ($rules as &$rr) {
+            $dial = $dst;
+            $rem = preg_replace('/\D+/', '', (string) ($rr['remove_prefix'] ?? '')) ?? '';
+            if ($rem !== '' && str_starts_with($dial, $rem)) {
+                $dial = substr($dial, strlen($rem));
+            }
+            $add = (string) ($rr['add_prefix'] ?? '');
+            if ($add !== '') {
+                $dial = $add . $dial;
+            }
+            $rr['dialled_out'] = $dial;
+            $rr['from_rewrite'] = trim((string) ($rr['from_user'] ?? '')) !== ''
+                ? (string) $rr['from_user'] . '@' . ((string) ($rr['from_domain'] ?? '') !== '' ? $rr['from_domain'] : 'trunk-host')
+                : null;
+        }
+        unset($rr);
 
         foreach ($rules as &$r) {
             $k = $this->resolver->carrier((int) $r['trunk_id'], $dst);
