@@ -91,7 +91,18 @@ final class Migrator
             $sql = (string) file_get_contents($path);
             try {
                 foreach (self::splitStatements($sql) as $stmt) {
-                    $this->runStatement($stmt);
+                    try {
+                        $this->runStatement(self::scrubMysqlReservedIds($stmt));
+                    } catch (\PDOException $e) {
+                        // Idempotent DDL: column/key/table already exists from a partial prior run.
+                        $msg = $e->getMessage();
+                        if (str_contains($msg, 'Duplicate column')
+                            || str_contains($msg, 'Duplicate key name')
+                            || str_contains($msg, 'already exists')) {
+                            continue;
+                        }
+                        throw $e;
+                    }
                 }
             } catch (\PDOException $e) {
                 // Ledger triggers need TRIGGER privilege — skip recording so a privileged re-run can apply later,
@@ -113,6 +124,17 @@ final class Migrator
             }
         }
         return $done;
+    }
+
+    /**
+     * MySQL 8 reserves QUALIFY. Old migration copies used unquoted `ADD COLUMN qualify` inside
+     * PREPARE strings; rewrite to backticked identifiers before execute.
+     */
+    public static function scrubMysqlReservedIds(string $sql): string
+    {
+        $sql = preg_replace('/\bADD\s+COLUMN\s+qualify\b/i', 'ADD COLUMN `qualify`', $sql) ?? $sql;
+        $sql = preg_replace('/\bAFTER\s+qualify\b/i', 'AFTER `qualify`', $sql) ?? $sql;
+        return $sql;
     }
 
     /**
@@ -181,7 +203,9 @@ final class Migrator
                     $i = $end === false ? $len : $end + 1;
                     continue;
                 }
-                if ($c === "'" || $c === '"' || $c === '`') {
+                // Only ' and " are string quotes. Backticks are MySQL identifiers — must stay in the
+                // buffer so ADD COLUMN `qualify` is not corrupted by quote-state handling.
+                if ($c === "'" || $c === '"') {
                     $quote = $c;
                     $buf .= $c;
                     continue;
