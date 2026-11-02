@@ -170,31 +170,88 @@ final class OpensipsProvisioner
         }
 
         if (!$this->tableExists('dr_gateways')) {
-            throw new \RuntimeException('opensips.dr_gateways missing — apply drouting schema');
+            throw new \RuntimeException('opensips.dr_gateways missing — run: sudo bash /opt/ownswitch-src/deploy/fix-drouting-schema.sh');
         }
 
-        $db = $this->db();
-        $desc = substr((string) $trunk['name'], 0, 120);
-        $st = $db->prepare('SELECT id FROM dr_gateways WHERE gwid = ?');
-        $st->execute([$gwid]);
-        if ($rowId = $st->fetchColumn()) {
-            $db->prepare('UPDATE dr_gateways SET type = 0, address = ?, strip = 0, state = 0, description = ? WHERE id = ?')
-                ->execute([$address, $desc, $rowId]);
-        } else {
-            $db->prepare('INSERT INTO dr_gateways (gwid, type, address, strip, pri_prefix, attrs, probe_mode, state, socket, description) VALUES (?,0,?,0,NULL,NULL,0,0,NULL,?)')
-                ->execute([$gwid, $address, $desc]);
-        }
+        $this->upsertGateway($gwid, $address, substr((string) $trunk['name'], 0, 120));
 
-        if (filter_var($host, FILTER_VALIDATE_IP)) {
-            $this->upsertAddress(self::GRP_CARRIER, $host, str_contains($host, ':') ? 128 : 32, 0, 'any', 'trunk:' . $id);
+        if (filter_var($host, FILTER_VALIDATE_IP) && $this->tableExists('address')) {
+            try {
+                $this->upsertAddress(self::GRP_CARRIER, $host, str_contains($host, ':') ? 128 : 32, 0, 'any', 'trunk:' . $id);
+            } catch (\Throwable $e) {
+                error_log('[ownswitch] address upsert trunk ' . $id . ': ' . $e->getMessage());
+            }
         }
 
         $mode = (string) ($trunk['auth_mode'] ?? 'ip');
         if ($mode === 'register') {
-            $this->upsertRegistrant($trunk);
+            try {
+                $this->upsertRegistrant($trunk);
+            } catch (\Throwable $e) {
+                // Still keep the gateway; REGISTER is optional enhancement.
+                throw new \RuntimeException(
+                    'Gateway saved, but outbound REGISTER failed: ' . $e->getMessage()
+                    . ' (For IP peering use Auth mode = IP peer instead.)',
+                    0,
+                    $e
+                );
+            }
         } else {
             $this->removeRegistrant($id);
         }
+    }
+
+    private function upsertGateway(string $gwid, string $address, string $desc): void
+    {
+        $db = $this->db();
+        $cols = $this->columns('dr_gateways');
+        if (!in_array('gwid', $cols, true) || !in_array('address', $cols, true)) {
+            throw new \RuntimeException('dr_gateways schema unexpected (need gwid+address columns)');
+        }
+        $st = $db->prepare('SELECT id FROM dr_gateways WHERE gwid = ?');
+        $st->execute([$gwid]);
+        $rowId = $st->fetchColumn();
+
+        $fields = ['type' => 0, 'address' => $address];
+        if (in_array('strip', $cols, true)) {
+            $fields['strip'] = 0;
+        }
+        if (in_array('state', $cols, true)) {
+            $fields['state'] = 0;
+        }
+        if (in_array('description', $cols, true)) {
+            $fields['description'] = $desc;
+        }
+        if (in_array('probe_mode', $cols, true)) {
+            $fields['probe_mode'] = 0;
+        }
+
+        if ($rowId) {
+            $parts = [];
+            $vals = [];
+            foreach ($fields as $c => $v) {
+                $parts[] = "`{$c}` = ?";
+                $vals[] = $v;
+            }
+            $vals[] = $rowId;
+            $db->prepare('UPDATE dr_gateways SET ' . implode(',', $parts) . ' WHERE id = ?')->execute($vals);
+            return;
+        }
+
+        $insert = ['gwid' => $gwid] + $fields;
+        if (in_array('pri_prefix', $cols, true)) {
+            $insert['pri_prefix'] = null;
+        }
+        if (in_array('attrs', $cols, true)) {
+            $insert['attrs'] = null;
+        }
+        if (in_array('socket', $cols, true)) {
+            $insert['socket'] = null;
+        }
+        $names = array_keys($insert);
+        $sql = 'INSERT INTO dr_gateways (' . implode(',', array_map(static fn ($c) => "`{$c}`", $names)) . ') VALUES ('
+            . implode(',', array_fill(0, count($names), '?')) . ')';
+        $db->prepare($sql)->execute(array_values($insert));
     }
 
     public function removeTrunk(int $trunkId): void

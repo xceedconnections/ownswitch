@@ -128,8 +128,10 @@ final class CarrierController extends CrudController
             if ($row) {
                 $prov->syncTrunk($row);
             }
-            // Keep drouting rules in sync (gwlist references)
-            (new OpensipsRoutingSync($this->db(), $prov))->syncAll();
+            $sync = (new OpensipsRoutingSync($this->db(), $prov))->syncAll();
+            if ($sync['warnings'] !== []) {
+                App::session()->flash('warning', 'Trunk saved with warnings: ' . mb_substr(implode(' | ', $sync['warnings']), 0, 300));
+            }
             $mode = (string) ($row['auth_mode'] ?? 'ip');
             if ($mode === 'ip') {
                 return 'Trunk pushed to OpenSIPS. IP peer mode: ask your vendor to allowlist THIS server public SIP IP on their Magnus (IP authentication). They will not show “Registered”.';
@@ -139,7 +141,10 @@ final class CarrierController extends CrudController
             }
             return 'Trunk pushed to OpenSIPS (invite digest).';
         } catch (\Throwable $e) {
-            App::session()->flash('warning', 'Saved in portal, but OpenSIPS sync failed: ' . (App::config('app.debug') ? $e->getMessage() : 'see server log / run php bin/sync-opensips-trunks.php'));
+            error_log('[ownswitch] OpenSIPS trunk sync: ' . $e->getMessage());
+            $hint = preg_replace('/\s+/', ' ', $e->getMessage()) ?? $e->getMessage();
+            App::session()->flash('warning', 'Saved in portal, but OpenSIPS sync failed: ' . mb_substr($hint, 0, 280)
+                . ' — run: sudo bash /opt/ownswitch-src/deploy/fix-drouting-schema.sh');
             return null;
         }
     }

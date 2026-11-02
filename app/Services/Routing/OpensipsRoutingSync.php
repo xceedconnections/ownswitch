@@ -36,7 +36,11 @@ final class OpensipsRoutingSync
         $rules = $this->own->query(
             "SELECT prefix, carrier_trunk_id, priority, status FROM routing_rules WHERE status = 'active'"
         )->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        $this->prov->syncRoutingRules($rules);
+        try {
+            $this->prov->syncRoutingRules($rules);
+        } catch (\Throwable $e) {
+            $warnings[] = 'Route sync: ' . $e->getMessage();
+        }
 
         $this->prov->reloadRouting();
         $this->prov->reloadAddresses();
