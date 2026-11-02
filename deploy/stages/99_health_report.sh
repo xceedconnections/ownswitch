@@ -68,8 +68,12 @@ for db in "${DB_OWNSWITCH}" "${DB_OPENSIPS}" "${DB_CGRATES}"; do
   if [[ "$cnt" == "ERR" ]]; then add FAIL "database ${db}" "not reachable"
   else add OK "database ${db}" "${cnt} tables"; fi
 done
-[[ "$(mysql_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_OPENSIPS}' AND table_name='subscriber'" 2>/dev/null || echo 0)" == "1" ]] \
-  && add OK "OpenSIPS schema" "subscriber table present" || add FAIL "OpenSIPS schema" "subscriber table missing"
+_sub="$(mysql_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_OPENSIPS}' AND LOWER(table_name)='subscriber'" 2>/dev/null || echo 0)"
+if [[ "$_sub" != "0" && "$_sub" != "ERR" ]]; then
+  add OK "OpenSIPS schema" "subscriber table present"
+else
+  add FAIL "OpenSIPS schema" "subscriber table missing"
+fi
 [[ "$(mysql_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_CGRATES}' AND table_name IN ('cdrs','tp_rates')" 2>/dev/null || echo 0)" == "2" ]] \
   && add OK "CGRateS StorDB schema" "cdrs + tp_rates present" || add FAIL "CGRateS StorDB schema" "tables missing"
 
@@ -87,10 +91,15 @@ if nginx -t >/dev/null 2>&1; then add OK "nginx config" "nginx -t passed"; else 
 
 code="$(curl -ks -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${OWNSWITCH_DOMAIN}:443:127.0.0.1" "https://${OWNSWITCH_DOMAIN}/" || true)"
 if [[ "$code" =~ ^[2345][0-9][0-9]$ ]]; then add OK "HTTPS portal" "HTTP ${code}"; else add FAIL "HTTPS portal" "no answer (${code})"; fi
-if [[ -f "${OWN_OPT}/current/.ownswitch-placeholder" || "$(readlink -f "${OWN_OPT}/current")" == "${OWN_OPT}/bootstrap" ]]; then
+_cur="$(readlink -f "${OWN_OPT}/current" 2>/dev/null || true)"
+if [[ -f "${OWN_OPT}/current/.ownswitch-placeholder" || -f "${_cur}/.ownswitch-placeholder" ]]; then
   add WARN "application" "placeholder deployed - application code not yet installed"
+elif [[ ! -f "${OWN_OPT}/current/public/index.php" ]]; then
+  add FAIL "application" "public/index.php missing under current"
+elif grep -ql 'application has not been deployed yet' "${OWN_OPT}/current/public/index.php" 2>/dev/null; then
+  add WARN "application" "placeholder index.php still live"
 else
-  add OK "application" "release $(basename "$(readlink -f "${OWN_OPT}/current")")"
+  add OK "application" "release $(basename "${_cur:-unknown}")"
 fi
 [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${INTERNAL_HTTP_ADDR}/nginx-health" || true)" == "200" ]] \
   && add OK "internal vhost" "${INTERNAL_HTTP_ADDR}/nginx-health" || add WARN "internal vhost" "no 200 from ${INTERNAL_HTTP_ADDR}"
