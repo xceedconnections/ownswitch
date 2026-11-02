@@ -34,8 +34,11 @@ fi
 HEAD="$(git -C "$SRC" rev-parse --short HEAD)"
 echo "Source at $HEAD"
 
-test -x "$SRC/deploy/refresh-ui.sh" || chmod +x "$SRC/deploy/refresh-ui.sh" "$SRC/deploy/install.sh" 2>/dev/null || true
+chmod +x "$SRC/deploy/refresh-ui.sh" "$SRC/deploy/install.sh" "$SRC/deploy/update.sh" 2>/dev/null || true
 find "$SRC/deploy" -type f \( -name '*.sh' -o -path '*/bin/*' \) -exec chmod +x {} + 2>/dev/null || true
+
+# Drop Windows CRLF if present (breaks #!/usr/bin/env bash)
+sed -i 's/\r$//' "$SRC/deploy/refresh-ui.sh" "$SRC/deploy/install.sh" "$SRC/deploy/update.sh" 2>/dev/null || true
 
 echo
 echo "== 1/2 Deploy portal (UI + migrations) =="
@@ -43,12 +46,12 @@ bash "$SRC/deploy/refresh-ui.sh"
 
 echo
 echo "== 2/2 OpenSIPS config + health (stages 50,99) =="
-cd "$SRC"
-# Prefer existing install.conf so secrets/domain stay intact
+# Already root — call install.sh by absolute path (sudo ./relative fails with "command not found")
 if [[ -f /etc/ownswitch/install.conf ]]; then
   export OWNSWITCH_CONFIG=/etc/ownswitch/install.conf
 fi
-sudo -E ./deploy/install.sh --yes --only 50,99
+cd "$SRC"
+bash "$SRC/deploy/install.sh" --yes --only 50,99
 
 echo
 echo "== Done =="
