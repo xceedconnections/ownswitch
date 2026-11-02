@@ -26,7 +26,7 @@ final class CarrierController extends CrudController
     public function __construct(private string $kind = 'carrier')
     {
         $trunk = $kind === 'trunk';
-        $this->base = $trunk ? '/trunks' : '/carriers';
+        $this->base = $trunk ? '/trunks' : '/providers';
         $this->singular = $trunk ? 'Trunk' : 'Provider';
         $this->plural = $trunk ? 'Trunks' : 'Providers';
         $this->emptyHint = $trunk

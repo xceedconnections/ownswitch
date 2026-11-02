@@ -16,17 +16,22 @@ $icons = [
     '/prefixes' => 'bi-hash',
     '/tariffs' => 'bi-currency-dollar',
     '/custom-rates' => 'bi-sliders',
+    '/provider-rates' => 'bi-cash-stack',
     '/carrier-tariffs' => 'bi-cash-stack',
     '/tariffs/import' => 'bi-filetype-csv',
+    '/providers' => 'bi-hdd-network',
     '/carriers' => 'bi-hdd-network',
     '/trunks' => 'bi-ethernet',
+    '/trunk-groups' => 'bi-collection',
     '/routing/plans' => 'bi-collection',
     '/routing' => 'bi-signpost',
     '/routing/simulate' => 'bi-compass',
     '/cdrs' => 'bi-telephone-forward',
+    '/reports/summary-day' => 'bi-graph-up',
     '/reports/asr-acd' => 'bi-graph-up',
     '/reports/financial' => 'bi-pie-chart',
     '/billing/preview' => 'bi-calculator',
+    '/billing/refill' => 'bi-wallet2',
     '/billing/topup' => 'bi-wallet2',
     '/ledger' => 'bi-journal-text',
     '/invoices' => 'bi-receipt',
@@ -43,6 +48,28 @@ $iconFor = static function (string $path) use ($icons): string {
         return 'bi-grid';
     }
     return 'bi-circle';
+};
+$sectionIcons = [
+    'Clients' => 'bi-people',
+    'Billing' => 'bi-wallet2',
+    'DIDs' => 'bi-telephone',
+    'Rates' => 'bi-currency-dollar',
+    'Reports' => 'bi-graph-up',
+    'Routes' => 'bi-signpost-2',
+    'Services' => 'bi-box-seam',
+    'Settings' => 'bi-gear',
+    'Voice Broadcasting' => 'bi-broadcast',
+    'CallShop' => 'bi-shop',
+];
+$currentPath = \Ownswitch\App::request()?->path ?? '/';
+$sectionOpen = static function (array $section) use ($currentPath): bool {
+    foreach ($section['items'] as $item) {
+        $p = $item['path'];
+        if ($p === '/' ? $currentPath === '/' : str_starts_with($currentPath, $p)) {
+            return true;
+        }
+    }
+    return false;
 };
 $initials = static function (string $name): string {
     $parts = preg_split('/\s+/', trim($name)) ?: [];
@@ -102,21 +129,41 @@ $initials = static function (string $name): string {
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" data-bs-target="#osSidebar" aria-label="Close"></button>
         </div>
         <div class="offcanvas-body d-flex flex-column p-0">
-            <nav class="flex-grow-1" aria-label="Sections">
-                <?php foreach ($menu as $section): ?>
-                    <div class="os-nav-section"><?= e($section['label']) ?></div>
-                    <ul class="nav flex-column mb-1">
-                        <?php foreach ($section['items'] as $item):
-                            $icon = $iconFor($item['path']);
-                            ?>
-                            <li class="nav-item">
-                                <a class="nav-link os-nav-link<?= nav_active($item['path']) ?>" href="<?= e(url($item['path'])) ?>">
-                                    <i class="bi <?= e($icon) ?>" aria-hidden="true"></i>
-                                    <span><?= e($item['label']) ?></span>
-                                </a>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
+            <nav class="flex-grow-1 os-nav-cascade" aria-label="Sections" id="osNavAccordion">
+                <div class="os-nav-home">
+                    <a class="nav-link os-nav-link<?= nav_active('/') ?>" href="<?= e(url('/')) ?>">
+                        <i class="bi bi-speedometer2" aria-hidden="true"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </div>
+                <?php foreach ($menu as $i => $section):
+                    $open = $sectionOpen($section);
+                    $cid = 'osNavSec' . $i;
+                    $secIcon = $sectionIcons[$section['label']] ?? 'bi-folder';
+                    ?>
+                    <div class="os-nav-group<?= $open ? ' is-open' : '' ?>">
+                        <button class="os-nav-toggle<?= $open ? '' : ' collapsed' ?>" type="button"
+                                data-bs-toggle="collapse" data-bs-target="#<?= e($cid) ?>"
+                                aria-expanded="<?= $open ? 'true' : 'false' ?>" aria-controls="<?= e($cid) ?>">
+                            <i class="bi <?= e($secIcon) ?> os-nav-toggle-icon" aria-hidden="true"></i>
+                            <span class="os-nav-toggle-label"><?= e($section['label']) ?></span>
+                            <i class="bi bi-chevron-down os-nav-chevron" aria-hidden="true"></i>
+                        </button>
+                        <div id="<?= e($cid) ?>" class="collapse<?= $open ? ' show' : '' ?>" data-bs-parent="#osNavAccordion">
+                            <ul class="nav flex-column os-nav-sub mb-1">
+                                <?php foreach ($section['items'] as $item):
+                                    $icon = $iconFor($item['path']);
+                                    ?>
+                                    <li class="nav-item">
+                                        <a class="nav-link os-nav-link os-nav-sublink<?= nav_active($item['path']) ?>" href="<?= e(url($item['path'])) ?>">
+                                            <i class="bi <?= e($icon) ?>" aria-hidden="true"></i>
+                                            <span><?= e($item['label']) ?></span>
+                                        </a>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </div>
+                    </div>
                 <?php endforeach; ?>
             </nav>
             <div class="os-sidebar-foot d-none d-lg-block">

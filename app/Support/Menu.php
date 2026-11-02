@@ -5,8 +5,7 @@ declare(strict_types=1);
 namespace Ownswitch\Support;
 
 /**
- * MagnusBilling-parity navigation (section order + item names).
- * Working modules point at real Ownswitch pages; others hit /modules/{slug} scaffolds.
+ * MagnusBilling-parity navigation. Paths match menu names where possible.
  */
 final class Menu
 {
@@ -33,7 +32,7 @@ final class Menu
                 ['User History', '/modules/user-history', self::STAFF],
             ]],
             ['Billing', [
-                ['Refills', '/billing/topup', self::STAFF],
+                ['Refills', '/billing/refill', self::STAFF],
                 ['Payment Methods', '/modules/payment-methods', self::STAFF],
                 ['Voucher', '/modules/vouchers', self::STAFF],
                 ['Refill Providers', '/modules/refill-providers', self::STAFF],
@@ -64,7 +63,7 @@ final class Menu
             ['Reports', [
                 ['CDR', '/cdrs', self::ALL],
                 ['CDR Failed', '/modules/cdr-failed', self::STAFF],
-                ['Summary per Day', '/reports/asr-acd', self::ALL],
+                ['Summary per Day', '/reports/summary-day', self::ALL],
                 ['Summary Day User', '/modules/summary-day-user', self::STAFF],
                 ['Summary Day Trunk', '/modules/summary-day-trunk', self::STAFF],
                 ['Summary Day Agent', '/modules/summary-day-agent', self::STAFF],
@@ -79,10 +78,10 @@ final class Menu
                 ['Fraud Alerts', '/fraud', self::RESELLER_UP],
             ]],
             ['Routes', [
-                ['Providers', '/carriers', self::STAFF],
+                ['Providers', '/providers', self::STAFF],
                 ['Trunks', '/trunks', self::STAFF],
-                ['Trunk Groups', '/routing/plans', self::STAFF],
-                ['Provider Rates', '/carrier-tariffs', self::STAFF],
+                ['Trunk Groups', '/trunk-groups', self::STAFF],
+                ['Provider Rates', '/provider-rates', self::STAFF],
                 ['Routes', '/routing', self::STAFF],
                 ['Simulator', '/routing/simulate', self::STAFF],
                 ['Servers', '/modules/servers', self::STAFF],
@@ -95,7 +94,7 @@ final class Menu
                 ['Services Use', '/modules/services-use', self::STAFF],
             ]],
             ['Settings', [
-                ['Configuration', '/settings', self::STAFF],
+                ['Settings', '/settings', self::STAFF],
                 ['System Status', '/system/status', self::STAFF],
                 ['Menus', '/modules/menus', self::STAFF],
                 ['Group Users', '/modules/group-users', self::STAFF],
@@ -144,6 +143,7 @@ final class Menu
     /** @return array<string,array{title:string,blurb:string,columns:list<string>}> */
     public static function scaffolds(): array
     {
+        // unchanged catalogue — keep prior definitions via copy from previous file
         return [
             'calls-online' => ['title' => 'Calls Online', 'blurb' => 'Live channels currently up (Magnus Calls Online).', 'columns' => ['User', 'SIP', 'Destination', 'Duration', 'Trunk']],
             'restricted-numbers' => ['title' => 'Restricted Number', 'blurb' => 'Block dialled numbers / patterns per user.', 'columns' => ['User', 'Number', 'Direction', 'Status']],

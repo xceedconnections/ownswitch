@@ -38,7 +38,7 @@ final class BillingController extends BaseController
     public function topupForm(Request $r, array $p = []): Response
     {
         return $this->view('billing/topup', [
-            'title' => 'Top-up / Adjustment', 'customers' => $this->customerOptions($r), 'values' => ['customer_id' => '', 'type' => 'topup', 'amount' => '', 'description' => ''], 'errors' => [],
+            'title' => 'Refills', 'customers' => $this->customerOptions($r), 'values' => ['customer_id' => '', 'type' => 'topup', 'amount' => '', 'description' => ''], 'errors' => [],
         ]);
     }
 
@@ -63,7 +63,7 @@ final class BillingController extends BaseController
             $errors[] = 'A description (3-200 chars) is required for the audit trail.';
         }
         if ($errors) {
-            return $this->view('billing/topup', ['title' => 'Top-up / Adjustment', 'customers' => $this->customerOptions($r), 'values' => $v, 'errors' => $errors], 422);
+            return $this->view('billing/topup', ['title' => 'Refills', 'customers' => $this->customerOptions($r), 'values' => $v, 'errors' => $errors], 422);
         }
         $amount = $v['type'] === 'refund' ? bcmul($v['amount'], '-1', 6) : $v['amount'];
         // Idempotency key includes a form nonce so a double-submit does not post twice.

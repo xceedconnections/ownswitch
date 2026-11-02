@@ -16,24 +16,30 @@ use Ownswitch\Services\Routing\OpensipsRoutingSync;
 use Ownswitch\Services\Routing\RouteSimulator;
 use Ownswitch\Services\Settings\SettingsService;
 
-/** Routing rules (kind=rules), routing plans (kind=plans) and the route simulator. */
+/**
+ * Trunk Groups (kind=plans) at /trunk-groups — multi-trunk + Priority/LCR/Random.
+ * Routes (kind=rules) at /routing — optional prefix→trunk overrides.
+ */
 final class RoutingController extends CrudController
 {
+    /** @var list<string> */
+    private array $pendingTrunkIds = [];
+
     public function __construct(private string $kind = 'rules')
     {
         $plans = $kind === 'plans';
-        $this->base = $plans ? '/routing/plans' : '/routing';
+        $this->base = $plans ? '/trunk-groups' : '/routing';
         $this->singular = $plans ? 'Trunk group' : 'Route';
         $this->plural = $plans ? 'Trunk Groups' : 'Routes';
         $this->emptyHint = $plans
-            ? 'No trunk groups yet (Magnus Trunk Groups). Choose Order/LCR, add Routes (prefix → trunk), assign the group to Customers.'
-            : 'No routes. Map a dial prefix to a Provider Trunk inside a Trunk Group. Same prefix + different priority = failover.';
+            ? 'No trunk groups. Pick Type (Priority/failover, LCR, Random), add Trunks, then select the group on a Tariff.'
+            : 'Optional prefix overrides. Prefer adding trunks on the Trunk Group for Magnus-style failover.';
     }
 
     protected function repo(): BaseRepository
     {
         return $this->kind === 'plans'
-            ? new BaseRepository($this->db(), 'routing_plans', ['code', 'name', 'strategy', 'status', 'description', 'is_demo'], 'none', ['code', 'name'], ['id', 'code', 'name'])
+            ? new BaseRepository($this->db(), 'routing_plans', ['code', 'name', 'strategy', 'status', 'description', 'is_demo'], 'none', ['code', 'name'], ['id', 'code', 'name', 'strategy', 'status'])
             : new BaseRepository($this->db(), 'routing_rules', ['routing_plan_id', 'prefix', 'carrier_trunk_id', 'priority', 'status'], 'none', ['prefix'], ['id', 'prefix', 'priority', 'routing_plan_id']);
     }
 
@@ -44,15 +50,28 @@ final class RoutingController extends CrudController
 
     protected function fields(Request $r): array
     {
-        $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
+        $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'];
         if ($this->kind === 'plans') {
-            // Magnus Trunk Groups: Name + Type
+            $trunks = [];
+            foreach ($this->db()->query('SELECT t.id, t.name, c.name AS carrier FROM carrier_trunks t JOIN carriers c ON c.id = t.carrier_id WHERE t.status = \'active\' ORDER BY c.name, t.name LIMIT 500')->fetchAll() as $t) {
+                $trunks[(string) $t['id']] = "{$t['carrier']} / {$t['name']}";
+            }
             return [
                 ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
                 ['name' => 'strategy', 'label' => 'Type', 'type' => 'select', 'required' => true, 'options' => [
-                    'priority' => 'Order',
-                    'lcr' => 'Lowest cost',
-                ], 'list' => true, 'default' => 'priority'],
+                    'priority' => 'Priority / failover',
+                    'lcr' => 'LCR',
+                    'random' => 'Random',
+                ], 'list' => true, 'default' => 'priority', 'help' => 'How trunks in this group are tried on a call'],
+                [
+                    'name' => 'trunk_ids',
+                    'label' => 'Trunks',
+                    'type' => 'multiselect',
+                    'wide' => true,
+                    'required' => true,
+                    'options' => $trunks,
+                    'help' => 'Select one or more trunks. Used when a Tariff points at this Trunk Group.',
+                ],
                 $status,
             ];
         }
@@ -78,12 +97,34 @@ final class RoutingController extends CrudController
         if ($this->kind === 'plans') {
             $data = $this->autoCode($data, $existing, 'routing_plans');
             $data['is_demo'] = $existing['is_demo'] ?? 0;
+            $raw = $data['trunk_ids'] ?? '';
+            unset($data['trunk_ids']);
+            $ids = [];
+            foreach (preg_split('/[\s,;|]+/', (string) $raw) ?: [] as $p) {
+                $p = trim($p);
+                if ($p !== '' && ctype_digit($p)) {
+                    $ids[] = $p;
+                }
+            }
+            $this->pendingTrunkIds = array_values(array_unique($ids));
+            if ($this->pendingTrunkIds === []) {
+                throw new \DomainException('Select at least one Trunk for this Trunk Group.');
+            }
+            $strategy = (string) ($data['strategy'] ?? 'priority');
+            if (!in_array($strategy, ['priority', 'lcr', 'random'], true)) {
+                throw new \DomainException('Type must be Priority / failover, LCR or Random.');
+            }
         }
         return $data;
     }
 
     protected function afterSave(Request $r, int $id, array $data, ?array $existing): ?string
     {
+        if ($this->kind === 'plans') {
+            $this->syncGroupTrunks($id, $this->pendingTrunkIds);
+            $this->pushRoutes();
+            return 'Trunk Group saved with ' . count($this->pendingTrunkIds) . ' trunk(s). Select it on a Tariff.';
+        }
         if ($this->kind === 'rules') {
             $this->pushRoutes();
         }
@@ -92,8 +133,35 @@ final class RoutingController extends CrudController
 
     protected function afterDelete(Request $r, array $row): void
     {
+        if ($this->kind === 'plans') {
+            $this->db()->prepare('DELETE FROM routing_rules WHERE routing_plan_id = ?')->execute([(int) $row['id']]);
+            $this->pushRoutes();
+        }
         if ($this->kind === 'rules') {
             $this->pushRoutes();
+        }
+    }
+
+    protected function formValues(Request $r, ?array $existing, array $values): array
+    {
+        if ($this->kind === 'plans' && $existing !== null && !isset($values['trunk_ids'])) {
+            $st = $this->db()->prepare("SELECT carrier_trunk_id FROM routing_rules WHERE routing_plan_id = ? AND prefix = '*' AND status = 'active' ORDER BY priority ASC, id ASC");
+            $st->execute([(int) $existing['id']]);
+            $values['trunk_ids'] = implode(',', array_map('strval', $st->fetchAll(\PDO::FETCH_COLUMN)));
+        }
+        return $values;
+    }
+
+    /** @param list<string> $trunkIds */
+    private function syncGroupTrunks(int $planId, array $trunkIds): void
+    {
+        $pdo = $this->db();
+        $pdo->prepare("DELETE FROM routing_rules WHERE routing_plan_id = ? AND prefix = '*'")->execute([$planId]);
+        $ins = $pdo->prepare('INSERT INTO routing_rules (routing_plan_id, prefix, carrier_trunk_id, priority, status) VALUES (?,?,?,?,?)');
+        $prio = 10;
+        foreach ($trunkIds as $tid) {
+            $ins->execute([$planId, '*', (int) $tid, $prio, 'active']);
+            $prio += 10;
         }
     }
 
@@ -110,7 +178,6 @@ final class RoutingController extends CrudController
         }
     }
 
-    /** GET /routing/simulate */
     public function simulateForm(Request $r, array $p = []): Response
     {
         return $this->view('routing/simulate', [
@@ -119,7 +186,6 @@ final class RoutingController extends CrudController
         ]);
     }
 
-    /** POST /routing/simulate */
     public function simulate(Request $r, array $p = []): Response
     {
         $scope = $this->scope($r);

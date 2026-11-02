@@ -24,7 +24,7 @@ final class ReportController extends BaseController
         $total = AsrAcdService::aggregate(array_map(static fn ($x) => ['attempts' => $x['attempts'], 'answered' => $x['answered'], 'seconds' => $x['seconds']], $rows));
 
         return $this->view('reports/asr_acd', [
-            'title' => 'ASR / ACD', 'rows' => $rows, 'total' => $total, 'from' => $from, 'to' => $to, 'group' => $group,
+            'title' => 'Summary per Day', 'rows' => $rows, 'total' => $total, 'from' => $from, 'to' => $to, 'group' => $group,
             'period' => $period, 'periodRows' => $periodRows, 'canCarrier' => $scope->isGlobal(),
         ]);
     }

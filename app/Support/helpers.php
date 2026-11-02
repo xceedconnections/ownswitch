@@ -97,6 +97,17 @@ if (!function_exists('nav_active')) {
     function nav_active(string $prefix): string
     {
         $path = App::request()?->path ?? '/';
-        return ($prefix === '/' ? $path === '/' : str_starts_with($path, $prefix)) ? ' active' : '';
+        if ($prefix === '/') {
+            return $path === '/' ? ' active' : '';
+        }
+        // Exact match, or child path — but avoid /routing lighting up for /routing/simulate
+        if ($path === $prefix || str_starts_with($path, $prefix . '/')) {
+            // Prefer more specific sibling: /routing should not match /routing/simulate when that item exists separately
+            if ($prefix === '/routing' && str_starts_with($path, '/routing/simulate')) {
+                return '';
+            }
+            return ' active';
+        }
+        return '';
     }
 }

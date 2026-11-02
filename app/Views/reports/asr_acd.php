@@ -4,12 +4,12 @@ $groups = ['day' => 'Day', 'customer' => 'Customer', 'prefix' => 'Destination pr
 ?>
 <div class="os-page-head">
     <div>
-        <h1 class="os-page-title">ASR / ACD</h1>
+        <h1 class="os-page-title">Summary per Day</h1>
         <p class="os-page-sub">ASR = answered ÷ attempts · ACD = talk seconds ÷ answered · totals from summed counters</p>
     </div>
 </div>
 
-<form method="get" action="<?= e(url('/reports/asr-acd')) ?>" class="os-toolbar mb-3">
+<form method="get" action="<?= e(url('/reports/summary-day')) ?>" class="os-toolbar mb-3">
     <div class="row g-2 align-items-end">
         <div class="col-6 col-md-2"><label class="form-label small mb-0" for="from">From</label><input type="date" class="form-control form-control-sm" id="from" name="from" value="<?= e($from) ?>"></div>
         <div class="col-6 col-md-2"><label class="form-label small mb-0" for="to">To</label><input type="date" class="form-control form-control-sm" id="to" name="to" value="<?= e($to) ?>"></div>

@@ -1,7 +1,7 @@
 <?php /** @var array $customers @var array $values @var list<string> $errors */ ?>
 <div class="os-page-head">
     <div>
-        <h1 class="os-page-title">Top-up / Adjustment</h1>
+        <h1 class="os-page-title">Refills</h1>
         <p class="os-page-sub">Posts an append-only ledger entry — mistakes are fixed with a reversal</p>
     </div>
 </div>
@@ -9,7 +9,7 @@
 <?php if (!$customers): ?>
     <div class="os-panel"><div class="os-empty"><div class="os-empty-title">No customers</div><div>Create a customer first.</div></div></div>
 <?php else: ?>
-<form method="post" action="<?= e(url('/billing/topup')) ?>" class="os-panel col-xl-6 p-3 p-md-4">
+<form method="post" action="<?= e(url('/billing/refill')) ?>" class="os-panel col-xl-6 p-3 p-md-4">
     <?= csrf_field() ?>
     <input type="hidden" name="nonce" value="<?= e(bin2hex(random_bytes(8))) ?>">
     <div class="mb-3"><label class="form-label fw-semibold" for="customer_id">Customer</label>

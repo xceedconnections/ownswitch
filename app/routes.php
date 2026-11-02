@@ -74,20 +74,38 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $crud($r, '/prefixes', new PrefixController(), $STAFF);
     $crud($r, '/tariffs', new TariffController('customer'), $STAFF);
     $crud($r, '/custom-rates', new CustomRateController(), $STAFF);
-    $crud($r, '/carrier-tariffs', new TariffController('carrier'), $STAFF);
     $ti = new TariffImportController();
     $r->get('/tariffs/import', [$ti, 'form'], [$STAFF]);
     $r->get('/tariffs/export', [$ti, 'export'], [$STAFF]);
     $r->post('/tariffs/import/preview', [$ti, 'preview'], [$STAFF]);
     $r->post('/tariffs/import/commit', [$ti, 'commit'], [$STAFF]);
 
-    // Routes
-    $crud($r, '/carriers', new CarrierController('carrier'), $STAFF);
+    // Routes — Providers / Trunk Groups / Provider Rates (legacy paths redirect)
+    $providers = new CarrierController('carrier');
+    $crud($r, '/providers', $providers, $STAFF);
+    $r->get('/carriers', static fn () => Response::redirect(url('/providers')));
+    $r->get('/carriers/create', static fn () => Response::redirect(url('/providers/create')));
+    $r->get('/carriers/{id}/edit', static function ($req, array $p) {
+        return Response::redirect(url('/providers/' . (int) $p['id'] . '/edit'));
+    });
     $crud($r, '/trunks', new CarrierController('trunk'), $STAFF);
+    $providerRates = new TariffController('carrier');
+    $crud($r, '/provider-rates', $providerRates, $STAFF);
+    $r->get('/carrier-tariffs', static fn () => Response::redirect(url('/provider-rates')));
+    $r->get('/carrier-tariffs/create', static fn () => Response::redirect(url('/provider-rates/create')));
+    $r->get('/carrier-tariffs/{id}/edit', static function ($req, array $p) {
+        return Response::redirect(url('/provider-rates/' . (int) $p['id'] . '/edit'));
+    });
     $sim = new RoutingController('rules');
     $r->get('/routing/simulate', [$sim, 'simulateForm'], [$STAFF]);
     $r->post('/routing/simulate', [$sim, 'simulate'], [$STAFF]);
-    $crud($r, '/routing/plans', new RoutingController('plans'), $STAFF);
+    $trunkGroups = new RoutingController('plans');
+    $crud($r, '/trunk-groups', $trunkGroups, $STAFF);
+    $r->get('/routing/plans', static fn () => Response::redirect(url('/trunk-groups')));
+    $r->get('/routing/plans/create', static fn () => Response::redirect(url('/trunk-groups/create')));
+    $r->get('/routing/plans/{id}/edit', static function ($req, array $p) {
+        return Response::redirect(url('/trunk-groups/' . (int) $p['id'] . '/edit'));
+    });
     $crud($r, '/routing', $sim, $STAFF);
 
     // Reports
@@ -97,15 +115,17 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/cdrs/export', [$cdr, 'export'], [$all]);
     $r->get('/cdrs/{id}', [$cdr, 'show'], [$all]);
     $rep = new ReportController();
-    $r->get('/reports/asr-acd', [$rep, 'asrAcd'], [$all]);
+    $r->get('/reports/summary-day', [$rep, 'asrAcd'], [$all]);
+    $r->get('/reports/asr-acd', static fn () => Response::redirect(url('/reports/summary-day')));
     $r->get('/reports/financial', [$rep, 'financial'], [$role(Menu::FINANCE)]);
 
     // Billing
     $bill = new BillingController();
     $r->get('/billing/preview', [$bill, 'previewForm'], [$STAFF]);
     $r->post('/billing/preview', [$bill, 'preview'], [$STAFF]);
-    $r->get('/billing/topup', [$bill, 'topupForm'], [$STAFF]);
-    $r->post('/billing/topup', [$bill, 'topup'], [$STAFF]);
+    $r->get('/billing/refill', [$bill, 'topupForm'], [$STAFF]);
+    $r->post('/billing/refill', [$bill, 'topup'], [$STAFF]);
+    $r->get('/billing/topup', static fn () => Response::redirect(url('/billing/refill')));
     $led = new LedgerController();
     $r->get('/ledger', [$led, 'index'], [$role(Menu::LEDGER_READ)]);
     $r->post('/ledger/{id}/reverse', [$led, 'reverse'], [$STAFF]);

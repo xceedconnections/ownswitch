@@ -298,12 +298,15 @@ final class OpensipsProvisioner
             if ($gwlist === '') {
                 continue;
             }
+            // Trunk-group catch-all (*) → empty OpenSIPS prefix (default / longest-match fallback)
+            $drPrefix = $prefix === '*' ? '' : $prefix;
+            $desc = 'ownswitch:' . ($prefix === '*' ? 'default' : $prefix);
             if ($hasSort) {
                 $db->prepare('INSERT INTO dr_rules (groupid, prefix, timerec, priority, routeid, gwlist, sort_alg, description) VALUES (?,?,?,?,NULL,?,?,?)')
-                    ->execute([self::DR_GROUP, $prefix, '', $prio++, $gwlist, 'N', 'ownswitch:' . $prefix]);
+                    ->execute([self::DR_GROUP, $drPrefix, '', $prio++, $gwlist, 'N', $desc]);
             } else {
                 $db->prepare('INSERT INTO dr_rules (groupid, prefix, timerec, priority, routeid, gwlist, description) VALUES (?,?,?,?,NULL,?,?)')
-                    ->execute([self::DR_GROUP, $prefix, '', $prio++, $gwlist, 'ownswitch:' . $prefix]);
+                    ->execute([self::DR_GROUP, $drPrefix, '', $prio++, $gwlist, $desc]);
             }
         }
     }

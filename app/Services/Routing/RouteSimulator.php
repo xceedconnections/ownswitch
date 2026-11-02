@@ -12,7 +12,7 @@ use PDO;
 
 /**
  * Dry-run of what the router would do for (customer, destination): blocks, customer rate,
- * matching rules (longest prefix), trunk ordering by plan strategy (priority | lcr) and per-trunk cost.
+ * matching rules (longest prefix + trunk-group “*” members), ordered by strategy (priority | lcr | random).
  * Read-only; never places calls.
  */
 final class RouteSimulator
@@ -90,16 +90,23 @@ final class RouteSimulator
             "SELECT r.id AS rule_id, r.prefix, r.priority, t.id AS trunk_id, t.name AS trunk_name, t.host, t.port, t.max_channels, ca.name AS carrier_name
              FROM routing_rules r JOIN carrier_trunks t ON t.id = r.carrier_trunk_id AND t.status = 'active'
              JOIN carriers ca ON ca.id = t.carrier_id AND ca.status = 'active'
-             WHERE r.routing_plan_id = ? AND r.status = 'active' AND r.prefix IN ({$in})"
+             WHERE r.routing_plan_id = ? AND r.status = 'active' AND (r.prefix IN ({$in}) OR r.prefix = '*')"
         );
         $st->execute([(int) $pl['id'], ...$cands]);
         $rules = $st->fetchAll(PDO::FETCH_ASSOC);
         if (!$rules) {
-            $out['notes'][] = 'No active routing rule matches: no route available.';
+            $out['notes'][] = 'No active trunks in this Trunk Group for the destination.';
             return $out;
         }
-        $longest = max(array_map(static fn ($r) => strlen((string) $r['prefix']), $rules));
-        $rules = array_values(array_filter($rules, static fn ($r) => strlen((string) $r['prefix']) === $longest));
+        // Prefer longest digit prefix; fall back to trunk-group catch-all (*)
+        $digit = array_values(array_filter($rules, static fn ($r) => (string) $r['prefix'] !== '*'));
+        if ($digit !== []) {
+            $longest = max(array_map(static fn ($r) => strlen((string) $r['prefix']), $digit));
+            $rules = array_values(array_filter($digit, static fn ($r) => strlen((string) $r['prefix']) === $longest));
+        } else {
+            $rules = array_values(array_filter($rules, static fn ($r) => (string) $r['prefix'] === '*'));
+            $out['notes'][] = 'Using Trunk Group member trunks (catch-all).';
+        }
 
         foreach ($rules as &$r) {
             $k = $this->resolver->carrier((int) $r['trunk_id'], $dst);
@@ -115,26 +122,30 @@ final class RouteSimulator
     }
 
     /**
-     * Order candidate rules. priority: ascending priority. lcr: ascending carrier_sample_cost (unrated last), priority as tie-break.
+     * Order candidates: priority = ascending order; lcr = cheapest first; random = shuffle.
      *
      * @param list<array<string,mixed>> $rules
      * @return list<array<string,mixed>>
      */
     public static function order(array $rules, string $strategy): array
     {
-        usort($rules, static function (array $a, array $b) use ($strategy): int {
-            if ($strategy === 'lcr') {
-                $ca = $a['carrier_sample_cost'] ?? null;
-                $cb = $b['carrier_sample_cost'] ?? null;
-                if ($ca === null xor $cb === null) {
-                    return $ca === null ? 1 : -1;
+        if ($strategy === 'random') {
+            shuffle($rules);
+        } else {
+            usort($rules, static function (array $a, array $b) use ($strategy): int {
+                if ($strategy === 'lcr') {
+                    $ca = $a['carrier_sample_cost'] ?? null;
+                    $cb = $b['carrier_sample_cost'] ?? null;
+                    if ($ca === null xor $cb === null) {
+                        return $ca === null ? 1 : -1;
+                    }
+                    if ($ca !== null && ($c = bccomp((string) $ca, (string) $cb, 6)) !== 0) {
+                        return $c;
+                    }
                 }
-                if ($ca !== null && ($c = bccomp((string) $ca, (string) $cb, 6)) !== 0) {
-                    return $c;
-                }
-            }
-            return ((int) $a['priority'] <=> (int) $b['priority']) ?: ((int) $a['rule_id'] <=> (int) $b['rule_id']);
-        });
+                return ((int) $a['priority'] <=> (int) $b['priority']) ?: ((int) $a['rule_id'] <=> (int) $b['rule_id']);
+            });
+        }
         foreach ($rules as $i => &$r) {
             $r['attempt_order'] = $i + 1;
         }

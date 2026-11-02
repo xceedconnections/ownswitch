@@ -36,10 +36,10 @@ $tile = static function (string $label, mixed $value, string $href = '', string 
         <li class="mb-1"><a href="<?= e(url('/users')) ?>">Clients → Users</a> — create user</li>
         <li class="mb-1"><a href="<?= e(url('/rate-plans')) ?>">Rates → Plans</a> — create plan, assign on User</li>
         <li class="mb-1"><a href="<?= e(url('/sip-users')) ?>">Clients → SIP Users</a> — softphone account</li>
-        <li class="mb-1"><a href="<?= e(url('/carriers')) ?>">Routes → Providers</a> → <a href="<?= e(url('/trunks')) ?>">Trunks</a> → <a href="<?= e(url('/routing/plans')) ?>">Trunk Groups</a></li>
+        <li class="mb-1"><a href="<?= e(url('/providers')) ?>">Routes → Providers</a> → <a href="<?= e(url('/trunks')) ?>">Trunks</a> → <a href="<?= e(url('/trunk-groups')) ?>">Trunk Groups</a></li>
         <li class="mb-1"><a href="<?= e(url('/prefixes')) ?>">Rates → Prefixes</a> (code + name) → <a href="<?= e(url('/tariffs')) ?>">Tariffs</a> (Plan + Destination + Trunk Group + sell price)</li>
-        <li class="mb-1"><a href="<?= e(url('/carrier-tariffs')) ?>">Routes → Provider Rates</a> — buy price</li>
-        <li class="mb-1"><a href="<?= e(url('/billing/topup')) ?>">Billing → Refills</a> — add credit</li>
+        <li class="mb-1"><a href="<?= e(url('/provider-rates')) ?>">Routes → Provider Rates</a> — buy price</li>
+        <li class="mb-1"><a href="<?= e(url('/billing/refill')) ?>">Billing → Refills</a> — add credit</li>
         <li>Register softphone and place a call · check <a href="<?= e(url('/cdrs')) ?>">Reports → CDR</a></li>
     </ol>
 </div>
@@ -48,7 +48,7 @@ $tile = static function (string $label, mixed $value, string $href = '', string 
 <div class="row g-3 mb-4">
     <?php $tile('Users', $counts['customers'], '/users'); ?>
     <?php $tile('SIP Users', $counts['sip'], '/sip-users'); ?>
-    <?php $tile('Providers', $counts['carriers'] ?? ($counts['providers'] ?? '—'), '/carriers'); ?>
+    <?php $tile('Providers', $counts['carriers'] ?? ($counts['providers'] ?? '—'), '/providers'); ?>
     <?php $tile('CDRs (all time)', $totalCdrs, '/cdrs'); ?>
 </div>
 

@@ -20,7 +20,7 @@ final class TariffController extends CrudController
     public function __construct(private string $kind = 'customer')
     {
         $carrier = $kind === 'carrier';
-        $this->base = $carrier ? '/carrier-tariffs' : '/tariffs';
+        $this->base = $carrier ? '/provider-rates' : '/tariffs';
         $this->singular = $carrier ? 'Provider rate' : 'Tariff';
         $this->plural = $carrier ? 'Provider Rates' : 'Tariffs';
         $this->emptyHint = $carrier

@@ -24,7 +24,7 @@
         sel.addEventListener('change', function () { if (sel.form) { sel.form.submit(); } });
     });
 
-    // Close mobile offcanvas after nav click
+    // Close mobile offcanvas after nav click; keep accordion chevron state in sync
     var sidebar = document.getElementById('osSidebar');
     if (sidebar && window.bootstrap) {
         sidebar.querySelectorAll('a.os-nav-link').forEach(function (link) {
@@ -33,6 +33,16 @@
                 if (inst && window.matchMedia('(max-width: 991.98px)').matches) {
                     inst.hide();
                 }
+            });
+        });
+        sidebar.querySelectorAll('.os-nav-group .collapse').forEach(function (el) {
+            el.addEventListener('show.bs.collapse', function () {
+                var g = el.closest('.os-nav-group');
+                if (g) { g.classList.add('is-open'); }
+            });
+            el.addEventListener('hide.bs.collapse', function () {
+                var g = el.closest('.os-nav-group');
+                if (g) { g.classList.remove('is-open'); }
             });
         });
     }
