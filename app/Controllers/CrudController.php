@@ -173,7 +173,20 @@ abstract class CrudController extends BaseController
             return $this->form($r, $existing, $r->post, ['_form' => $e->getMessage()], 422);
         } catch (\PDOException $e) {
             $dup = ($e->errorInfo[1] ?? 0) === 1062;
-            return $this->form($r, $existing, $r->post, ['_form' => $dup ? 'A record with the same unique value already exists.' : 'Database error; the change was not saved.'], 422);
+            $msg = $dup ? 'A record with the same unique value already exists.' : 'Database error; the change was not saved.';
+            $sqlMsg = (string) ($e->errorInfo[2] ?? $e->getMessage());
+            if (!$dup && $sqlMsg !== '') {
+                if (stripos($sqlMsg, 'Unknown column') !== false) {
+                    $msg = 'Database schema is outdated (missing column). On the server run: '
+                        . 'sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/migrate.php';
+                } else {
+                    // Surface a short SQL hint (no credentials); helps ops without enabling full debug.
+                    $hint = preg_replace('/\s+/', ' ', $sqlMsg) ?? $sqlMsg;
+                    $msg .= ' (' . mb_substr($hint, 0, 180) . ')';
+                }
+            }
+            error_log('[ownswitch] CRUD PDO ' . $this->base . ': ' . $sqlMsg);
+            return $this->form($r, $existing, $r->post, ['_form' => $msg], 422);
         }
         $this->audit($r, $existing ? 'update' : 'create', $this->repo()->table(), $id, $existing, $data);
         return $this->redirect($r, $this->base, ($msg ?? "{$this->singular} saved."));

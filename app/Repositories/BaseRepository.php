@@ -197,6 +197,30 @@ class BaseRepository
     /** @param array<string,mixed> $data @return array<string,mixed> */
     protected function only(array $data): array
     {
-        return array_intersect_key($data, array_flip($this->columns));
+        $allowed = array_flip($this->columns);
+        $phys = array_flip($this->physicalColumns());
+        $out = [];
+        foreach ($data as $k => $v) {
+            if (isset($allowed[$k]) && isset($phys[$k])) {
+                $out[$k] = $v;
+            }
+        }
+        return $out;
+    }
+
+    /** @return list<string> */
+    protected function physicalColumns(): array
+    {
+        static $cache = [];
+        if (isset($cache[$this->table])) {
+            return $cache[$this->table];
+        }
+        try {
+            $rows = $this->pdo->query("SHOW COLUMNS FROM `{$this->table}`")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $cache[$this->table] = array_values(array_map(static fn ($r) => (string) $r['Field'], $rows));
+        } catch (\Throwable) {
+            $cache[$this->table] = $this->columns;
+        }
+        return $cache[$this->table];
     }
 }
