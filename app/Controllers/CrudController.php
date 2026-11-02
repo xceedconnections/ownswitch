@@ -78,15 +78,23 @@ abstract class CrudController extends BaseController
             }
         }
         $q = is_string($r->query('q')) ? trim((string) $r->query('q')) : '';
-        $res = $this->repo()->paginate(
-            $this->scope($r), $filters, (int) $r->query('page', 1), 25,
-            is_string($r->query('sort')) ? (string) $r->query('sort') : $this->defaultSort,
-            is_string($r->query('dir')) ? (string) $r->query('dir') : 'desc',
-            $q
-        );
+        try {
+            $fields = $this->fields($r);
+            $res = $this->repo()->paginate(
+                $this->scope($r), $filters, (int) $r->query('page', 1), 25,
+                is_string($r->query('sort')) ? (string) $r->query('sort') : $this->defaultSort,
+                is_string($r->query('dir')) ? (string) $r->query('dir') : 'desc',
+                $q
+            );
+        } catch (\PDOException $e) {
+            $hint = (stripos($e->getMessage(), "doesn't exist") !== false || stripos($e->getMessage(), 'Base table') !== false)
+                ? 'Database tables missing. On the server run: sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/migrate.php'
+                : 'Database error. Check logs / run migrate.php.';
+            return $this->view('error', ['title' => 'Database', 'message' => $hint, 'code' => 500], 500);
+        }
         return $this->view('crud/list', [
             'title' => $this->plural, 'base' => $this->base, 'singular' => $this->singular, 'plural' => $this->plural,
-            'fields' => $this->fields($r), 'result' => $res, 'q' => $q, 'filters' => $filters, 'canWrite' => $this->canWrite($r),
+            'fields' => $fields, 'result' => $res, 'q' => $q, 'filters' => $filters, 'canWrite' => $this->canWrite($r),
             'emptyHint' => $this->emptyHint, 'query' => $r->query,
         ] + $this->extra($r));
     }

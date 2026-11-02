@@ -16,7 +16,11 @@
                         <label class="form-check-label" for="<?= e($key) ?>"><?= e($label) ?></label></div>
                 <?php elseif ($type === 'media'): ?>
                     <label class="form-label" for="<?= e($key) ?>"><?= e($label) ?></label>
-                    <select class="form-select" id="<?= e($key) ?>" name="<?= e($key) ?>"><?php foreach (['direct', 'relay', 'record'] as $m): ?><option value="<?= e($m) ?>"<?= $val === $m ? ' selected' : '' ?>><?= e($m) ?></option><?php endforeach; ?></select>
+                    <select class="form-select" id="<?= e($key) ?>" name="<?= e($key) ?>">
+                        <option value="relay"<?= $val === 'relay' ? ' selected' : '' ?>>Relay — media via this switch (RTPengine)</option>
+                        <option value="direct"<?= $val === 'direct' ? ' selected' : '' ?>>Direct — media peer-to-peer (no switch media IP)</option>
+                        <option value="record"<?= $val === 'record' ? ' selected' : '' ?>>Record — relay + call recording</option>
+                    </select>
                 <?php else: ?>
                     <label class="form-label" for="<?= e($key) ?>"><?= e($label) ?></label>
                     <input class="form-control<?= $err ? ' is-invalid' : '' ?>" id="<?= e($key) ?>" name="<?= e($key) ?>" value="<?= e($val) ?>" maxlength="20">

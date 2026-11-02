@@ -13,15 +13,14 @@ final class SettingsService
     /** key => [label, type, help]. Only these keys are editable. */
     public const SCHEMA = [
         'default_currency'            => ['Default currency', 'text', '3-letter ISO code'],
-        'default_customer_initial'    => ['Global default customer initial increment (s)', 'int', 'Precedence level 5 (BILLING_RULES s3)'],
-        'default_customer_subsequent' => ['Global default customer subsequent increment (s)', 'int', ''],
-        'default_carrier_initial'     => ['Global default carrier initial increment (s)', 'int', ''],
-        'default_carrier_subsequent'  => ['Global default carrier subsequent increment (s)', 'int', ''],
-        'prefer_portal_rating'        => ['Prefer portal rating over CGRateS on mismatch', 'bool', 'Invoice truth = Ownswitch formula'],
         'charge_connect_on_zero'      => ['Charge connection fee on zero-duration calls', 'bool', 'Default off'],
-        'rating_tolerance'            => ['Rating discrepancy tolerance', 'decimal', 'Flag when |CGRateS - portal| exceeds this'],
+        'rating_tolerance'            => ['Rating discrepancy tolerance', 'decimal', 'Flag when |CGRateS − portal| exceeds this'],
         'prepaid_hard_cap_seconds'    => ['Prepaid hard max call duration (s)', 'int', ''],
-        'default_media_policy'        => ['Default media policy', 'media', 'Used by every trunk/customer with Media = Default. Changing this updates them immediately (no per-trunk copy).'],
+        'default_media_policy'        => [
+            'Default media policy',
+            'media',
+            'Relay = RTP through this switch (RTPengine; SDP media IP = your switch). Direct = RTP peer-to-peer (signalling only on switch). Record = relay + record.',
+        ],
         'recording_retention_days'    => ['Recording retention (days)', 'int', ''],
     ];
 
