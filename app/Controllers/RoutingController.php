@@ -23,11 +23,11 @@ final class RoutingController extends CrudController
     {
         $plans = $kind === 'plans';
         $this->base = $plans ? '/routing/plans' : '/routing';
-        $this->singular = $plans ? 'Route group' : 'Route';
-        $this->plural = $plans ? 'Route Groups' : 'Routes';
+        $this->singular = $plans ? 'Trunk group' : 'Route';
+        $this->plural = $plans ? 'Trunk Groups' : 'Routes';
         $this->emptyHint = $plans
-            ? 'No route groups. Create one (Priority or LCR), add Routes (prefix → trunk), then assign to Customers.'
-            : 'No routes. Map a dial prefix to a Provider Trunk. Multiple routes for the same prefix = failover order.';
+            ? 'No trunk groups yet (Magnus Trunk Groups). Choose Order/LCR, add Routes (prefix → trunk), assign the group to Customers.'
+            : 'No routes. Map a dial prefix to a Provider Trunk inside a Trunk Group. Same prefix + different priority = failover.';
     }
 
     protected function repo(): BaseRepository
@@ -47,8 +47,11 @@ final class RoutingController extends CrudController
         $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
         if ($this->kind === 'plans') {
             return [
-                ['name' => 'name', 'label' => 'Route group name', 'required' => true, 'max' => 120, 'list' => true],
-                ['name' => 'strategy', 'label' => 'Strategy', 'type' => 'select', 'required' => true, 'options' => ['priority' => 'Priority / failover', 'lcr' => 'Least-cost (LCR)'], 'list' => true],
+                ['name' => 'name', 'label' => 'Trunk group name', 'required' => true, 'max' => 120, 'list' => true],
+                ['name' => 'strategy', 'label' => 'Type', 'type' => 'select', 'required' => true, 'options' => [
+                    'priority' => 'Order / failover',
+                    'lcr' => 'Lowest cost (LCR)',
+                ], 'list' => true, 'help' => 'Magnus trunk-group order types'],
                 $status,
                 ['name' => 'description', 'label' => 'Description', 'max' => 255],
             ];
@@ -62,10 +65,10 @@ final class RoutingController extends CrudController
             $trunks[$t['id']] = "{$t['carrier']} / {$t['name']}";
         }
         return [
-            ['name' => 'routing_plan_id', 'label' => 'Route group', 'type' => 'select', 'required' => true, 'options' => $plans, 'list' => true],
-            ['name' => 'prefix', 'label' => 'Prefix', 'type' => 'prefix', 'required' => true, 'list' => true, 'help' => 'Destination dial prefix, e.g. 1 or 44'],
-            ['name' => 'carrier_trunk_id', 'label' => 'Provider trunk', 'type' => 'select', 'required' => true, 'options' => $trunks, 'list' => true],
-            ['name' => 'priority', 'label' => 'Priority', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Lower = tried first'],
+            ['name' => 'routing_plan_id', 'label' => 'Trunk group', 'type' => 'select', 'required' => true, 'options' => $plans, 'list' => true],
+            ['name' => 'prefix', 'label' => 'Prefix', 'type' => 'prefix', 'required' => true, 'list' => true, 'help' => 'Dial prefix for this route, e.g. 1 or 44'],
+            ['name' => 'carrier_trunk_id', 'label' => 'Trunk', 'type' => 'select', 'required' => true, 'options' => $trunks, 'list' => true],
+            ['name' => 'priority', 'label' => 'Order', 'type' => 'int', 'min' => 0, 'max' => 100000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Lower = tried first (Order strategy)'],
             $status,
         ];
     }

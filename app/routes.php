@@ -20,6 +20,7 @@ use Ownswitch\Controllers\RoutingController;
 use Ownswitch\Controllers\SettingsController;
 use Ownswitch\Controllers\SipUserController;
 use Ownswitch\Controllers\SystemController;
+use Ownswitch\Controllers\PrefixController;
 use Ownswitch\Controllers\TariffController;
 use Ownswitch\Controllers\TariffImportController;
 use Ownswitch\Router;
@@ -59,8 +60,9 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $crud($r, '/sip-users', new SipUserController(), $role(Menu::SIP_USERS));
     $crud($r, '/ip-auth', new IpAuthController(), $role(Menu::SIP_USERS));
 
-    // Rates
+    // Rates (Magnus: Plans → Tariffs → Prefixes)
     $crud($r, '/rate-plans', new RatePlanController(), $STAFF);
+    $crud($r, '/prefixes', new PrefixController(), $STAFF);
     $crud($r, '/tariffs', new TariffController('customer'), $STAFF);
     $crud($r, '/carrier-tariffs', new TariffController('carrier'), $STAFF);
     $ti = new TariffImportController();
@@ -69,7 +71,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->post('/tariffs/import/preview', [$ti, 'preview'], [$STAFF]);
     $r->post('/tariffs/import/commit', [$ti, 'commit'], [$STAFF]);
 
-    // Carriers & routing
+    // Routes (Magnus: Providers → Trunks → Trunk Groups)
     $crud($r, '/carriers', new CarrierController('carrier'), $STAFF);
     $crud($r, '/trunks', new CarrierController('trunk'), $STAFF);
     $sim = new RoutingController('rules');

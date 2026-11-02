@@ -13,7 +13,7 @@ final class RatePlanController extends CrudController
     protected string $base = '/rate-plans';
     protected string $singular = 'Plan';
     protected string $plural = 'Plans';
-    protected string $emptyHint = 'No plans yet. Create a Plan (billing increments), then add Prefixes (sell rates). Assign the Plan to Customers.';
+    protected string $emptyHint = 'No plans yet. Magnus flow: create a Plan, add Prefixes (codes), then Tariffs (Plan + Destination + sell price). Assign the Plan to Customers.';
 
     protected function repo(): BaseRepository
     {

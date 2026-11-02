@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ownswitch\Services\Tariffs;
 
+use Ownswitch\Repositories\PrefixRepository;
 use Ownswitch\Repositories\RatePlanRepository;
 use Ownswitch\Repositories\TariffRepository;
 use Ownswitch\Services\Billing\RatingService;
@@ -137,6 +138,8 @@ final class TariffCsvService
     /** @param array<string,mixed> $row */
     private function upsert(string $kind, int $ownerId, array $row): void
     {
+        // Keep Magnus Prefixes catalogue in sync (prefix + destination name only).
+        (new PrefixRepository($this->db))->upsert((string) $row['prefix'], (string) ($row['destination'] ?? ''));
         $cols = [
             'prefix' => $row['prefix'],
             'destination' => $row['destination'] ?: null,

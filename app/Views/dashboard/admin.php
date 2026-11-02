@@ -31,16 +31,16 @@ $tile = static function (string $label, mixed $value, string $href = '', string 
 <?php endif; ?>
 
 <div class="os-panel mb-4 p-3 p-md-4">
-    <div class="os-section-label mb-2">Quick setup (like MagnusBilling)</div>
+    <div class="os-section-label mb-2">Quick setup (MagnusBilling callflow)</div>
     <ol class="mb-0 ps-3 small">
-        <li class="mb-1"><a href="<?= e(url('/carriers')) ?>">Add Provider</a> — who you buy minutes from</li>
-        <li class="mb-1"><a href="<?= e(url('/trunks')) ?>">Add Trunk</a> — SIP host, user, password</li>
-        <li class="mb-1"><a href="<?= e(url('/carrier-tariffs')) ?>">Add Provider Rates</a> — buy prefix / rate</li>
-        <li class="mb-1"><a href="<?= e(url('/rate-plans')) ?>">Add Plan</a> — sell increments (I/S)</li>
-        <li class="mb-1"><a href="<?= e(url('/tariffs')) ?>">Add Prefixes</a> — sell rates per destination</li>
-        <li class="mb-1"><a href="<?= e(url('/routing/plans')) ?>">Add Route Group</a> + <a href="<?= e(url('/routing')) ?>">Routes</a></li>
-        <li class="mb-1"><a href="<?= e(url('/customers')) ?>">Add Customer</a> — assign Plan + Route Group</li>
-        <li><a href="<?= e(url('/sip-users')) ?>">Add SIP User</a> — phone/PBX account</li>
+        <li class="mb-1"><a href="<?= e(url('/customers')) ?>">Add Customer</a> + credit (<a href="<?= e(url('/billing/topup')) ?>">Refills</a>)</li>
+        <li class="mb-1"><a href="<?= e(url('/sip-users')) ?>">Add SIP User</a> — phone / softphone account</li>
+        <li class="mb-1"><a href="<?= e(url('/carriers')) ?>">Add Provider</a> → <a href="<?= e(url('/trunks')) ?>">Trunk</a></li>
+        <li class="mb-1"><a href="<?= e(url('/routing/plans')) ?>">Trunk Group</a> + <a href="<?= e(url('/routing')) ?>">Routes</a> (prefix → trunk)</li>
+        <li class="mb-1"><a href="<?= e(url('/prefixes')) ?>">Prefixes</a> — dial code + destination name only</li>
+        <li class="mb-1"><a href="<?= e(url('/rate-plans')) ?>">Plan</a> → <a href="<?= e(url('/tariffs')) ?>">Tariffs</a> — Plan + Destination + sell price</li>
+        <li class="mb-1"><a href="<?= e(url('/carrier-tariffs')) ?>">Provider Rates</a> — buy price per prefix</li>
+        <li>Assign Plan + Trunk Group on the Customer, then place a call</li>
     </ol>
 </div>
 

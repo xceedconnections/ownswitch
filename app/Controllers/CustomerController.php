@@ -60,8 +60,8 @@ final class CustomerController extends CrudController
                 $routes[$p['id']] = $p['name'];
             }
             array_push($f,
-                ['name' => 'rate_plan_id', 'label' => 'Plan (sell rates)', 'type' => 'select', 'options' => $plans, 'list' => true, 'help' => 'Prefixes under this plan are used to charge the customer'],
-                ['name' => 'routing_plan_id', 'label' => 'Route group', 'type' => 'select', 'options' => $routes, 'help' => 'Which trunks are tried for this customer'],
+                ['name' => 'rate_plan_id', 'label' => 'Plan', 'type' => 'select', 'options' => $plans, 'list' => true, 'help' => 'Magnus plan — Tariffs under this plan set sell price by Destination'],
+                ['name' => 'routing_plan_id', 'label' => 'Trunk group', 'type' => 'select', 'options' => $routes, 'help' => 'Magnus trunk group — which trunks are tried for outbound calls'],
             );
         }
         array_push($f,

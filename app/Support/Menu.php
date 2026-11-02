@@ -17,8 +17,9 @@ final class Menu
     /** @return list<array{label:string,items:list<array{label:string,path:string}>}> */
     public static function for(string $role): array
     {
-        // Order mirrors MagnusBilling daily workflow:
-        // Customers → SIP Users → Providers → Trunks → Plans → Prefixes → Routes → CDRs → Billing
+        // MagnusBilling-style menus / callflow:
+        // Customers → SIP → Rates (Plans, Tariffs, Prefixes) → Routes (Providers, Trunks, Trunk Groups)
+        // → Billing / CDR. Call: auth → plan → longest tariff prefix → trunk group → CDR + credit.
         $sections = [
             ['Overview', [
                 ['Dashboard', '/', self::ALL],
@@ -29,18 +30,17 @@ final class Menu
                 ['SIP Users', '/sip-users', self::SIP_USERS],
                 ['IP Auth', '/ip-auth', self::SIP_USERS],
             ]],
-            ['Providers', [
+            ['Rates', [
+                ['Plans', '/rate-plans', self::STAFF],
+                ['Tariffs', '/tariffs', self::STAFF],
+                ['Prefixes', '/prefixes', self::STAFF],
+                ['Import CSV', '/tariffs/import', self::STAFF],
+            ]],
+            ['Routes', [
                 ['Providers', '/carriers', self::STAFF],
                 ['Trunks', '/trunks', self::STAFF],
                 ['Provider Rates', '/carrier-tariffs', self::STAFF],
-            ]],
-            ['Rates & Plans', [
-                ['Plans', '/rate-plans', self::STAFF],
-                ['Prefixes', '/tariffs', self::STAFF],
-                ['Import CSV', '/tariffs/import', self::STAFF],
-            ]],
-            ['Routing', [
-                ['Route Groups', '/routing/plans', self::STAFF],
+                ['Trunk Groups', '/routing/plans', self::STAFF],
                 ['Routes', '/routing', self::STAFF],
                 ['Simulator', '/routing/simulate', self::STAFF],
             ]],
@@ -50,7 +50,7 @@ final class Menu
                 ['Financial', '/reports/financial', self::FINANCE],
             ]],
             ['Billing', [
-                ['Refill / Adjust', '/billing/topup', self::STAFF],
+                ['Refills', '/billing/topup', self::STAFF],
                 ['Billing Preview', '/billing/preview', self::STAFF],
                 ['Ledger', '/ledger', self::LEDGER_READ],
                 ['Invoices', '/invoices', ['super_admin', 'admin', 'reseller', 'customer_owner']],
