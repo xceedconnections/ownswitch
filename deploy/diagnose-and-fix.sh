@@ -81,15 +81,6 @@ if [[ -z "$ONLY" ]]; then
   ONLY=99
 fi
 
-cd "$SRC"
-bash "$SRC/deploy/install.sh" --only "$ONLY" --yes --non-interactive || true
-
-echo
-echo "========== New FAIL / WARN =========="
-NEW="$(readlink -f /var/lib/ownswitch-install/reports/latest.txt 2>/dev/null || true)"
-[[ -f "$NEW" ]] && grep -E '\[(FAIL|WARN)\]|SUMMARY:' "$NEW" || true
-echo
-echo "Portal probe:"
-curl -ksI --max-time 10 https://127.0.0.1/ -H "Host: $(grep -E '^OWNSWITCH_DOMAIN=' /etc/ownswitch/install.conf 2>/dev/null | cut -d= -f2 || echo localhost)" | head -n5 || true
-echo
-[[ -f /root/ownswitch-credentials.txt ]] && echo "Admin creds: /root/ownswitch-credentials.txt" || true
+echo "Handing off to force-finish.sh (runs stages individually with full logs)…"
+export FREESWITCH_ENABLED="${FREESWITCH_ENABLED:-0}"
+bash "$SRC/deploy/force-finish.sh"

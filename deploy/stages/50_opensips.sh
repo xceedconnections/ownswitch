@@ -52,24 +52,38 @@ fi
 
 schema_file() { local n=$1 f; for f in "${sql_files[@]}"; do [[ "$(basename "$f")" == "${n}-create.sql" ]] && { echo "$f"; return 0; }; done; return 1; }
 
-apply_schema_once() { # module
-  local mod=$1 f first
+apply_schema_once() { # module [required_table]
+  local mod=$1 want=${2:-} f first
   f="$(schema_file "$mod" || true)"
   if [[ -z "$f" ]]; then log_warn "schema for module '${mod}' not shipped - skipped"; return 0; fi
+  if [[ -n "$want" ]] && mysql_table_exists "${DB_OPENSIPS}" "$want"; then
+    log_info "schema '${mod}' already present (table ${want})"
+    return 0
+  fi
   first="$(grep -iEo 'CREATE TABLE( IF NOT EXISTS)? +`?[a-z0-9_]+' "$f" | head -n1 | awk '{print $NF}' | tr -d '`' || true)"
-  if [[ -n "$first" ]] && mysql_table_exists "${DB_OPENSIPS}" "$first"; then
+  if [[ -z "$want" && -n "$first" ]] && mysql_table_exists "${DB_OPENSIPS}" "$first"; then
     log_info "schema '${mod}' already present (table ${first})"
     return 0
   fi
   log_info "applying OpenSIPS schema '${mod}' from ${f}"
-  mysql_root "${DB_OPENSIPS}" <"$f"
+  # Allow re-apply: ignore duplicate-object errors from partial previous runs
+  if ! mysql_root "${DB_OPENSIPS}" <"$f"; then
+    log_warn "schema '${mod}' apply returned non-zero — checking required table"
+    if [[ -n "$want" ]] && ! mysql_table_exists "${DB_OPENSIPS}" "$want"; then
+      die "OpenSIPS schema '${mod}' failed and table '${want}' is still missing"
+    fi
+  fi
   note_change "applied OpenSIPS schema ${mod}"
 }
 
 # standard first (creates `version`, acc, subscriber, address, ...)
-for mod in standard auth_db usrloc dialog permissions drouting dispatcher rtpengine dialplan domain group; do
+# Pass the canonical table so a partial apply (only `version`) cannot skip the rest.
+apply_schema_once standard subscriber
+for mod in auth_db usrloc dialog permissions drouting dispatcher rtpengine dialplan domain group; do
   apply_schema_once "$mod"
 done
+mysql_table_exists "${DB_OPENSIPS}" subscriber \
+  || die "OpenSIPS schema incomplete: opensips.subscriber missing after apply"
 
 # Make sure the portal/runtime account can use everything created by root
 mysql_root -e "FLUSH PRIVILEGES"

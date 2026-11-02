@@ -12,17 +12,19 @@ ensure_base_layout
 # ---------------------------------------------------------------------------
 # 1. Packages
 # ---------------------------------------------------------------------------
+# Install nginx + PHP first; redis extension is optional (portal works without it).
 apt_install "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-mbstring" \
             "php${PHP_VERSION}-xml" "php${PHP_VERSION}-curl" "php${PHP_VERSION}-zip" "php${PHP_VERSION}-bcmath" \
-            "php${PHP_VERSION}-redis" "php${PHP_VERSION}-intl" nginx composer
-apt_install_optional "php${PHP_VERSION}-opcache"
+            "php${PHP_VERSION}-intl" nginx
+apt_install_optional "php${PHP_VERSION}-redis" "php${PHP_VERSION}-opcache" composer
 
 php_v="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
 [[ "$php_v" == "${PHP_VERSION}" ]] || die "PHP ${PHP_VERSION} expected, CLI reports ${php_v}"
 php_mods="$(php -m)"
-for ext in pdo_mysql mbstring xml curl zip bcmath redis intl; do
+for ext in pdo_mysql mbstring xml curl zip bcmath intl; do
   grep -qix "$ext" <<<"$php_mods" || die "PHP extension missing: ${ext}"
 done
+grep -qix redis <<<"$php_mods" || log_warn "php-redis not loaded (optional)"
 log_ok "PHP ${php_v} with required extensions"
 
 # ---------------------------------------------------------------------------
