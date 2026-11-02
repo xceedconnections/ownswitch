@@ -180,7 +180,7 @@ final class CustomerController extends CrudController
                 [
                     'did_assignments',
                     'customer_rate_overrides',
-                    'dialplan_rules',
+                    'destination_policies',
                     'recordings',
                     'call_reservations',
                     'balances',
