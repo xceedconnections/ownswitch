@@ -54,7 +54,7 @@ modparam("rr", "append_fromtag", 0)
 
 loadmodule "maxfwd.so"
 loadmodule "sipmsgops.so"
-loadmodule "uri.so"
+# uri.so removed in OpenSIPS 3.x (helpers live in sipmsgops)
 
 loadmodule "mi_fifo.so"
 modparam("mi_fifo", "fifo_name", "@@OPENSIPS_FIFO@@")
