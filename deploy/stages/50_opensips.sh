@@ -165,15 +165,24 @@ mod_dir="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules
 export OPENSIPS_MPATH="${mod_dir}/"
 [[ -f "${mod_dir}/cgrates.so" ]] || die "cgrates.so missing in ${mod_dir} (package opensips-cgrates-module)"
 
+# Prefer DNS A for OWNSWITCH_DOMAIN when that address is local (avoids Domain REGISTER → 500).
+if [[ -n "${OWNSWITCH_DOMAIN:-}" ]]; then
+  _dns_ip="$(getent ahostsv4 "${OWNSWITCH_DOMAIN}" 2>/dev/null | awk '{print $1; exit}' || true)"
+  _local_ips="$(hostname -I 2>/dev/null || true)"
+  if valid_ipv4 "${_dns_ip:-}" && [[ " ${_local_ips} " == *" ${_dns_ip} "* ]]; then
+    PUBLIC_IP="${_dns_ip}"
+    export PUBLIC_IP
+    log_info "PUBLIC_IP aligned to DNS ${OWNSWITCH_DOMAIN} → ${PUBLIC_IP}"
+  fi
+fi
+[[ -n "${OWNSWITCH_DOMAIN:-}" ]] || die "OWNSWITCH_DOMAIN is empty — cannot set SIP alias"
+valid_ipv4 "${PUBLIC_IP}" || die "PUBLIC_IP='${PUBLIC_IP}' is not a valid IPv4 — Domain REGISTER will fail"
+
 # Always bind all interfaces and advertise the public IP (Hetzner / cloud safe).
 # Listening only on a private NIC caused softphones to time out even when TCP seemed open.
-if valid_ipv4 "${PUBLIC_IP}"; then
-  export SIP_SOCKET_UDP="udp:0.0.0.0:${SIP_PORT} as ${PUBLIC_IP}:${SIP_PORT}"
-  export SIP_SOCKET_TCP="tcp:0.0.0.0:${SIP_PORT} as ${PUBLIC_IP}:${SIP_PORT}"
-else
-  export SIP_SOCKET_UDP="udp:0.0.0.0:${SIP_PORT}"
-  export SIP_SOCKET_TCP="tcp:0.0.0.0:${SIP_PORT}"
-fi
+export SIP_SOCKET_UDP="udp:0.0.0.0:${SIP_PORT} as ${PUBLIC_IP}:${SIP_PORT}"
+export SIP_SOCKET_TCP="tcp:0.0.0.0:${SIP_PORT} as ${PUBLIC_IP}:${SIP_PORT}"
+export OWNSWITCH_DOMAIN
 export RTPENGINE_SOCK="udp:127.0.0.1:${RTPENGINE_NG_PORT}"
 cpus="$(nproc)"; workers=$(( cpus > 8 ? 8 : cpus )); (( workers >= 2 )) || workers=2
 export OPENSIPS_UDP_WORKERS="${workers}"

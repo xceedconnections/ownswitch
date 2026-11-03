@@ -24,12 +24,13 @@ log_name="opensips"
 
 udp_workers=@@OPENSIPS_UDP_WORKERS@@
 tcp_workers=4
-auto_aliases=no
+# yes = also alias advertised socket IPs; explicit aliases below add the SIP FQDN
+auto_aliases=yes
 mpath="@@OPENSIPS_MPATH@@"
 
 socket=@@SIP_SOCKET_UDP@@
 socket=@@SIP_SOCKET_TCP@@
-# Accept softphones that put either FQDN or public IP in Domain / Request-URI host
+# CRITICAL: without these, REGISTER sip:FQDN returns 500 / loops while REGISTER sip:IP works
 alias="@@OWNSWITCH_DOMAIN@@"
 alias="@@PUBLIC_IP@@"
 
