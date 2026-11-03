@@ -1,14 +1,18 @@
 <?php
 /**
  * @var string $title @var string $base @var string $singular @var list<array<string,mixed>> $fields
- * @var array $values @var array<string,string> $errors @var ?array $existing
+ * @var array $values @var array<string,string> $errors @var ?array $existing @var bool $canWrite
  */
 $action = $existing ? $base . '/' . (int) $existing['id'] : $base;
 $isEdit = $existing !== null;
+$canWrite = $canWrite ?? true;
+$viewOnly = !$canWrite;
 ?>
 <?php
-$formSub = $isEdit ? 'Update existing record' : 'Create a new ' . strtolower($singular);
-if (($base ?? '') === '/trunk-groups') {
+$formSub = $viewOnly
+    ? 'Read-only — contact your provider to change these settings'
+    : ($isEdit ? 'Update existing record' : 'Create a new ' . strtolower($singular));
+if (($base ?? '') === '/trunk-groups' && !$viewOnly) {
     $formSub = 'Choose which trunks carry your calls and in what order. Each call tries your first trunk; if it can’t connect, it moves to the next one on your list.';
 }
 ?>
@@ -33,9 +37,13 @@ foreach ($fields as $f) {
 $sectionIds = array_keys($sections);
 $useTabs = count($sectionIds) > 1;
 ?>
+<?php if ($viewOnly): ?>
+<div class="os-panel<?= ($base ?? '') === '/trunk-groups' ? ' col-12' : ' col-xl-10' ?>">
+<?php else: ?>
 <form method="post" action="<?= e(url($action)) ?>" class="os-panel<?= ($base ?? '') === '/trunk-groups' ? ' col-12' : ' col-xl-10' ?>" novalidate>
+<?php endif; ?>
     <div class="p-3 p-md-4">
-        <?= csrf_field() ?>
+        <?php if (!$viewOnly): ?><?= csrf_field() ?><?php endif; ?>
         <?php if ($useTabs): ?>
             <ul class="nav nav-tabs os-form-tabs mb-3" role="tablist">
                 <?php foreach ($sectionIds as $i => $sec):
@@ -61,7 +69,10 @@ $useTabs = count($sectionIds) > 1;
                 }
                 $name = (string) $f['name'];
                 $type = (string) ($f['type'] ?? 'text');
-                $readonly = $isEdit && !empty($f['readonly_on_edit']);
+                if ($viewOnly && $type === 'password') {
+                    continue; // never show password fields in read-only view
+                }
+                $readonly = $viewOnly || ($isEdit && !empty($f['readonly_on_edit']));
                 $val = array_key_exists($name, $values) ? $values[$name] : ($f['default'] ?? '');
                 if ($type === 'password') {
                     $val = '';
@@ -161,7 +172,11 @@ $useTabs = count($sectionIds) > 1;
         <?php if ($useTabs): ?></div><?php endif; ?>
     </div>
     <div class="border-top px-3 px-md-4 py-3 d-flex flex-wrap gap-2 bg-light rounded-bottom">
-        <button type="submit" class="btn btn-primary" data-once><i class="bi bi-check2 me-1"></i>Save</button>
-        <a class="btn btn-outline-secondary" href="<?= e(url($base)) ?>">Cancel</a>
+        <?php if (!$viewOnly): ?>
+            <button type="submit" class="btn btn-primary" data-once><i class="bi bi-check2 me-1"></i>Save</button>
+            <a class="btn btn-outline-secondary" href="<?= e(url($base)) ?>">Cancel</a>
+        <?php else: ?>
+            <a class="btn btn-outline-secondary" href="<?= e(url($base)) ?>"><i class="bi bi-arrow-left me-1"></i>Back to list</a>
+        <?php endif; ?>
     </div>
-</form>
+<?php if ($viewOnly): ?></div><?php else: ?></form><?php endif; ?>

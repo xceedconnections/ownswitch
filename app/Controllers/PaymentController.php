@@ -20,10 +20,16 @@ final class PaymentController extends BaseController
         $per = 25;
         $cid = is_string($r->query('customer_id')) && ctype_digit((string) $r->query('customer_id'))
             ? (int) $r->query('customer_id') : null;
-        [$tw, $tp] = $scope->where('owned', 'c');
-        $where = ["({$tw})", "le.affects_balance = 1", "le.amount > 0", "le.entry_type IN ('topup','invoice_payment','initial_credit')"];
+        // Scope on ledger_entries (le), not customers (c) — owned mode uses customer_id column.
+        [$tw, $tp] = $scope->where('owned', 'le');
+        $where = [
+            "({$tw})",
+            'le.affects_balance = 1',
+            'le.amount > 0',
+            "le.entry_type IN ('topup','invoice_payment','initial_credit','adjustment','refund')",
+        ];
         $params = $tp;
-        if ($cid !== null) {
+        if ($cid !== null && !$scope->isCustomerRole()) {
             $where[] = 'le.customer_id = ?';
             $params[] = $cid;
         }

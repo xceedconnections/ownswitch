@@ -266,9 +266,19 @@ abstract class CrudController extends BaseController
     protected function form(Request $r, ?array $existing, array $values, array $errors, int $status = 200): Response
     {
         $values = $this->formValues($r, $existing, $values);
+        $canWrite = $this->canWrite($r);
+        $title = $existing
+            ? (($canWrite ? 'Edit ' : 'View ') . $this->singular)
+            : ('New ' . $this->singular);
         return $this->view('crud/form', [
-            'title' => ($existing ? 'Edit ' : 'New ') . $this->singular, 'base' => $this->base, 'singular' => $this->singular,
-            'fields' => $this->fields($r), 'values' => $values, 'errors' => $errors, 'existing' => $existing,
+            'title' => $title,
+            'base' => $this->base,
+            'singular' => $this->singular,
+            'fields' => $this->fields($r),
+            'values' => $values,
+            'errors' => $errors,
+            'existing' => $existing,
+            'canWrite' => $canWrite,
         ] + $this->extra($r), $status);
     }
 
