@@ -182,11 +182,12 @@ final class CallsOnlineController extends BaseController
     {
         $from = (string) ($d['from_uri'] ?? $d['caller'] ?? $d['From'] ?? $d['from'] ?? $d['caller_uri'] ?? '');
         $to = (string) ($d['to_uri'] ?? $d['callee'] ?? $d['To'] ?? $d['to'] ?? $d['callee_uri'] ?? '');
-        $stateRaw = $d['state'] ?? $d['State'] ?? $d['dialog_state'] ?? $d['dlg_state'] ?? '';
-        $start = (int) ($d['start_time'] ?? $d['timestart'] ?? $d['start'] ?? 0);
-        $dur = (int) ($d['duration'] ?? $d['calltime'] ?? 0);
+        $stateRaw = $d['state'] ?? $d['State'] ?? $d['dialog_state'] ?? $d['dlg_state'] ?? $d['status'] ?? '';
+        $start = (int) ($d['start_time'] ?? $d['timestart'] ?? $d['start'] ?? $d['start_ts'] ?? 0);
+        $dur = (int) ($d['duration'] ?? $d['calltime'] ?? $d['Lifetime'] ?? 0);
         if ($dur <= 0 && $start > 0) {
-            $dur = max(0, time() - $start);
+            // OpenSIPS dialog.start_time is often a unix ts; some builds store relative
+            $dur = $start > 1_000_000_000 ? max(0, time() - $start) : max(0, $start);
         }
         [$bucket, $stateLabel] = self::classifyState($stateRaw, $dur);
         $color = self::vicidialColor($bucket, $dur);
@@ -194,6 +195,7 @@ final class CallsOnlineController extends BaseController
         $toUser = self::userPart($to);
         $dlg = (string) ($d['dialog'] ?? $d['hash'] ?? $d['dlg_id'] ?? '');
         $fromTag = (string) ($d['from_tag'] ?? $d['caller_tag'] ?? $d['ftag'] ?? '');
+        $callid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? $d['CallId'] ?? $d['ci'] ?? '');
         return [
             'from' => $from !== '' ? $from : $fromUser,
             'to' => $to !== '' ? $to : $toUser,
@@ -204,7 +206,7 @@ final class CallsOnlineController extends BaseController
             'bucket' => $bucket,
             'color' => $color,
             'duration' => $dur,
-            'callid' => (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? ''),
+            'callid' => $callid,
             'from_tag' => $fromTag,
             'dialog' => $dlg,
         ];
@@ -215,33 +217,33 @@ final class CallsOnlineController extends BaseController
     {
         if (is_int($stateRaw) || (is_string($stateRaw) && ctype_digit($stateRaw))) {
             $n = (int) $stateRaw;
-            // OpenSIPS dialog states: 1 unconfirmed, 2 early, 3 confirmed, 4 deleted, 5 …
+            // OpenSIPS dialog: 1=unconfirmed, 2=early(180/183), 3=confirmed(no ACK), 4=confirmed+ACK, 5=deleted
             return match (true) {
                 $n === 1 => ['trying', 'Trying'],
-                $n === 2 => ['ringing', 'Ringing / Early'],
-                $n === 3 => ['connected', 'Connected'],
-                $n === 4, $n === 5 => ['other', 'Ending'],
+                $n === 2 => ['ringing', 'Ringing'],
+                $n === 3, $n === 4 => ['connected', 'Connected'],
+                $n === 5 => ['other', 'Ending'],
                 default => ['other', 'State ' . $n],
             };
         }
         $s = strtoupper(trim((string) $stateRaw));
         if ($s === '') {
             // No state from MI — treat as connected if duration growing, else trying
-            return $dur >= 2 ? ['connected', 'Active'] : ['trying', 'Trying'];
+            return $dur >= 2 ? ['connected', 'Connected'] : ['trying', 'Trying'];
         }
-        if (str_contains($s, 'CONFIRM') || str_contains($s, 'CONNECT') || $s === 'INCALL' || $s === 'ANSWERED') {
+        if (str_contains($s, 'CONFIRM') || str_contains($s, 'CONNECT') || $s === 'INCALL' || $s === 'ANSWERED' || $s === '4' || $s === '3') {
             return ['connected', 'Connected'];
         }
-        if (str_contains($s, 'EARLY') || str_contains($s, 'RING') || str_contains($s, 'PROGRESS') || str_contains($s, '183') || str_contains($s, '180')) {
-            return ['ringing', 'Ringing / Progress'];
+        if (str_contains($s, 'EARLY') || str_contains($s, 'RING') || str_contains($s, 'PROGRESS') || str_contains($s, '183') || str_contains($s, '180') || $s === '2') {
+            return ['ringing', 'Ringing'];
         }
-        if (str_contains($s, 'TRY') || str_contains($s, 'UNCONFIRM') || str_contains($s, '100') || str_contains($s, 'INIT')) {
+        if (str_contains($s, 'TRY') || str_contains($s, 'UNCONFIRM') || str_contains($s, '100') || str_contains($s, 'INIT') || $s === '1') {
             return ['trying', 'Trying'];
         }
-        if (str_contains($s, 'DEAD') || str_contains($s, 'DELETE')) {
-            return ['other', 'Dead'];
+        if (str_contains($s, 'DEAD') || str_contains($s, 'DELETE') || $s === '5') {
+            return ['other', 'Ending'];
         }
-        return ['other', $s !== '' ? $s : 'Active'];
+        return ['other', $s !== '' ? $s : 'Connected'];
     }
 
     /** VICIdial-style row background class. */
