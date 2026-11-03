@@ -37,7 +37,8 @@ else
     apt_update
   fi
   (( fresh_install )) && apt_update || true
-  apt_install opensips opensips-mysql-module opensips-cgrates-module
+  # opensips-auth-modules provides auth.so (www_challenge) — required for digest REGISTER
+  apt_install opensips opensips-mysql-module opensips-cgrates-module opensips-auth-modules
   # nice-to-have modules (names differ slightly between releases, so failures only warn)
   apt_install_optional opensips-http-modules opensips-restclient-module opensips-json-module opensips-cli opensips-nathelper-module
 fi
