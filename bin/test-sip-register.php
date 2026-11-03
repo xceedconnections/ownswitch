@@ -67,8 +67,9 @@ $tryRegister = static function (string $toHost) use ($user, $pass, $domain, $dst
     }
     $code = (int) $m[1];
     if ($code === 200) {
-        fwrite(STDERR, "FAIL: REGISTER accepted WITHOUT digest (200). Live opensips.cfg is NOT Ownswitch auth config.\n");
-        fwrite(STDERR, "Fix: sudo bash /opt/ownswitch-src/deploy/fix-softphone-register-magnus.sh\n");
+        fwrite(STDERR, "\n**** FAIL: OpenSIPS accepts REGISTER with NO password (200). ****\n");
+        fwrite(STDERR, "**** The test cannot fix this. Run AS ROOT (not ownswitch): ****\n\n");
+        fwrite(STDERR, "  curl -fsSL https://raw.githubusercontent.com/xceedconnections/ownswitch/main/deploy/patch-opensips-register-auth-now.sh | sudo bash\n\n");
         fclose($sock);
         return false;
     }
