@@ -10,7 +10,7 @@ use Ownswitch\Repositories\CustomerRepository;
 use Ownswitch\Services\Billing\LedgerService;
 use Ownswitch\Services\Billing\RatingService;
 
-/** Record customer payments against invoices / account balance. */
+/** Payments added to user accounts (balance credits). */
 final class PaymentController extends BaseController
 {
     public function index(Request $r, array $p = []): Response
@@ -21,25 +21,30 @@ final class PaymentController extends BaseController
         $cid = is_string($r->query('customer_id')) && ctype_digit((string) $r->query('customer_id'))
             ? (int) $r->query('customer_id') : null;
         [$tw, $tp] = $scope->where('owned', 'c');
-        $where = ["({$tw})"];
+        $where = ["({$tw})", "le.affects_balance = 1", "le.amount > 0", "le.entry_type IN ('topup','invoice_payment','initial_credit')"];
         $params = $tp;
         if ($cid !== null) {
-            $where[] = 'p.customer_id = ?';
+            $where[] = 'le.customer_id = ?';
             $params[] = $cid;
         }
         $sqlWhere = implode(' AND ', $where);
         try {
             $stc = $this->db()->prepare(
-                "SELECT COUNT(*) FROM payments p JOIN customers c ON c.id = p.customer_id WHERE {$sqlWhere}"
+                "SELECT COUNT(*) FROM ledger_entries le
+                 JOIN customers c ON c.id = le.customer_id
+                 WHERE {$sqlWhere}"
             );
             $stc->execute($params);
             $total = (int) $stc->fetchColumn();
             $st = $this->db()->prepare(
-                "SELECT p.*, c.name AS customer_name, c.code AS customer_code
-                 FROM payments p
-                 JOIN customers c ON c.id = p.customer_id
+                "SELECT le.id, le.created_at, le.entry_type, le.amount, le.currency, le.description, le.external_ref,
+                        c.name AS customer_name, c.code AS customer_code,
+                        p.method AS payment_method, p.reference AS payment_reference
+                 FROM ledger_entries le
+                 JOIN customers c ON c.id = le.customer_id
+                 LEFT JOIN payments p ON p.ledger_entry_id = le.id
                  WHERE {$sqlWhere}
-                 ORDER BY p.id DESC
+                 ORDER BY le.id DESC
                  LIMIT {$per} OFFSET " . (($page - 1) * $per)
             );
             $st->execute($params);
@@ -65,10 +70,9 @@ final class PaymentController extends BaseController
             return $this->forbidden();
         }
         return $this->view('payments/form', [
-            'title' => 'Record Payment',
+            'title' => 'Add payment',
             'customers' => $this->customerOptions($r),
-            'invoices' => $this->openInvoices($r),
-            'values' => ['customer_id' => '', 'invoice_id' => '', 'amount' => '', 'method' => 'bank', 'reference' => ''],
+            'values' => ['customer_id' => '', 'amount' => '', 'method' => 'bank', 'reference' => '', 'description' => ''],
             'errors' => [],
         ]);
     }
@@ -81,10 +85,10 @@ final class PaymentController extends BaseController
         $scope = $this->scope($r);
         $v = [
             'customer_id' => (string) ($r->post['customer_id'] ?? ''),
-            'invoice_id' => (string) ($r->post['invoice_id'] ?? ''),
             'amount' => trim((string) ($r->post['amount'] ?? '')),
             'method' => trim((string) ($r->post['method'] ?? 'bank')),
             'reference' => trim((string) ($r->post['reference'] ?? '')),
+            'description' => trim((string) ($r->post['description'] ?? '')),
         ];
         $errors = [];
         $cust = ctype_digit($v['customer_id']) ? (new CustomerRepository($this->db()))->find((int) $v['customer_id'], $scope) : null;
@@ -100,25 +104,13 @@ final class PaymentController extends BaseController
         if (mb_strlen($v['reference']) > 190) {
             $errors[] = 'Reference is too long.';
         }
-        $invoiceId = null;
-        if ($v['invoice_id'] !== '') {
-            if (!ctype_digit($v['invoice_id'])) {
-                $errors[] = 'Invalid invoice.';
-            } else {
-                $invoiceId = (int) $v['invoice_id'];
-                $st = $this->db()->prepare('SELECT id, customer_id FROM invoices WHERE id = ?');
-                $st->execute([$invoiceId]);
-                $inv = $st->fetch(\PDO::FETCH_ASSOC);
-                if (!$inv || (int) $inv['customer_id'] !== (int) ($cust['id'] ?? 0)) {
-                    $errors[] = 'Invoice does not belong to this user.';
-                }
-            }
+        if (mb_strlen($v['description']) > 200) {
+            $errors[] = 'Description is too long.';
         }
         if ($errors) {
             return $this->view('payments/form', [
-                'title' => 'Record Payment',
+                'title' => 'Add payment',
                 'customers' => $this->customerOptions($r),
-                'invoices' => $this->openInvoices($r),
                 'values' => $v,
                 'errors' => $errors,
             ], 422);
@@ -126,38 +118,35 @@ final class PaymentController extends BaseController
 
         $amount = RatingService::round($v['amount'], 6);
         $nonce = is_string($r->post['nonce'] ?? null) ? (string) $r->post['nonce'] : bin2hex(random_bytes(8));
+        $desc = $v['description'] !== '' ? $v['description'] : ('Payment via ' . $v['method']);
+        if ($v['reference'] !== '') {
+            $desc .= ' (' . $v['reference'] . ')';
+        }
         $ledger = (new LedgerService($this->db()))->post([
             'customer_id' => (int) $cust['id'],
             'reseller_id' => $cust['reseller_id'] !== null ? (int) $cust['reseller_id'] : null,
-            'entry_type' => 'invoice_payment',
+            'entry_type' => 'topup',
             'amount' => $amount,
             'currency' => (string) $cust['currency'],
             'idempotency_key' => "payment:{$cust['id']}:{$nonce}",
-            'description' => 'Payment' . ($invoiceId ? " for invoice #{$invoiceId}" : '') . ($v['reference'] !== '' ? " ({$v['reference']})" : ''),
+            'description' => mb_substr($desc, 0, 200),
             'created_by' => (int) $this->user($r)['id'],
             'external_ref' => $v['reference'] !== '' ? $v['reference'] : null,
         ]);
-        $this->db()->prepare(
-            'INSERT INTO payments (customer_id, invoice_id, amount, method, reference, ledger_entry_id, created_by) VALUES (?,?,?,?,?,?,?)'
-        )->execute([
-            (int) $cust['id'], $invoiceId, $amount, $v['method'],
-            $v['reference'] !== '' ? $v['reference'] : null,
-            $ledger['id'], (int) $this->user($r)['id'],
-        ]);
-        $pid = (int) $this->db()->lastInsertId();
-        if ($invoiceId !== null && !$ledger['duplicate']) {
-            $paidSt = $this->db()->prepare('SELECT COALESCE(SUM(amount),0) FROM payments WHERE invoice_id = ?');
-            $paidSt->execute([$invoiceId]);
-            $paid = (string) $paidSt->fetchColumn();
-            $totSt = $this->db()->prepare('SELECT total FROM invoices WHERE id = ?');
-            $totSt->execute([$invoiceId]);
-            $total = (string) ($totSt->fetchColumn() ?: '0');
-            if (bccomp($paid, $total, 6) >= 0) {
-                $this->db()->prepare("UPDATE invoices SET status = 'paid' WHERE id = ? AND status <> 'void'")->execute([$invoiceId]);
-            }
+        try {
+            $this->db()->prepare(
+                'INSERT INTO payments (customer_id, invoice_id, amount, method, reference, ledger_entry_id, created_by) VALUES (?,?,?,?,?,?,?)'
+            )->execute([
+                (int) $cust['id'], null, $amount, $v['method'],
+                $v['reference'] !== '' ? $v['reference'] : null,
+                $ledger['id'], (int) $this->user($r)['id'],
+            ]);
+            $pid = (int) $this->db()->lastInsertId();
+        } catch (\Throwable) {
+            $pid = (int) $ledger['id'];
         }
-        $this->audit($r, 'payment_create', 'payments', $pid, null, ['customer_id' => $cust['id'], 'amount' => $amount, 'invoice_id' => $invoiceId]);
-        return $this->redirect($r, '/payments', $ledger['duplicate'] ? 'Payment already recorded (duplicate submit ignored).' : 'Payment recorded and balance updated.');
+        $this->audit($r, 'payment_create', 'payments', $pid, null, ['customer_id' => $cust['id'], 'amount' => $amount]);
+        return $this->redirect($r, '/payments', $ledger['duplicate'] ? 'Payment already recorded (duplicate submit ignored).' : 'Payment added to user account.');
     }
 
     /** @return array<int|string,string> */
@@ -168,29 +157,5 @@ final class PaymentController extends BaseController
             $o[$c['id']] = "{$c['name']} ({$c['code']})";
         }
         return $o;
-    }
-
-    /** @return array<int|string,string> */
-    private function openInvoices(Request $r): array
-    {
-        $out = ['' => '— No invoice —'];
-        try {
-            [$tw, $tp] = $this->scope($r)->where('owned', 'c');
-            $st = $this->db()->prepare(
-                "SELECT i.id, i.number, i.total, c.name,
-                        (SELECT COALESCE(SUM(p.amount),0) FROM payments p WHERE p.invoice_id = i.id) AS paid
-                 FROM invoices i JOIN customers c ON c.id = i.customer_id
-                 WHERE ({$tw}) AND i.status = 'issued'
-                 ORDER BY i.id DESC LIMIT 300"
-            );
-            $st->execute($tp);
-            foreach ($st->fetchAll(\PDO::FETCH_ASSOC) as $row) {
-                $due = bcsub((string) $row['total'], (string) $row['paid'], 6);
-                $out[(int) $row['id']] = "{$row['number']} · {$row['name']} — due {$due}";
-            }
-        } catch (\Throwable) {
-            // invoices schema may vary by status values
-        }
-        return $out;
     }
 }

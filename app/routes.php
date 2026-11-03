@@ -19,6 +19,7 @@ use Ownswitch\Controllers\LedgerController;
 use Ownswitch\Controllers\LiveMetricsController;
 use Ownswitch\Controllers\ModuleScaffoldController;
 use Ownswitch\Controllers\PaymentController;
+use Ownswitch\Controllers\AreaCodeController;
 use Ownswitch\Controllers\PrefixController;
 use Ownswitch\Controllers\RatePlanController;
 use Ownswitch\Controllers\RecordingController;
@@ -94,6 +95,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     // Rates
     $crud($r, '/rate-plans', new RatePlanController(), $STAFF);
     $crud($r, '/prefixes', new PrefixController(), $STAFF);
+    $crud($r, '/area-codes', new AreaCodeController(), $STAFF);
     $tariffs = new TariffController('customer');
     $r->post('/tariffs/bulk-delete', [$tariffs, 'bulkDestroy'], [$STAFF]);
     $crud($r, '/tariffs', $tariffs, $STAFF);
@@ -190,15 +192,14 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/payments', [$pay, 'index'], [$role(Menu::FINANCE)]);
     $r->get('/payments/create', [$pay, 'create'], [$role(Menu::RESELLER_UP)]);
     $r->post('/payments', [$pay, 'store'], [$role(Menu::RESELLER_UP)]);
-    $led = new LedgerController();
-    $r->get('/ledger', [$led, 'index'], [$role(Menu::LEDGER_READ)]);
-    $r->post('/ledger/{id}/reverse', [$led, 'reverse'], [$STAFF]);
+    // Ledger / invoices removed from UI — keep redirects for old bookmarks
+    $r->get('/ledger', static fn () => Response::redirect(url('/payments')));
+    $r->get('/ledger/{id}/reverse', static fn () => Response::redirect(url('/payments')));
+    $r->post('/ledger/{id}/reverse', static fn () => Response::redirect(url('/payments')));
     $r->get('/statements', [new StatementController(), 'index'], [$role(Menu::LEDGER_READ)]);
-    $inv = new InvoiceController();
-    $invRoles = $role(['super_admin', 'admin', 'reseller', 'customer_owner']);
-    $r->get('/invoices', [$inv, 'index'], [$invRoles]);
-    $r->post('/invoices/generate', [$inv, 'generate'], [$role(Menu::RESELLER_UP)]);
-    $r->get('/invoices/{id}', [$inv, 'show'], [$invRoles]);
+    $r->get('/invoices', static fn () => Response::redirect(url('/payments')));
+    $r->get('/invoices/{id}', static fn () => Response::redirect(url('/payments')));
+    $r->post('/invoices/generate', static fn () => Response::redirect(url('/payments')));
 
     // Media & fraud (under Reports in menu)
     $rec = new RecordingController();

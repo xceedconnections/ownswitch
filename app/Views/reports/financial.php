@@ -18,7 +18,15 @@ $showCost = $res['show_cost'];
         <div class="col-auto"><button class="btn btn-primary btn-sm" type="submit">Run</button></div>
     </div>
 </form>
-<div class="os-table-wrap">
+<div class="os-report-hero os-report-hero--finance mb-3">
+    <div class="os-report-hero-stat"><span class="lbl">Revenue</span><span class="val" style="font-size:1.15rem"><?= e((string) ($res['totals']['revenue'] ?? '0')) ?></span></div>
+    <?php if ($showCost): ?>
+        <div class="os-report-hero-stat"><span class="lbl">Cost</span><span class="val" style="font-size:1.15rem"><?= e((string) ($res['totals']['cost'] ?? '0')) ?></span></div>
+        <div class="os-report-hero-stat"><span class="lbl">Margin</span><span class="val" style="font-size:1.15rem"><?= e((string) ($res['totals']['margin'] ?? '0')) ?></span></div>
+    <?php endif; ?>
+    <div class="os-report-hero-stat"><span class="lbl">Billed</span><span class="val"><?= e(number_format((int) ($res['totals']['billed_calls'] ?? 0))) ?></span></div>
+</div>
+<div class="os-table-wrap os-report-card">
 <?php if (!$res['rows']): ?>
     <div class="os-empty"><div class="os-empty-title">No data</div><div>No CDRs for this period.</div></div>
 <?php else: ?>

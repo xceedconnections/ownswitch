@@ -20,6 +20,7 @@ $rows = [
     'UUID' => $cdr['uuid'], 'External key' => $cdr['external_cdr_key'], 'SIP Call-ID' => $cdr['sip_call_id'],
     'Customer' => $cdr['customer_name'] ?? '-', 'SIP user' => $cdr['sip_username'] ?? '-', 'CallerID' => $cdr['src'],
     'Destination (raw)' => $cdr['dst_raw'], 'Destination (normalised)' => $cdr['dst_normalized'],
+    'Description' => $cdr['area_description'] ?? '—',
     'Matched prefix' => $cdr['dst_prefix'], 'Setup (UTC)' => $cdr['setup_at'], 'Answer (UTC)' => $cdr['answer_at'], 'End (UTC)' => $cdr['end_at'],
     'Disposition' => $cdr['disposition'], 'SIP code' => $codeLabel, 'Failure reason' => $cdr['failure_reason'],
     'Signalling IP' => $sigIp !== '' ? $sigIp : '—',

@@ -91,32 +91,32 @@ $flowing = $w['attempts'] > 0;
 </div>
 
 <div class="os-dash-grid os-dash-kpis mb-3">
-    <div class="os-kpi">
+    <div class="os-kpi os-kpi--teal">
         <div class="lbl">Attempts (60 min)</div>
         <div class="val"><?= e(number_format($w['attempts'])) ?></div>
         <div class="sub"><?= e(number_format($w['last_min'])) ?> in the last full minute</div>
     </div>
-    <div class="os-kpi">
+    <div class="os-kpi os-kpi--green">
         <div class="lbl">Answered (60 min)</div>
         <div class="val"><?= e(number_format($w['answered'])) ?></div>
         <div class="sub">Avg talk <?= e($acdFmt($w['acd'])) ?></div>
     </div>
-    <div class="os-kpi">
+    <div class="os-kpi os-kpi--blue">
         <div class="lbl">Answer rate</div>
         <div class="val"><?= e($w['asr']) ?>%</div>
         <div class="sub">Today <?= e($t['asr']) ?>%</div>
     </div>
-    <div class="os-kpi">
+    <div class="os-kpi os-kpi--amber">
         <div class="lbl">Spend (60 min)</div>
         <div class="val os-mono"><?= e(fmt_money($w['spend'], 2)) ?></div>
         <div class="sub"><?= e(fmt_money($t['spend'], 2)) ?> today</div>
     </div>
-    <div class="os-kpi">
+    <div class="os-kpi os-kpi--violet">
         <div class="lbl">Users / SIP</div>
         <div class="val"><?= e(number_format($counts['customers'] ?? 0)) ?></div>
         <div class="sub"><?= e(number_format($counts['sip'] ?? 0)) ?> active SIP</div>
     </div>
-    <div class="os-kpi">
+    <div class="os-kpi os-kpi--slate">
         <div class="lbl">Routing</div>
         <div class="val" style="font-size:1.15rem"><?= ($metrics['trunk_groups'] ?? 0) > 0 ? 'Healthy' : 'Setup' ?></div>
         <div class="sub"><?= e((string) ($metrics['trunk_groups'] ?? 0)) ?> trunk groups</div>

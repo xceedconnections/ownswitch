@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Ownswitch\Services\Cdr;
 
 use Ownswitch\Support\SipCode;
+use Ownswitch\Repositories\AreaCodeRepository;
+use Ownswitch\Support\Destination;
 use Ownswitch\Support\TenantScope;
 use PDO;
 
@@ -98,18 +100,23 @@ final class CdrSearchService
         $st->execute();
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
         $callIds = [];
+        $dsts = [];
         foreach ($rows as &$r) {
             $r = self::normalizeRowDisplay($r);
             if (!empty($r['sip_call_id'])) {
                 $callIds[] = (string) $r['sip_call_id'];
             }
+            $dsts[] = (string) ($r['dst_normalized'] ?? '');
         }
         unset($r);
+        $areaNames = $this->areaNames($dsts);
         $legsByCall = $this->legsByCallIds($callIds);
         foreach ($rows as &$r) {
             $cid = (string) ($r['sip_call_id'] ?? '');
             $r['attempt_legs'] = $legsByCall[$cid] ?? [];
             $r['has_sip_trace'] = ($r['attempt_legs'] !== []);
+            $dn = Destination::normalize((string) ($r['dst_normalized'] ?? ''));
+            $r['area_description'] = $areaNames[$dn] ?? null;
         }
         unset($r);
 
@@ -143,12 +150,25 @@ final class CdrSearchService
             return null;
         }
         $row = self::normalizeRowDisplay($row);
+        $dn = Destination::normalize((string) ($row['dst_normalized'] ?? ''));
+        $names = $this->areaNames([$dn]);
+        $row['area_description'] = $names[$dn] ?? null;
         if (!$scope->isGlobal()) {
             foreach (['carrier_cost', 'carrier_rate', 'carrier_connect_fee', 'gross_margin', 'carrier_id', 'carrier_name', 'carrier_trunk_id', 'carrier_initial', 'carrier_subsequent', 'duration_billable_carrier', 'cgrates_cost', 'rating_discrepancy', 'trunk_name'] as $k) {
                 unset($row[$k]);
             }
         }
         return $row;
+    }
+
+    /** @param list<string> $destinations @return array<string,string> */
+    private function areaNames(array $destinations): array
+    {
+        try {
+            return (new AreaCodeRepository($this->pdo))->namesForNumbers($destinations);
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /** @param array<string,mixed> $r @return array<string,mixed> */

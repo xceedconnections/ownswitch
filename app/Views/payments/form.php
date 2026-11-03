@@ -1,10 +1,10 @@
 <?php
-/** @var array $customers @var array $invoices @var array $values @var list<string> $errors */
+/** @var array $customers @var array $values @var list<string> $errors */
 ?>
 <div class="os-page-head">
     <div>
-        <h1 class="os-page-title">Record Payment</h1>
-        <p class="os-page-sub">Credits the user balance and optionally applies to an open invoice</p>
+        <h1 class="os-page-title">Add payment</h1>
+        <p class="os-page-sub">Credits the user’s account balance</p>
     </div>
     <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/payments')) ?>">Back</a>
 </div>
@@ -41,20 +41,16 @@
             </div>
             <div class="col-12 col-md-6">
                 <label class="form-label fw-semibold" for="reference">Reference</label>
-                <input class="form-control" type="text" id="reference" name="reference" value="<?= e((string) $values['reference']) ?>" maxlength="190">
+                <input class="form-control" type="text" id="reference" name="reference" value="<?= e((string) $values['reference']) ?>" maxlength="190" placeholder="Cheque / txn id">
             </div>
             <div class="col-12">
-                <label class="form-label fw-semibold" for="invoice_id">Apply to invoice</label>
-                <select class="form-select" id="invoice_id" name="invoice_id">
-                    <?php foreach ($invoices as $id => $label): ?>
-                        <option value="<?= e((string) $id) ?>"<?= ((string) $values['invoice_id'] === (string) $id) ? ' selected' : '' ?>><?= e($label) ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <label class="form-label fw-semibold" for="description">Description</label>
+                <input class="form-control" type="text" id="description" name="description" value="<?= e((string) ($values['description'] ?? '')) ?>" maxlength="200" placeholder="Optional note">
             </div>
         </div>
     </div>
     <div class="border-top px-3 px-md-4 py-3 d-flex flex-wrap gap-2 bg-light rounded-bottom">
-        <button type="submit" class="btn btn-primary" data-once>Save payment</button>
+        <button type="submit" class="btn btn-primary" data-once>Add to account</button>
         <a class="btn btn-outline-secondary" href="<?= e(url('/payments')) ?>">Cancel</a>
     </div>
 </form>

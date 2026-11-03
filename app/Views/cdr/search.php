@@ -16,6 +16,11 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
         <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs/export?' . $xlsQs)) ?>"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
     </div>
 </div>
+<div class="os-report-hero os-report-hero--cdr mb-3">
+    <div class="os-report-hero-stat"><span class="lbl">Results</span><span class="val"><?= e(number_format((int) $result['total'])) ?></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">Period</span><span class="val" style="font-size:1rem"><?= e(($f['from'] ?? '') . ' → ' . ($f['to'] ?? '')) ?></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">View</span><span class="val" style="font-size:1rem"><?= $failedOnly ? 'Failed' : 'All CDRs' ?></span></div>
+</div>
 
 <form method="get" action="<?= e(url('/cdrs')) ?>" class="os-toolbar mb-3">
     <?php if ($failedOnly): ?><input type="hidden" name="failed_only" value="1"><?php endif; ?>
@@ -47,7 +52,7 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
     </div>
 </form>
 
-<div class="os-table-wrap">
+<div class="os-table-wrap os-report-card">
 <?php if ($result['total'] === 0): ?>
     <div class="os-empty"><div class="os-empty-title">No calls match</div><div>No CDRs in this period for the selected filters.</div></div>
 <?php else: ?>
@@ -57,7 +62,7 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
             <input type="hidden" name="<?= e((string) $fk) ?>" value="<?= e((string) $fv) ?>">
         <?php endif; endforeach; ?>
         <?php if ($canDelete): ?>
-        <div class="d-flex flex-wrap gap-2 align-items-center px-3 py-2 border-bottom">
+        <div class="d-flex flex-wrap gap-2 align-items-center px-3 py-2 border-bottom os-cdr-toolbar">
             <button type="submit" name="mode" value="selected" class="btn btn-outline-danger btn-sm" data-once>Delete selected</button>
             <button type="submit" name="mode" value="filtered" class="btn btn-outline-danger btn-sm" data-confirm="Delete ALL CDRs matching the current filters?" data-once>Delete filtered</button>
             <button type="submit" name="mode" value="all" class="btn btn-danger btn-sm" data-confirm="Delete ALL CDRs in the system? This cannot be undone." data-once>Delete all</button>
@@ -65,17 +70,26 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
         </div>
         <?php endif; ?>
     <div class="table-responsive">
-    <table class="table table-sm table-hover mb-0 os-table">
+    <table class="table table-sm table-hover mb-0 os-table os-cdr-table">
         <thead><tr>
             <?php if ($canDelete): ?><th style="width:2rem"><input type="checkbox" id="cdr-check-all" aria-label="Select all"></th><?php endif; ?>
             <th>ID</th><th></th><th>Time (UTC)</th>
             <?php if ($customers): ?><th>Customer</th><?php endif; ?>
-            <th>SIP</th><th>CallerID</th><th>Destination</th><th>Result</th><th>SIP code</th>
+            <th>SIP</th><th>CallerID</th><th>Destination</th><th>Description</th><th>Result</th><th>SIP code</th>
             <th class="os-num">Dur (s)</th><th class="os-num">Billable</th><th>I/S</th><th class="os-num">Charge</th>
             <?php if ($showCost): ?><th>Trunk</th><th class="os-num">Cost</th><th class="os-num">Margin</th><?php endif; ?>
         </tr></thead>
         <tbody>
-        <?php foreach ($result['rows'] as $c): ?>
+        <?php foreach ($result['rows'] as $c):
+            $disp = (string) ($c['disposition'] ?? '');
+            $dispCls = match ($disp) {
+                'ANSWERED' => 'success',
+                'BUSY' => 'warning',
+                'NO_ANSWER' => 'info',
+                'CANCELLED' => 'secondary',
+                default => 'danger',
+            };
+            ?>
             <tr>
                 <?php if ($canDelete): ?>
                 <td><input type="checkbox" form="cdr-bulk-form" name="ids[]" value="<?= e((string) $c['id']) ?>" class="cdr-row-check"></td>
@@ -95,7 +109,8 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
                 <td class="os-mono"><?= e($c['sip_username'] ?? '—') ?></td>
                 <td class="os-mono"><?= e($c['src'] ?? '—') ?></td>
                 <td class="os-mono"><?= e($c['dst_normalized']) ?></td>
-                <td><span class="badge text-bg-<?= $c['disposition'] === 'ANSWERED' ? 'success' : 'secondary' ?>"><?= e($c['disposition']) ?></span></td>
+                <td><?= e((string) ($c['area_description'] ?? '—')) ?></td>
+                <td><span class="badge text-bg-<?= e($dispCls) ?>"><?= e($disp !== '' ? $disp : '—') ?></span></td>
                 <td class="small" title="<?= e($c['sip_code_label'] ?? '') ?>"><?= e($c['sip_code_short'] ?? ($c['sip_response'] ?? '—')) ?></td>
                 <td class="os-num"><?= e($c['duration_actual']) ?></td>
                 <td class="os-num"><?= e($c['duration_billable_customer']) ?></td>

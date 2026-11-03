@@ -4,10 +4,10 @@
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title">Payments <span class="os-count"><?= e((string) $result['total']) ?></span></h1>
-        <p class="os-page-sub">Recorded payments against user balances and invoices</p>
+        <p class="os-page-sub">Credits added to user accounts</p>
     </div>
     <?php if ($canWrite): ?>
-        <a class="btn btn-primary btn-sm" href="<?= e(url('/payments/create')) ?>"><i class="bi bi-plus-lg me-1"></i>Record payment</a>
+        <a class="btn btn-primary btn-sm" href="<?= e(url('/payments/create')) ?>"><i class="bi bi-plus-lg me-1"></i>Add payment</a>
     <?php endif; ?>
 </div>
 
@@ -24,26 +24,25 @@
     <div class="col-auto"><button class="btn btn-outline-secondary btn-sm" type="submit">Filter</button></div>
 </form>
 
-<div class="os-table-wrap">
+<div class="os-table-wrap os-report-card">
 <?php if ($result['total'] === 0): ?>
     <div class="os-empty">
         <div class="os-empty-title">No payments</div>
-        <div>Record a payment to credit a user’s balance (and optionally close an invoice).</div>
-        <?php if ($canWrite): ?><a class="btn btn-primary btn-sm mt-3" href="<?= e(url('/payments/create')) ?>">Record the first payment</a><?php endif; ?>
+        <div>Add a payment to credit a user’s prepaid balance.</div>
+        <?php if ($canWrite): ?><a class="btn btn-primary btn-sm mt-3" href="<?= e(url('/payments/create')) ?>">Add the first payment</a><?php endif; ?>
     </div>
 <?php else: ?>
     <div class="table-responsive"><table class="table table-sm table-hover mb-0 os-table">
-        <thead><tr><th>ID</th><th>Time (UTC)</th><th>User</th><th>Method</th><th>Reference</th><th>Invoice</th><th class="os-num">Amount</th></tr></thead>
+        <thead><tr><th>Time (UTC)</th><th>User</th><th>Method</th><th>Reference</th><th>Description</th><th class="os-num">Amount</th></tr></thead>
         <tbody>
         <?php foreach ($result['rows'] as $row): ?>
             <tr>
-                <td class="os-mono"><?= e((string) $row['id']) ?></td>
                 <td class="os-mono"><?= e(substr((string) $row['created_at'], 0, 19)) ?></td>
                 <td><?= e((string) $row['customer_name']) ?> <span class="text-muted os-mono"><?= e((string) $row['customer_code']) ?></span></td>
-                <td><?= e((string) ($row['method'] ?? '—')) ?></td>
-                <td class="os-mono"><?= e((string) ($row['reference'] ?? '—')) ?></td>
-                <td class="os-mono"><?= e((string) ($row['invoice_id'] ?? '—')) ?></td>
-                <td class="os-num os-mono"><?= e((string) $row['amount']) ?></td>
+                <td><?= e((string) ($row['payment_method'] ?? '—')) ?></td>
+                <td class="os-mono"><?= e((string) ($row['payment_reference'] ?? $row['external_ref'] ?? '—')) ?></td>
+                <td class="small"><?= e((string) ($row['description'] ?? '—')) ?></td>
+                <td class="os-num os-mono text-success fw-semibold">+<?= e((string) $row['amount']) ?> <?= e((string) ($row['currency'] ?? '')) ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>

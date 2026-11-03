@@ -41,7 +41,13 @@ $blurb = (string) ($res['meta']['blurb'] ?? '');
     </div>
 </form>
 
-<div class="os-table-wrap">
+<div class="os-report-hero os-report-hero--summary mb-3">
+    <div class="os-report-hero-stat"><span class="lbl">Calls</span><span class="val"><?= e(number_format((int) ($tot['calls'] ?? 0))) ?></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">Answered</span><span class="val"><?= e(number_format((int) ($tot['answered'] ?? 0))) ?></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">ASR</span><span class="val"><?= e((string) ($tot['asr'] ?? '0')) ?>%</span></div>
+    <div class="os-report-hero-stat"><span class="lbl">Sell</span><span class="val" style="font-size:1.1rem"><?= e((string) ($tot['sell'] ?? '0')) ?></span></div>
+</div>
+<div class="os-table-wrap os-report-card">
 <?php if (($tot['calls'] ?? 0) === 0): ?>
     <div class="os-empty">
         <div class="os-empty-title">No calls in this period</div>

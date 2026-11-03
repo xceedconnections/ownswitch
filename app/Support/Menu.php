@@ -37,15 +37,14 @@ final class Menu
             ['Billing', [
                 ['Refills', '/billing/refill', self::STAFF],
                 ['Payments', '/payments', self::FINANCE],
-                ['Ledger', '/ledger', self::LEDGER_READ],
                 ['Statements', '/statements', self::LEDGER_READ],
-                ['Invoices', '/invoices', ['super_admin', 'admin', 'reseller', 'customer_owner']],
                 ['Billing Preview', '/billing/preview', self::STAFF],
             ]],
             ['Rates', [
                 ['Plans', '/rate-plans', self::STAFF],
                 ['Tariffs', '/tariffs', self::STAFF],
                 ['Prefixes', '/prefixes', self::STAFF],
+                ['Area Codes', '/area-codes', self::STAFF],
                 ['User Custom Rates', '/custom-rates', self::STAFF],
                 ['Import Tariffs', '/tariffs/import', self::STAFF],
                 ['Import Prefixes', '/prefixes/import', self::STAFF],
