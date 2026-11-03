@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Extend a working minimal digest-REGISTER opensips.cfg with outbound drouting.
-# Used when stage 50 cannot render the full template.
+# Extend working minimal digest-REGISTER cfg with outbound drouting.
+# Live minimal uses: lookup → route(relay) → 404 "User not registered" → exit
+# (older patchers looked for t_relay() and never matched).
 set -euo pipefail
 [[ "$(id -u)" -eq 0 ]] || exit 1
 
 CFG=/etc/opensips/opensips.cfg
 [[ -f "$CFG" ]] || { echo "missing $CFG"; exit 1; }
+chattr -i "$CFG" 2>/dev/null || true
 
 PW=""
 [[ -f /etc/ownswitch/secrets/mysql_opensips_password ]] && PW="$(tr -d '\n' </etc/ownswitch/secrets/mysql_opensips_password)"
@@ -15,79 +17,79 @@ DB_URL="$(python3 -c "import urllib.parse,sys; print('mysql://opensips:%s@127.0.
 MOD_DIR="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -1)")"
 MPATH="${MOD_DIR}/"
 
-# Ensure modules exist
-for so in drouting.so dialog.so rtpengine.so cgrates.so permissions.so; do
-  [[ -f "${MPATH}${so}" ]] || echo "WARN: missing ${so}"
-done
-
 python3 - "$CFG" "$DB_URL" "$MPATH" <<'PY'
-import re, sys
+import os, re, sys
 path, db_url, mpath = sys.argv[1:4]
 text = open(path, encoding="utf-8", errors="replace").read()
 
 def ensure_mod(src, name, block_after=""):
-    if f'loadmodule "{name}"' in src or f"loadmodule \"{name}\"" in src:
+    if f'loadmodule "{name}"' in src:
         return src
     insert = f'\nloadmodule "{name}"\n{block_after}'
-    # after registrar
     m = re.search(r'loadmodule "registrar\.so".*\n', src)
     if m:
         return src[:m.end()] + insert + src[m.end():]
     return src + insert
 
-# Add modules if missing
 extras = [
-    ('dialog.so', f'modparam("dialog", "db_url", "{db_url}")\nmodparam("dialog", "db_mode", 2)\nmodparam("dialog", "default_timeout", 7200)\n'),
-    ('permissions.so', f'modparam("permissions", "db_url", "{db_url}")\n'),
-    ('drouting.so', f'modparam("drouting", "db_url", "{db_url}")\nmodparam("drouting", "gw_attrs_avp", \'$avp(dr_gw_attrs)\')\n'),
-    ('rtpengine.so', 'modparam("rtpengine", "rtpengine_sock", "udp:127.0.0.1:22222")\n'),
-    ('cgrates.so', 'modparam("cgrates", "cgrates_engine", "127.0.0.1:2014")\n'),
-    ('acc.so', f'modparam("acc", "db_url", "{db_url}")\nmodparam("acc", "early_media", 0)\nmodparam("acc", "report_cancels", 1)\n'),
+    ("dialog.so", f'modparam("dialog", "db_url", "{db_url}")\nmodparam("dialog", "db_mode", 2)\nmodparam("dialog", "default_timeout", 7200)\n'),
+    ("permissions.so", f'modparam("permissions", "db_url", "{db_url}")\n'),
+    ("drouting.so", f'modparam("drouting", "db_url", "{db_url}")\nmodparam("drouting", "gw_attrs_avp", \'$avp(dr_gw_attrs)\')\n'),
+    ("rtpengine.so", 'modparam("rtpengine", "rtpengine_sock", "udp:127.0.0.1:22222")\n'),
+    ("acc.so", f'modparam("acc", "db_url", "{db_url}")\nmodparam("acc", "early_media", 0)\nmodparam("acc", "report_cancels", 1)\n'),
 ]
+cgrates_so = os.path.join(mpath, "cgrates.so")
+if os.path.isfile(cgrates_so):
+    extras.append(("cgrates.so", 'modparam("cgrates", "cgrates_engine", "127.0.0.1:2014")\n'))
+
 for name, params in extras:
-    if f'loadmodule "{name}"' not in text:
-        text = ensure_mod(text, name, params)
+    text = ensure_mod(text, name, params)
 
-# Replace "User not registered" dead-end with drouting outbound
-old = '''	if (lookup("location")) {
-		record_route();
-		t_relay();
-		exit;
-	}
+cgrates_block = ""
+if 'loadmodule "cgrates.so"' in text:
+    # Fail-open: do not block PSTN while CGRateS is down
+    cgrates_block = (
+        '		if (!cgrates_auth()) {\n'
+        '			xlog("L_WARN", "cgrates_auth failed $fU -> $rU (allowing call)\\n");\n'
+        '		} else {\n'
+        '			cgrates_acc("cdr|missed");\n'
+        '		}\n'
+    )
 
-	send_reply(404, "User not registered");
-}'''
+# Replacement stays INSIDE if (is_method("INVITE")) { ... }
+replacement = (
+    '		if (lookup("location")) {\n'
+    '			xlog("L_INFO", "local AOR hit for $rU from $fU\\n");\n'
+    '			record_route();\n'
+    '			create_dialog("B");\n'
+    '			do_accounting("db", "cdr|missed|failed");\n'
+    '			rtpengine_manage();\n'
+    '			t_on_failure("carrier_failover");\n'
+    '			if (!t_relay()) {\n'
+    '				send_reply(500, "Error");\n'
+    '			}\n'
+    '			exit;\n'
+    '		}\n'
+    '\n'
+    '		# Non-local RURI → PSTN via drouting group 1 (portal Trunks + Routes)\n'
+    '		record_route();\n'
+    '		create_dialog("B");\n'
+    + cgrates_block +
+    '		do_accounting("db", "cdr|missed|failed");\n'
+    '		rtpengine_manage();\n'
+    '		t_on_failure("carrier_failover");\n'
+    '		if (!do_routing("1")) {\n'
+    '			xlog("L_WARN", "no route for $rU from $fU — sync trunks/routes\\n");\n'
+    '			send_reply(503, "No Route");\n'
+    '			exit;\n'
+    '		}\n'
+    '		if (!t_relay()) {\n'
+    '			send_reply(500, "Error");\n'
+    '		}\n'
+    '		exit;'
+)
 
-new = '''	@@OPENSIPS_ALIAS_LOOKUP@@
-	if (lookup("location")) {
-		record_route();
-		create_dialog("B");
-		do_accounting("db", "cdr|missed|failed");
-		rtpengine_manage();
-		t_relay();
-		exit;
-	}
-
-	record_route();
-	create_dialog("B");
-	if (!cgrates_auth()) {
-		xlog("L_WARN", "cgrates_auth failed $fU -> $rU\\n");
-		send_reply(403, "Billing Authorization Failed");
-		exit;
-	}
-	cgrates_acc("cdr|missed");
-	do_accounting("db", "cdr|missed|failed");
-	rtpengine_manage();
-
-	if (!do_routing("1")) {
-		xlog("L_WARN", "no route for $rU from $fU\\n");
-		send_reply(503, "No Route");
-		exit;
-	}
-	t_on_failure("carrier_failover");
-	t_relay();
-}
-
+extra_routes = '''
 failure_route[carrier_failover] {
 	if (t_was_cancelled()) {
 		exit;
@@ -101,30 +103,70 @@ failure_route[carrier_failover] {
 }
 '''
 
-# alias lookup optional
-new = new.replace('@@OPENSIPS_ALIAS_LOOKUP@@', '# alias_db optional')
-
-if 'do_routing' in text:
-    print("drouting already present")
+if 'do_routing' in text and 'User not registered' not in text:
+    print("drouting already present — nothing to replace")
 else:
-    if old not in text:
-        # looser match
-        text2, n = re.subn(
-            r'if \(lookup\("location"\)\) \{.*?send_reply\(404,\s*"User not registered"\);\s*\}',
-            new.rstrip() + "\n",
-            text,
-            count=1,
-            flags=re.S,
-        )
-        if n != 1:
-            print("FATAL: could not find INVITE lookup/404 block to patch", file=sys.stderr)
-            sys.exit(1)
-        text = text2
-    else:
-        text = text.replace(old, new)
-    open(path, "w", encoding="utf-8").write(text)
-    print("patched outbound drouting into", path)
+    # Match from lookup(...) through 404 reply (+ optional exit). Do NOT eat INVITE's closing brace.
+    pat = re.compile(
+        r'[ \t]*if\s*\(\s*lookup\s*\(\s*"location"\s*\)\s*\)\s*\{'
+        r'.*?'
+        r'send_reply\s*\(\s*404\s*,\s*"User not registered"\s*\)\s*;'
+        r'(?:\s*exit\s*;)?',
+        re.S,
+    )
+    m = pat.search(text)
+    if not m:
+        print("FATAL: could not find INVITE lookup / User not registered block", file=sys.stderr)
+        for i, line in enumerate(text.splitlines(), 1):
+            if "User not registered" in line or 'lookup("location")' in line or "lookup('location')" in line:
+                print(f"  L{i}: {line}", file=sys.stderr)
+        sys.exit(1)
+    text = text[: m.start()] + replacement + text[m.end() :]
+    print("replaced User-not-registered dead-end with drouting")
+
+if "failure_route[carrier_failover]" not in text:
+    text = text.rstrip() + "\n" + extra_routes
+    print("appended failure_route[carrier_failover]")
+
+open(path, "w", encoding="utf-8").write(text)
+
+if "do_routing" not in text:
+    print("FATAL: do_routing still missing", file=sys.stderr)
+    sys.exit(1)
+if "User not registered" in text:
+    print("FATAL: User not registered still present", file=sys.stderr)
+    sys.exit(1)
+print("OK: outbound drouting present in", path)
 PY
+
+mysql --protocol=socket -uroot opensips <<'SQL' 2>/dev/null || true
+CREATE TABLE IF NOT EXISTS dr_gateways (
+  id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  gwid CHAR(64) DEFAULT NULL,
+  type INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  address CHAR(128) NOT NULL,
+  strip INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  pri_prefix CHAR(16) DEFAULT NULL,
+  attrs CHAR(255) DEFAULT NULL,
+  probe_mode INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  state INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  socket CHAR(128) DEFAULT NULL,
+  description CHAR(128) DEFAULT NULL
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS dr_rules (
+  ruleid INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  groupid CHAR(255) NOT NULL,
+  prefix CHAR(64) NOT NULL,
+  timerec CHAR(255) DEFAULT NULL,
+  priority INT(11) DEFAULT 0 NOT NULL,
+  routeid CHAR(255) DEFAULT NULL,
+  gwlist CHAR(255) NOT NULL,
+  sort_alg CHAR(1) DEFAULT 'N' NOT NULL,
+  sort_profile INT(10) UNSIGNED DEFAULT NULL,
+  attrs CHAR(255) DEFAULT NULL,
+  description CHAR(128) DEFAULT NULL
+) ENGINE=InnoDB;
+SQL
 
 opensips -c -f "$CFG"
 echo "patch-minimal-cfg-add-drouting: OK"

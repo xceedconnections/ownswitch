@@ -26,14 +26,9 @@ mysql --protocol=socket -uroot opensips -e \
 echo "======== C) OpenSIPS cfg: REGISTER + drouting? ========"
 grep -nE 'www_authorize|do_routing|User not registered|sethost' "$CFG" | head -n 30 || true
 
-if ! grep -q 'do_routing' "$CFG"; then
-  echo "No do_routing — enabling outbound calling..."
-  chattr -i "$CFG" 2>/dev/null || true
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get install -y opensips-mysql-dbschema 2>/dev/null || true
-  bash "$SRC/deploy/enable-sip-calling-after-register.sh" || bash "$SRC/deploy/patch-minimal-cfg-add-drouting.sh"
-  systemctl restart opensips
-  sleep 2
+if ! grep -q 'do_routing' "$CFG" || grep -q 'User not registered' "$CFG"; then
+  echo "Outbound missing or User-not-registered dead-end — force patch..."
+  bash "$SRC/deploy/force-outbound-calls-now.sh"
 fi
 
 echo "======== D) Sync trunks ========"
