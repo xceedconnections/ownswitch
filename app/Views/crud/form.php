@@ -101,7 +101,7 @@ $useTabs = count($sectionIds) > 1;
                         require __DIR__ . '/../routing/_waterfall.php';
                     elseif ($type === 'checkbox'): ?>
                         <div class="form-check mt-md-4">
-                            <input class="form-check-input" type="checkbox" id="<?= e($id) ?>" name="<?= e($name) ?>" value="1"<?= !empty($val) ? ' checked' : '' ?>>
+                            <input class="form-check-input" type="checkbox" id="<?= e($id) ?>" name="<?= e($name) ?>" value="1"<?= !empty($val) ? ' checked' : '' ?><?= $readonly ? ' disabled' : '' ?>>
                             <label class="form-check-label" for="<?= e($id) ?>"><?= e($f['label']) ?></label>
                         </div>
                     <?php else: ?>
