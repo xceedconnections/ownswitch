@@ -261,11 +261,9 @@ NAT_REG=""
 if [[ "${USE_NATHELPER:-0}" == "1" ]]; then
   NAT_BLOCK='loadmodule "nathelper.so"
 modparam("nathelper", "received_avp", "$avp(received)")'
-  # force_rport only first; fix_nated_register can 500 if received_avp misconfigured
+  # OpenSIPS 3.x: nat_uac_test() uses named flags, not numeric "19" — always fix NAT
   NAT_REG='force_rport();
-		if (nat_uac_test("19")) {
-			fix_nated_register();
-		}'
+		fix_nated_register();'
 fi
 
 python3 - "$CFG" "$MPATH" "$DOMAIN" "$PUBLIC_IP" "$PORT" "$DB_URL" "$EXTRA" "$NAT_BLOCK" "$NAT_REG" <<'PY'
