@@ -69,7 +69,11 @@ $cycle = static function () use ($pdo, $ingest, $prepaid, $limit, $spool): int {
     foreach ($rows as $row) {
         try {
             $payload = json_decode((string) $row['payload'], true, 16, JSON_THROW_ON_ERROR);
-            $res = $ingest->ingest(is_array($payload) ? $payload : [], 'worker');
+            $srcLabel = trim((string) ($row['source'] ?? 'worker'));
+            if ($srcLabel === '') {
+                $srcLabel = 'worker';
+            }
+            $res = $ingest->ingest(is_array($payload) ? $payload : [], $srcLabel);
             if ($res['status'] === 'invalid') {
                 throw new \RuntimeException(implode('; ', $res['errors'] ?? []));
             }

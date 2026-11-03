@@ -239,7 +239,8 @@ final class CdrIngestService
             }
         }
         // Single-tenant failsafe: exactly one active SIP account on the platform
-        if ($customerId === null && in_array($source, ['worker', 'internal', 'seed', 'opensips', 'opensips_acc', 'opensips_missed_calls'], true)) {
+        $trusted = self::isTrustedCdrSource($source);
+        if ($customerId === null && $trusted) {
             $st = $this->pdo->query("SELECT id, customer_id FROM sip_accounts WHERE status = 'active' LIMIT 2");
             $rows = $st ? ($st->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
             if (count($rows) === 1) {
@@ -247,7 +248,7 @@ final class CdrIngestService
                 $customerId = (int) $rows[0]['customer_id'];
             }
         }
-        if ($customerId === null && $d['customer_id'] !== null && in_array($source, ['worker', 'internal', 'seed', 'opensips', 'opensips_acc', 'opensips_missed_calls'], true)) {
+        if ($customerId === null && $d['customer_id'] !== null && $trusted) {
             $customerId = $d['customer_id'];   // only trusted internal sources may name the customer directly
         }
         if ($customerId !== null) {
@@ -256,6 +257,15 @@ final class CdrIngestService
             $out['customer'] = $st->fetch(PDO::FETCH_ASSOC) ?: null;
         }
         return $out;
+    }
+
+    private static function isTrustedCdrSource(string $source): bool
+    {
+        $source = strtolower(trim($source));
+        if (in_array($source, ['worker', 'internal', 'seed', 'opensips', 'opensips_acc', 'opensips_missed_calls'], true)) {
+            return true;
+        }
+        return str_starts_with($source, 'opensips_');
     }
 
     private function carrierOfTrunk(int $trunkId): ?int

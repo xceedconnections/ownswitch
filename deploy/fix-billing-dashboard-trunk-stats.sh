@@ -124,6 +124,13 @@ if "re.subst,/[^0-9+]//g" not in text and "route[apply_sip_cid]" in text:
         1,
     )
 
+# Never let CID rewrite overwrite ACC src with presented CallerID digits
+text = re.sub(
+    r'\$acc_extra\(src\)\s*=\s*\$var\(user\);',
+    '$acc_extra(cli) = $var(user);',
+    text,
+)
+
 open(path, "w", encoding="utf-8").write(text)
 print("OK opensips.cfg attribution")
 PY
