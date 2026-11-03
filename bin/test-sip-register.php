@@ -28,92 +28,112 @@ require $root . '/app/bootstrap.php';
 use Ownswitch\App;
 
 $domain = (string) App::config('app.integrations.opensips.sip_domain', 'localhost');
+$publicIp = trim((string) App::config('app.integrations.opensips.public_ip', ''));
 $port = 5060;
 $dst = '127.0.0.1';
-$callId = bin2hex(random_bytes(8)) . '@127.0.0.1';
-$branch = 'z9hG4bK' . bin2hex(random_bytes(4));
-$tag = bin2hex(random_bytes(4));
 
-$sock = @stream_socket_client("udp://{$dst}:{$port}", $errno, $errstr, 2);
-if (!$sock) {
-    fwrite(STDERR, "Cannot open UDP to {$dst}:{$port}: {$errstr}\n");
-    exit(1);
-}
-stream_set_timeout($sock, 3);
+$tryRegister = static function (string $toHost) use ($user, $pass, $domain, $dst, $port): bool {
+    $callId = bin2hex(random_bytes(8)) . '@127.0.0.1';
+    $branch = 'z9hG4bK' . bin2hex(random_bytes(4));
+    $tag = bin2hex(random_bytes(4));
 
-$send = static function (string $msg) use ($sock): void {
-    fwrite($sock, $msg);
+    $sock = @stream_socket_client("udp://{$dst}:{$port}", $errno, $errstr, 2);
+    if (!$sock) {
+        fwrite(STDERR, "Cannot open UDP to {$dst}:{$port}: {$errstr}\n");
+        return false;
+    }
+    stream_set_timeout($sock, 3);
+
+    $req1 = "REGISTER sip:{$toHost} SIP/2.0\r\n"
+        . "Via: SIP/2.0/UDP 127.0.0.1:5090;branch={$branch};rport\r\n"
+        . "Max-Forwards: 70\r\n"
+        . "From: <sip:{$user}@{$toHost}>;tag={$tag}\r\n"
+        . "To: <sip:{$user}@{$toHost}>\r\n"
+        . "Call-ID: {$callId}\r\n"
+        . "CSeq: 1 REGISTER\r\n"
+        . "Contact: <sip:{$user}@127.0.0.1:5090>\r\n"
+        . "Expires: 60\r\n"
+        . "Content-Length: 0\r\n\r\n";
+
+    echo ">>> REGISTER (no auth) To-host={$toHost} user={$user}\n";
+    fwrite($sock, $req1);
+    $r1 = fread($sock, 8192);
+    $r1 = is_string($r1) ? $r1 : '';
+    echo $r1 !== '' ? $r1 : "(no response — OpenSIPS not listening on UDP {$port}?)\n";
+
+    if ($r1 === '' || !preg_match('/^SIP\/2\.0\s+(\d+)/', $r1, $m)) {
+        fclose($sock);
+        return false;
+    }
+    $code = (int) $m[1];
+    if ($code === 200) {
+        echo "OK: accepted without challenge\n";
+        fclose($sock);
+        return true;
+    }
+    if ($code !== 401 && $code !== 407) {
+        fwrite(STDERR, "Unexpected status {$code}\n");
+        fclose($sock);
+        return false;
+    }
+    if (!preg_match('/realm="([^"]+)"/i', $r1, $rm) || !preg_match('/nonce="([^"]+)"/i', $r1, $nm)) {
+        fwrite(STDERR, "Challenge missing realm/nonce\n");
+        fclose($sock);
+        return false;
+    }
+    $realm = $rm[1];
+    $nonce = $nm[1];
+    $uri = "sip:{$toHost}";
+    $ha1 = md5("{$user}:{$realm}:{$pass}");
+    $ha2 = md5("REGISTER:{$uri}");
+    $response = md5("{$ha1}:{$nonce}:{$ha2}");
+    echo "    challenge realm={$realm} (portal HA1 must be md5(user:{$realm}:pass); config domain={$domain})\n";
+
+    $branch2 = 'z9hG4bK' . bin2hex(random_bytes(4));
+    $req2 = "REGISTER sip:{$toHost} SIP/2.0\r\n"
+        . "Via: SIP/2.0/UDP 127.0.0.1:5090;branch={$branch2};rport\r\n"
+        . "Max-Forwards: 70\r\n"
+        . "From: <sip:{$user}@{$toHost}>;tag={$tag}\r\n"
+        . "To: <sip:{$user}@{$toHost}>\r\n"
+        . "Call-ID: {$callId}\r\n"
+        . "CSeq: 2 REGISTER\r\n"
+        . "Contact: <sip:{$user}@127.0.0.1:5090>\r\n"
+        . "Authorization: Digest username=\"{$user}\", realm=\"{$realm}\", nonce=\"{$nonce}\", uri=\"{$uri}\", response=\"{$response}\", algorithm=MD5\r\n"
+        . "Expires: 60\r\n"
+        . "Content-Length: 0\r\n\r\n";
+
+    echo ">>> REGISTER (digest) realm={$realm}\n";
+    fwrite($sock, $req2);
+    $r2 = fread($sock, 8192);
+    $r2 = is_string($r2) ? $r2 : '';
+    echo $r2 !== '' ? $r2 : "(no response)\n";
+    fclose($sock);
+
+    if (preg_match('/^SIP\/2\.0\s+200/', $r2)) {
+        echo "SUCCESS for To-host={$toHost} (realm={$realm})\n";
+        return true;
+    }
+    echo "FAILED for To-host={$toHost}\n";
+    return false;
 };
 
-$recv = static function () use ($sock): string {
-    $data = fread($sock, 8192);
-    return is_string($data) ? $data : '';
-};
-
-$req1 = "REGISTER sip:{$domain} SIP/2.0\r\n"
-    . "Via: SIP/2.0/UDP 127.0.0.1:5090;branch={$branch};rport\r\n"
-    . "Max-Forwards: 70\r\n"
-    . "From: <sip:{$user}@{$domain}>;tag={$tag}\r\n"
-    . "To: <sip:{$user}@{$domain}>\r\n"
-    . "Call-ID: {$callId}\r\n"
-    . "CSeq: 1 REGISTER\r\n"
-    . "Contact: <sip:{$user}@127.0.0.1:5090>\r\n"
-    . "Expires: 60\r\n"
-    . "Content-Length: 0\r\n\r\n";
-
-echo ">>> REGISTER (no auth) to {$dst}:{$port} realm/domain={$domain} user={$user}\n";
-$send($req1);
-$r1 = $recv();
-echo $r1 !== '' ? $r1 : "(no response — OpenSIPS not listening on UDP {$port}?)\n";
-
-if ($r1 === '' || !preg_match('/^SIP\/2\.0\s+(\d+)/', $r1, $m)) {
-    exit(1);
-}
-$code = (int) $m[1];
-if ($code === 200) {
-    echo "OK: accepted without challenge (unexpected but fine)\n";
-    exit(0);
-}
-if ($code !== 401 && $code !== 407) {
-    fwrite(STDERR, "Unexpected status {$code}\n");
-    exit(1);
+$hosts = [$domain];
+if ($publicIp !== '' && $publicIp !== $domain) {
+    $hosts[] = $publicIp;
 }
 
-if (!preg_match('/realm="([^"]+)"/i', $r1, $rm) || !preg_match('/nonce="([^"]+)"/i', $r1, $nm)) {
-    fwrite(STDERR, "Challenge missing realm/nonce\n");
-    exit(1);
+$any = false;
+foreach ($hosts as $h) {
+    echo "\n==== Probe Domain/To = {$h} ====\n";
+    if ($tryRegister($h)) {
+        $any = true;
+    }
 }
-$realm = $rm[1];
-$nonce = $nm[1];
-$uri = "sip:{$domain}";
-$ha1 = md5("{$user}:{$realm}:{$pass}");
-$ha2 = md5("REGISTER:{$uri}");
-$response = md5("{$ha1}:{$nonce}:{$ha2}");
 
-$branch2 = 'z9hG4bK' . bin2hex(random_bytes(4));
-$req2 = "REGISTER sip:{$domain} SIP/2.0\r\n"
-    . "Via: SIP/2.0/UDP 127.0.0.1:5090;branch={$branch2};rport\r\n"
-    . "Max-Forwards: 70\r\n"
-    . "From: <sip:{$user}@{$domain}>;tag={$tag}\r\n"
-    . "To: <sip:{$user}@{$domain}>\r\n"
-    . "Call-ID: {$callId}\r\n"
-    . "CSeq: 2 REGISTER\r\n"
-    . "Contact: <sip:{$user}@127.0.0.1:5090>\r\n"
-    . "Authorization: Digest username=\"{$user}\", realm=\"{$realm}\", nonce=\"{$nonce}\", uri=\"{$uri}\", response=\"{$response}\", algorithm=MD5\r\n"
-    . "Expires: 60\r\n"
-    . "Content-Length: 0\r\n\r\n";
-
-echo ">>> REGISTER (with digest) realm={$realm}\n";
-$send($req2);
-$r2 = $recv();
-echo $r2 !== '' ? $r2 : "(no response)\n";
-
-if (preg_match('/^SIP\/2\.0\s+200/', $r2)) {
-    echo "\nSUCCESS: OpenSIPS accepted REGISTER for {$user}@{$domain}\n";
-    echo "If softphone still fails, the problem is network/firewall/NAT to this server (UDP/TCP 5060), not passwords.\n";
+if ($any) {
+    echo "\nOpenSIPS auth OK. If Eyebeam still fails: set Proxy={$publicIp} Port=5060 UDP, Domain={$domain}, and open Hetzner UDP/TCP 5060.\n";
     exit(0);
 }
 
-echo "\nFAILED: OpenSIPS did not return 200. Check subscriber HA1 matches realm={$realm}.\n";
-echo "Reset SIP password in portal, then re-run this test.\n";
+echo "\nFAILED all probes. Reset SIP password in portal (Save), run sync-opensips-sip-users.php, re-test.\n";
 exit(1);

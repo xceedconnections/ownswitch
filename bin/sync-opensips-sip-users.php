@@ -3,9 +3,8 @@
 declare(strict_types=1);
 
 /**
- * Push all active Ownswitch SIP accounts into opensips.subscriber.
- * Does NOT reset passwords (HA1 already stored). If domain was wrong at create time,
- * re-save the SIP user with a new password in the portal after fixing OPENSIPS_SIP_DOMAIN.
+ * Push all active Ownswitch SIP accounts into opensips.subscriber (HA1 auth).
+ * If password_enc is present, HA1 is recomputed for OPENSIPS_SIP_DOMAIN (fixes realm drift).
  *
  *   sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
  *     php /opt/ownswitch/current/bin/sync-opensips-sip-users.php
@@ -16,40 +15,84 @@ require $root . '/app/bootstrap.php';
 
 use Ownswitch\App;
 use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
+use Ownswitch\Support\Crypto;
+use Ownswitch\Support\MediaPolicy;
 
 $prov = OpensipsProvisioner::fromConfig();
 if (!$prov->enabled()) {
     fwrite(STDERR, "OpenSIPS provisioning disabled. Set OPENSIPS_ENABLED=1 in /etc/ownswitch/ownswitch.env\n");
+    fwrite(STDERR, $prov->initError() !== '' ? ('Detail: ' . $prov->initError() . "\n") : '');
     exit(1);
 }
 
 $domain = (string) App::config('app.integrations.opensips.sip_domain');
 $pdo = App::db();
-$rows = $pdo->query("SELECT id, username, domain, ha1, ha1b, status FROM sip_accounts")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+$rows = $pdo->query('SELECT * FROM sip_accounts')->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 $ok = 0;
 $skip = 0;
+$rehashed = 0;
 foreach ($rows as $r) {
-    if ($r['status'] !== 'active') {
-        $prov->removeSubscriber((string) $r['username'], (string) $r['domain']);
-        if ($r['domain'] !== $domain) {
-            $prov->removeSubscriber((string) $r['username'], $domain);
-        }
+    $username = (string) $r['username'];
+    if (($r['status'] ?? '') !== 'active') {
+        $prov->removeSubscriber($username, (string) ($r['domain'] ?? $domain));
         $skip++;
         continue;
     }
-    // Prefer configured SIP domain; HA1 was computed with the domain stored at create time.
-    $useDomain = (string) $r['domain'];
-    $prov->upsertSubscriber((string) $r['username'], $useDomain, (string) $r['ha1'], (string) $r['ha1b']);
-    if ($useDomain !== $domain) {
-        fwrite(STDERR, "WARN: SIP user {$r['username']} domain={$useDomain} but OPENSIPS_SIP_DOMAIN={$domain}. Softphone realm must match {$useDomain}, OR reset password in portal after domain fix.\n");
+
+    $ha1 = (string) ($r['ha1'] ?? '');
+    $ha1b = (string) ($r['ha1b'] ?? '');
+    $plain = '';
+    if (!empty($r['password_enc'])) {
+        try {
+            $plain = Crypto::decrypt((string) $r['password_enc']);
+        } catch (\Throwable $e) {
+            fwrite(STDERR, "WARN: {$username}: cannot decrypt password_enc ({$e->getMessage()})\n");
+        }
     }
+
+    // Recompute HA1 for the live SIP realm whenever we have the secret
+    if ($plain !== '') {
+        [$ha1, $ha1b] = OpensipsProvisioner::ha1($username, $domain, $plain);
+        $pdo->prepare('UPDATE sip_accounts SET domain = ?, ha1 = ?, ha1b = ? WHERE id = ?')
+            ->execute([$domain, $ha1, $ha1b, (int) $r['id']]);
+        $r['domain'] = $domain;
+        $r['ha1'] = $ha1;
+        $r['ha1b'] = $ha1b;
+        $r['_plain_password'] = $plain;
+        $rehashed++;
+    } elseif ((string) ($r['domain'] ?? '') !== $domain) {
+        fwrite(STDERR, "WARN: {$username} domain={$r['domain']} but OPENSIPS_SIP_DOMAIN={$domain}. "
+            . "Reset SIP password in portal so HA1 matches the challenge realm.\n");
+    }
+
+    if (strlen($ha1) !== 32) {
+        fwrite(STDERR, "WARN: {$username} has invalid HA1 — reset password in portal.\n");
+        $skip++;
+        continue;
+    }
+
+    $effective = MediaPolicy::resolve(
+        isset($r['media_policy']) ? (string) $r['media_policy'] : null,
+        $pdo
+    );
+    $r['_effective_media'] = $effective;
+    $prov->upsertSubscriber($username, $domain, $ha1, $ha1b, $r);
+    $prov->syncSipPeerProfile($username, $effective === 'record' ? 'record' : $effective, (int) ($r['max_channels'] ?? 2), $r);
     $ok++;
 }
 
-echo "Provisioned {$ok} active SIP user(s); skipped/disabled {$skip}. SIP domain config={$domain}\n";
-echo "Softphone settings:\n";
-echo "  Domain / Realm : {$domain}\n";
-echo "  Proxy / Server : (this server public IP or {$domain})\n";
-echo "  Port           : 5060 UDP\n";
+$proxy = trim((string) App::config('app.integrations.opensips.public_ip', ''));
+if ($proxy === '') {
+    $proxy = $domain;
+}
+
+echo "Provisioned {$ok} active SIP user(s); rehashed {$rehashed}; skipped {$skip}.\n";
+echo "Challenge realm (must match softphone digest) : {$domain}\n";
+echo "Eyebeam Domain  : {$domain}\n";
+echo "Eyebeam Proxy   : {$proxy}\n";
+echo "Port / Transport: 5060 UDP (try TCP if UDP blocked)\n";
+if ($rehashed === 0 && $ok > 0) {
+    echo "NOTE: No password_enc found — if REGISTER fails with 401, open each SIP user in the portal, set a new password, Save, then re-run this script.\n";
+}
 exit(0);
