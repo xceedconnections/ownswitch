@@ -76,6 +76,7 @@ $useTabs = count($sectionIds) > 1;
                     <?php if ($type === 'trunk_waterfall'):
                         $wfMeta = $f['trunk_meta'] ?? [];
                         $wfOpts = $f['options'] ?? [];
+                        $wfStatsWindow = (int) ($f['stats_window'] ?? 60);
                         $wfOn = [];
                         if (is_array($val)) {
                             $wfOn = array_values(array_filter(array_map('strval', $val)));

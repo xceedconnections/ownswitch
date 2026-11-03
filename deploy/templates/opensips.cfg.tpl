@@ -110,7 +110,8 @@ modparam("acc", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("acc", "early_media", 0)
 modparam("acc", "report_cancels", 1)
 # OpenSIPS 3.x: extra_fields + $acc_extra(...) — db_extra was removed
-modparam("acc", "extra_fields", "db: src->src_user; dst->dst_user; ip->src_ip")
+# src = SIP username (attribution); cli = presented CallerID; gw = drouting gwid (T{trunkId})
+modparam("acc", "extra_fields", "db: src->src_user; dst->dst_user; ip->src_ip; cli->cli; gw->gw")
 
 # dynamic routing (carrier selection / failover) - data loaded from the opensips DB
 loadmodule "drouting.so"
@@ -299,6 +300,7 @@ route {
 	route(apply_ruri_strip);
 	route(apply_sip_cid);
 	route(apply_trunk_attrs);
+	route(acc_cli_gw);
 	route(relay);
 }
 
@@ -340,6 +342,7 @@ route[apply_media] {
 #   passthrough  = leave From as ViciDial / Eyebeam sent (portal CallerID empty)
 #   fixed        = force portal CallerID (rpid / os_cid)
 #   display_name = use Eyebeam/softphone Display Name as From user when it looks like a number
+# Eyebeam often puts quotes around Display Name ("1213…") — strip to digits/+ only.
 route[apply_sip_cid] {
 	if ($avp(os_cid_mode) == NULL || $(avp(os_cid_mode){s.len}) == 0 || $avp(os_cid_mode) == "passthrough") {
 		return;
@@ -347,15 +350,12 @@ route[apply_sip_cid] {
 	$var(user) = $fU;
 	$var(dom) = $fd;
 	if ($avp(os_cid_mode) == "fixed" && $avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
-		$var(user) = $avp(os_cid);
+		$var(user) = $(avp(os_cid){re.subst,/[^0-9+]//g});
 	} else if ($avp(os_cid_mode) == "display_name") {
 		$var(dn) = $fn;
 		if ($var(dn) != NULL && $(var(dn){s.len}) > 0) {
-			# Prefer digits from display name (Eyebeam Display Name used as CLI)
-			$var(digits) = $(var(dn){s.select,0, });
-			if ($var(digits) =~ "^[+0-9]{3,30}$") {
-				$var(user) = $var(digits);
-			} else if ($var(dn) =~ "^[+0-9]{3,30}$") {
+			$var(dn) = $(var(dn){re.subst,/[^0-9+]//g});
+			if ($var(dn) =~ "^[+0-9]{3,30}$") {
 				$var(user) = $var(dn);
 			}
 		}
@@ -369,6 +369,16 @@ route[apply_sip_cid] {
 	remove_hf("Remote-Party-ID");
 	append_hf("Remote-Party-ID: <sip:$var(user)@$var(dom)>;party=calling;privacy=off;screen=yes\r\n");
 	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) → sip:$var(user)@$var(dom)\n");
+}
+
+# ACC extras after CID/trunk rewrite: keep SIP user in src, presented CLI in cli, trunk gwid in gw
+route[acc_cli_gw] {
+	$acc_extra(src) = $dlg_val(os_src);
+	$acc_extra(dst) = $dlg_val(os_dst);
+	$acc_extra(ip) = $si;
+	$acc_extra(cli) = $fU;
+	$acc_extra(gw) = $avp(___dr_gw_id);
+	xlog("L_INFO", "ACC cli=$fU sip=$dlg_val(os_src) gw=$avp(___dr_gw_id)\n");
 }
 
 # Multi remove-prefix (attrs rstrip=22,011,00) — strip tech prefix from RURI before send
@@ -422,6 +432,8 @@ route[apply_trunk_attrs] {
 	if ($var(fu) != NULL && $(var(fu){s.len}) > 0) {
 		$var(user) = $(var(fu){s.unescape.param});
 	}
+	# Never send quoted/display junk as SIP user part toward the vendor
+	$var(user) = $(var(user){re.subst,/[^0-9A-Za-z+_-]//g});
 	$var(dom) = $fd;
 	if ($var(fd) != NULL && $(var(fd){s.len}) > 0) {
 		$var(dom) = $(var(fd){s.unescape.param});
@@ -430,6 +442,8 @@ route[apply_trunk_attrs] {
 		|| ($var(cidadd) != NULL && $(var(cidadd){s.len}) > 0) || ($var(cidrem) != NULL && $(var(cidrem){s.len}) > 0)) {
 		remove_hf("From");
 		append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
+		remove_hf("P-Asserted-Identity");
+		append_hf("P-Asserted-Identity: <sip:$var(user)@$var(dom)>\r\n");
 		xlog("L_INFO", "trunk From rewrite → sip:$var(user)@$var(dom)\n");
 	}
 }
@@ -456,6 +470,7 @@ failure_route[carrier_failover] {
 		route(apply_ruri_strip);
 		route(apply_sip_cid);
 		route(apply_trunk_attrs);
+		route(acc_cli_gw);
 		t_on_failure("carrier_failover");
 		t_relay();
 		exit;

@@ -134,22 +134,44 @@ final class OpensipsAccImporter
         }
         $code = (int) ($row['sip_code'] ?? $row['sip_status'] ?? 0);
         $reason = trim((string) ($row['sip_reason'] ?? ''));
-        $src = trim((string) ($row['src_user'] ?? ''));
-        $dst = trim((string) ($row['dst_user'] ?? ''));
-        if ($src === '' || strcasecmp($src, 'null') === 0) {
-            $src = $this->userPart((string) ($row['from_uri'] ?? $row['caller_id'] ?? $row['from_user'] ?? ''));
+
+        $sipUser = self::cleanToken((string) ($row['src_user'] ?? ''));
+        if ($sipUser === '') {
+            $sipUser = self::cleanToken($this->userPart((string) ($row['from_uri'] ?? $row['caller_id'] ?? $row['from_user'] ?? '')));
         }
-        if ($dst === '' || strcasecmp($dst, 'null') === 0) {
-            $dst = $this->userPart((string) ($row['to_uri'] ?? $row['callee_id'] ?? $row['to_user'] ?? $row['ruri'] ?? ''));
+
+        $cli = self::cleanCallerId((string) ($row['cli'] ?? ''));
+        if ($cli === '') {
+            // Older ACC rows stored presented CLI in src_user — keep digits for src display
+            $maybeCli = self::cleanCallerId($sipUser);
+            if ($maybeCli !== '' && self::looksLikePhone($maybeCli) && !self::looksLikeSipUser($sipUser)) {
+                $cli = $maybeCli;
+            }
         }
-        // ACC extras often NULL on older legs — still import for portal/ASR
+
+        $dst = self::cleanCallerId((string) ($row['dst_user'] ?? ''));
+        if ($dst === '') {
+            $dst = self::cleanCallerId($this->userPart((string) ($row['to_uri'] ?? $row['callee_id'] ?? $row['to_user'] ?? $row['ruri'] ?? '')));
+        }
+
+        // Attribution username = SIP account; src = presented CallerID (or SIP user fallback)
+        $username = null;
+        if ($sipUser !== '' && $cli !== '' && $sipUser !== $cli) {
+            $username = $sipUser; // ACC extras: src=SIP user, cli=CallerID
+        } elseif ($sipUser !== '' && !self::looksLikePhone($sipUser)) {
+            $username = $sipUser;
+        }
+
+        $src = $cli !== '' ? $cli : ($sipUser !== '' ? self::cleanCallerId($sipUser) : '');
         if ($src === '') {
-            $src = 'unknown';
+            $src = $sipUser !== '' ? $sipUser : 'unknown';
         }
         if ($dst === '' || !preg_match('/\d/', $dst)) {
-            // validate() needs digits in dst
             $dst = '0000000000';
         }
+
+        $trunkId = self::trunkIdFromGw((string) ($row['gw'] ?? ''));
+
         $setup = $row['time'] ?? $row['created'] ?? $row['setuptime'] ?? gmdate('Y-m-d H:i:s');
         $duration = (int) ($row['duration'] ?? $row['ms_duration'] ?? 0);
         if ($duration > 100000) {
@@ -173,12 +195,10 @@ final class OpensipsAccImporter
             $disposition = 'NO_ANSWER';
         }
 
-        $username = $src !== '' ? $src : null;
-
-        return [
+        $payload = [
             'external_cdr_key' => 'osacc:' . $table . ':' . ($row['id'] ?? $callid),
             'sip_call_id' => mb_substr($callid, 0, 190),
-            'src' => $src !== '' ? $src : null,
+            'src' => $src,
             'dst' => $dst,
             'username' => $username,
             'setup_at' => is_string($setup) ? $setup : gmdate('Y-m-d H:i:s'),
@@ -188,6 +208,10 @@ final class OpensipsAccImporter
             'sip_response' => $code > 0 ? $code : null,
             'failure_reason' => $reason !== '' ? mb_substr($reason, 0, 190) : ($code > 0 ? ('SIP ' . $code) : 'opensips_acc'),
         ];
+        if ($trunkId !== null) {
+            $payload['carrier_trunk_id'] = $trunkId;
+        }
+        return $payload;
     }
 
     private function userPart(string $uri): string
@@ -203,5 +227,53 @@ final class OpensipsAccImporter
             return $m[1];
         }
         return '';
+    }
+
+    /** Strip Eyebeam-style quotes / whitespace from a SIP user or token. */
+    public static function cleanToken(string $v): string
+    {
+        $v = trim($v);
+        if ($v === '' || strcasecmp($v, 'null') === 0) {
+            return '';
+        }
+        return trim($v, " \t\"'");
+    }
+
+    /** Digits/+ only for presented CallerID / destination. */
+    public static function cleanCallerId(string $v): string
+    {
+        $v = self::cleanToken($v);
+        if ($v === '') {
+            return '';
+        }
+        $digits = preg_replace('/[^0-9+]/', '', $v) ?? '';
+        return $digits;
+    }
+
+    public static function looksLikePhone(string $v): bool
+    {
+        return (bool) preg_match('/^[+]?[0-9]{8,30}$/', $v);
+    }
+
+    public static function looksLikeSipUser(string $v): bool
+    {
+        $v = self::cleanToken($v);
+        return $v !== '' && !self::looksLikePhone($v);
+    }
+
+    /** Parse drouting gwid T{id} → trunk id. */
+    public static function trunkIdFromGw(string $gw): ?int
+    {
+        $gw = self::cleanToken($gw);
+        if ($gw === '') {
+            return null;
+        }
+        if (preg_match('/^T(\d+)$/i', $gw, $m)) {
+            return (int) $m[1];
+        }
+        if (ctype_digit($gw)) {
+            return (int) $gw;
+        }
+        return null;
     }
 }

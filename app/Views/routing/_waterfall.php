@@ -1,9 +1,19 @@
 <?php
 /**
- * Trunk-group waterfall picker (last-hour stats + drag/drop).
+ * Trunk-group waterfall picker (recent stats + drag/drop).
  * @var array $f @var string $id @var string $name @var ?string $err @var bool $readonly
  * @var array $wfMeta @var array $wfOpts @var list<string> $wfOn @var list<string> $wfOff @var list<string> $wfUsed
+ * @var int $wfStatsWindow
  */
+$wfStatsWindow = \Ownswitch\Services\Routing\TrunkHourStatsService::normalizeMinutes((int) ($wfStatsWindow ?? 60));
+$wfWindowLabel = \Ownswitch\Services\Routing\TrunkHourStatsService::windowLabel($wfStatsWindow);
+$wfWindowOpts = [
+    15 => 'Last 15 min',
+    30 => 'Last 30 min',
+    60 => 'Last 1 hour',
+];
+$wfBasePath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
+
 $ordinal = static function (int $n): string {
     $suf = ['th', 'st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th'];
     $v = $n % 100;
@@ -68,15 +78,32 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
 <div class="os-wf<?= $err ? ' is-invalid' : '' ?>" data-os-waterfall<?= $readonly ? ' data-readonly="1"' : '' ?>>
     <input type="hidden" name="<?= e($name) ?>" id="<?= e($id) ?>" value="<?= e(implode(',', $wfOn)) ?>" data-wf-on-input>
     <input type="hidden" name="trunk_off_ids" value="<?= e(implode(',', $wfOff)) ?>" data-wf-off-input>
+    <input type="hidden" name="stats_window" value="<?= e((string) $wfStatsWindow) ?>">
 
     <div class="os-wf-head">
-        <div class="os-wf-kicker">Your waterfall</div>
+        <div>
+            <div class="os-wf-kicker">Your waterfall</div>
+            <div class="form-text mb-0">Connectivity from <?= e($wfWindowLabel) ?></div>
+        </div>
         <?php if (!$readonly): ?>
             <div class="os-wf-sorts">
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="asr">Best answer rate first</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="acd">Longest talk time first</button>
             </div>
         <?php endif; ?>
+    </div>
+
+    <div class="os-wf-windows mb-2" role="group" aria-label="Stats window">
+        <?php foreach ($wfWindowOpts as $mins => $label):
+            $qs = http_build_query(array_filter([
+                'stats_window' => $mins,
+            ]));
+            $href = $wfBasePath . ($qs !== '' ? '?' . $qs : '');
+            $active = $mins === $wfStatsWindow;
+            ?>
+            <a class="btn btn-sm <?= $active ? 'btn-primary' : 'btn-outline-secondary' ?>"
+               href="<?= e($href) ?>"><?= e($label) ?></a>
+        <?php endforeach; ?>
     </div>
 
     <div class="os-wf-flow" data-wf-flow aria-live="polite"></div>
@@ -111,7 +138,7 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
                     </option>
                 <?php endforeach; ?>
             </select>
-            <div class="form-text mt-2">Stats are from the last hour of connected results.</div>
+            <div class="form-text mt-2">Stats are from <?= e($wfWindowLabel) ?> of connected results. Change the window above, then use Best answer rate to reorder by ASR.</div>
         </div>
     <?php endif; ?>
 

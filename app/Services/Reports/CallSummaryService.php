@@ -124,7 +124,7 @@ final class CallSummaryService
         }
 
         if ($meta['dim'] === 'customer') {
-            $select[] = "COALESCE(cu.name, CONCAT('#', c.customer_id)) AS dim_label";
+            $select[] = "COALESCE(NULLIF(cu.name, ''), NULLIF(sa.username, ''), CONCAT('SIP ', NULLIF(c.src, '')), '(unattributed)') AS dim_label";
             $group[] = 'dim_label';
             $columns[] = 'User';
         } elseif ($meta['dim'] === 'trunk') {
@@ -151,6 +151,9 @@ final class CallSummaryService
 
         [$tw, $tp] = $scope->where('owned', 'c');
         $joins = ' LEFT JOIN customers cu ON cu.id = c.customer_id';
+        if ($meta['dim'] === 'customer') {
+            $joins .= ' LEFT JOIN sip_accounts sa ON sa.id = c.sip_account_id';
+        }
         if ($meta['dim'] === 'trunk') {
             $joins .= ' LEFT JOIN carrier_trunks t ON t.id = c.carrier_trunk_id';
         }

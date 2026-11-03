@@ -26,6 +26,8 @@ final class RoutingController extends CrudController
     /** @var list<array{id:int,status:string}> */
     private array $pendingMembers = [];
 
+    private int $statsWindow = 60;
+
     public function __construct(private string $kind = 'rules')
     {
         $plans = $kind === 'plans';
@@ -62,6 +64,7 @@ final class RoutingController extends CrudController
 
     protected function fields(Request $r): array
     {
+        $this->statsWindow = TrunkHourStatsService::normalizeMinutes((int) $r->input('stats_window', $r->query('stats_window', 60)));
         $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'];
         if ($this->kind === 'plans') {
             $meta = $this->trunkMeta();
@@ -71,7 +74,7 @@ final class RoutingController extends CrudController
             }
             return [
                 ['name' => 'name', 'label' => 'Name', 'required' => true, 'max' => 120, 'list' => true],
-                ['name' => 'strategy', 'label' => 'Type', 'type' => 'select', 'required' => true, 'options' => $this->strategyOptions(), 'list' => true, 'default' => 'priority', 'help' => 'Priority = your drag order · LCR = cheapest first · Best connectivity = highest last-hour answer rate · Random = shuffle each call'],
+                ['name' => 'strategy', 'label' => 'Type', 'type' => 'select', 'required' => true, 'options' => $this->strategyOptions(), 'list' => true, 'default' => 'priority', 'help' => 'Priority = your drag order · LCR = cheapest first · Best connectivity = highest answer rate in the selected window · Random = shuffle each call'],
                 [
                     'name' => 'trunks',
                     'label' => 'Trunks',
@@ -88,7 +91,8 @@ final class RoutingController extends CrudController
                     'required' => true,
                     'options' => $opts,
                     'trunk_meta' => $meta,
-                    'help' => 'Last-hour connected results. Drag to set order; toggle off to keep a trunk in the group without using it.',
+                    'stats_window' => $this->statsWindow,
+                    'help' => 'Connected results for the selected window. Drag to set order; toggle off to keep a trunk in the group without using it.',
                 ],
             ];
         }
@@ -110,10 +114,11 @@ final class RoutingController extends CrudController
     }
 
     /**
-     * @return array<string,array{id:string,name:string,carrier:string,label:string,asr:float,acd:float,attempts:int,answered:int,share:float,acd_label:string}>
+     * @return array<string,array{id:string,name:string,carrier:string,label:string,asr:float,acd:float,attempts:int,answered:int,share:float,acd_label:string,window_label:string}>
      */
     private function trunkMeta(): array
     {
+        $minutes = $this->statsWindow;
         $rows = [];
         try {
             $rows = $this->db()->query(
@@ -128,7 +133,8 @@ final class RoutingController extends CrudController
             $rows = [];
         }
         $ids = array_map(static fn ($r) => (int) $r['id'], $rows);
-        $stats = (new TrunkHourStatsService($this->db()))->lastHour($ids === [] ? [] : $ids);
+        $stats = (new TrunkHourStatsService($this->db()))->window($minutes, $ids === [] ? [] : $ids);
+        $label = TrunkHourStatsService::windowLabel($minutes);
         $meta = [];
         foreach ($rows as $t) {
             $id = (string) (int) $t['id'];
@@ -145,6 +151,7 @@ final class RoutingController extends CrudController
                 'answered' => (int) ($s['answered'] ?? 0),
                 'share' => (float) ($s['share'] ?? 0),
                 'acd_label' => self::formatTalk($acd),
+                'window_label' => $label,
             ];
         }
         return $meta;
@@ -166,6 +173,7 @@ final class RoutingController extends CrudController
     protected function prepare(Request $r, array $data, ?array $existing): array
     {
         if ($this->kind === 'plans') {
+            $this->statsWindow = TrunkHourStatsService::normalizeMinutes((int) $r->input('stats_window', $r->query('stats_window', 60)));
             $data = $this->autoCode($data, $existing, 'routing_plans');
             $data['is_demo'] = $existing['is_demo'] ?? 0;
             unset($data['trunks']);
@@ -206,7 +214,7 @@ final class RoutingController extends CrudController
         $active = array_values(array_filter($members, static fn ($m) => $m['status'] === 'active'));
         $off = array_values(array_filter($members, static fn ($m) => $m['status'] !== 'active'));
         if ($strategy === 'asr') {
-            $stats = (new TrunkHourStatsService($this->db()))->lastHour(array_column($active, 'id'));
+            $stats = (new TrunkHourStatsService($this->db()))->window($this->statsWindow, array_column($active, 'id'));
             usort($active, static function (array $a, array $b) use ($stats): int {
                 $sa = $stats[(string) $a['id']]['asr'] ?? -1.0;
                 $sb = $stats[(string) $b['id']]['asr'] ?? -1.0;

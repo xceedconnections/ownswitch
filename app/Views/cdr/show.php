@@ -1,9 +1,10 @@
 <?php /** @var array $cdr @var bool $showCost */
 $rows = [
     'UUID' => $cdr['uuid'], 'External key' => $cdr['external_cdr_key'], 'SIP Call-ID' => $cdr['sip_call_id'],
-    'Customer' => $cdr['customer_name'] ?? '-', 'Source' => $cdr['src'], 'Destination (raw)' => $cdr['dst_raw'], 'Destination (normalised)' => $cdr['dst_normalized'],
+    'Customer' => $cdr['customer_name'] ?? '-', 'SIP user' => $cdr['sip_username'] ?? '-', 'CallerID' => $cdr['src'],
+    'Destination (raw)' => $cdr['dst_raw'], 'Destination (normalised)' => $cdr['dst_normalized'],
     'Matched prefix' => $cdr['dst_prefix'], 'Setup (UTC)' => $cdr['setup_at'], 'Answer (UTC)' => $cdr['answer_at'], 'End (UTC)' => $cdr['end_at'],
-    'Disposition' => $cdr['disposition'], 'SIP response' => $cdr['sip_response'], 'Failure reason' => $cdr['failure_reason'],
+    'Disposition' => $cdr['disposition'], 'SIP code' => $cdr['sip_response'], 'Failure reason' => $cdr['failure_reason'],
     'Actual duration (s)' => $cdr['duration_actual'], 'Billable customer (s)' => $cdr['duration_billable_customer'],
     'Customer rate / min' => $cdr['customer_rate'], 'Customer I/S' => ($cdr['customer_initial'] ?? '-') . '/' . ($cdr['customer_subsequent'] ?? '-'),
     'Connection fee' => $cdr['customer_connect_fee'], 'Charge (total)' => $cdr['customer_charge'] . ' ' . $cdr['currency'],
@@ -12,7 +13,7 @@ $rows = [
 ];
 if ($showCost) {
     $rows += [
-        'Carrier' => $cdr['carrier_name'] ?? '-', 'Carrier rate / min' => $cdr['carrier_rate'], 'Carrier I/S' => ($cdr['carrier_initial'] ?? '-') . '/' . ($cdr['carrier_subsequent'] ?? '-'),
+        'Trunk' => $cdr['trunk_name'] ?? '-', 'Carrier' => $cdr['carrier_name'] ?? '-', 'Carrier rate / min' => $cdr['carrier_rate'], 'Carrier I/S' => ($cdr['carrier_initial'] ?? '-') . '/' . ($cdr['carrier_subsequent'] ?? '-'),
         'Billable carrier (s)' => $cdr['duration_billable_carrier'], 'Carrier cost (total)' => $cdr['carrier_cost'], 'Gross margin' => $cdr['gross_margin'],
         'CGRateS cost' => $cdr['cgrates_cost'], 'Rating discrepancy' => !empty($cdr['rating_discrepancy']) ? 'YES - investigate' : 'no',
     ];

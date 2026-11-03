@@ -8,26 +8,38 @@ use Ownswitch\Services\Reports\AsrAcdService;
 use PDO;
 
 /**
- * Last-hour connected-call stats per carrier trunk (ASR / ACD / share).
- * Defensive: missing cdrs table or SQL errors → empty stats, never throws.
+ * Recent connected-call stats per carrier trunk (ASR / ACD / share).
+ * Windows: 15 / 30 / 60 minutes. Defensive: missing cdrs or SQL errors → empty stats.
  */
 final class TrunkHourStatsService
 {
+    public const WINDOWS = [15, 30, 60];
+
     public function __construct(private PDO $pdo)
     {
     }
 
     /**
      * @param list<int|string>|null $trunkIds null = all trunks with traffic in window
-     * @return array<string,array{attempts:int,answered:int,seconds:int,asr:float,acd:float,share:float,label:string}>
+     * @return array<string,array{attempts:int,answered:int,seconds:int,asr:float,acd:float,share:float,label:string,window_minutes:int}>
      */
     public function lastHour(?array $trunkIds = null): array
     {
+        return $this->window(60, $trunkIds);
+    }
+
+    /**
+     * @param list<int|string>|null $trunkIds
+     * @return array<string,array{attempts:int,answered:int,seconds:int,asr:float,acd:float,share:float,label:string,window_minutes:int}>
+     */
+    public function window(int $minutes, ?array $trunkIds = null): array
+    {
+        $minutes = self::normalizeMinutes($minutes);
         try {
             if (!$this->tableExists('cdrs')) {
                 return [];
             }
-            $from = (new \DateTimeImmutable('now'))->modify('-1 hour')->format('Y-m-d H:i:s');
+            $from = (new \DateTimeImmutable('now'))->modify('-' . $minutes . ' minutes')->format('Y-m-d H:i:s');
             $sql = "SELECT c.carrier_trunk_id AS trunk_id,
                         COUNT(*) AS attempts,
                         SUM(CASE WHEN c.disposition = 'ANSWERED' AND c.duration_actual > 0 THEN 1 ELSE 0 END) AS answered,
@@ -52,6 +64,7 @@ final class TrunkHourStatsService
             foreach ($rows as $r) {
                 $totalAttempts += (int) ($r['attempts'] ?? 0);
             }
+            $label = self::windowLabel($minutes);
             $out = [];
             foreach ($rows as $r) {
                 $tid = (string) (int) $r['trunk_id'];
@@ -64,14 +77,30 @@ final class TrunkHourStatsService
                     'asr' => (float) $computed['asr'],
                     'acd' => (float) $computed['acd'],
                     'share' => $totalAttempts > 0 ? round(100 * $attempts / $totalAttempts, 1) : 0.0,
-                    'label' => 'last hour',
+                    'label' => $label,
+                    'window_minutes' => $minutes,
                 ];
             }
             return $out;
         } catch (\Throwable $e) {
-            error_log('[ownswitch] trunk hour stats: ' . $e->getMessage());
+            error_log('[ownswitch] trunk window stats: ' . $e->getMessage());
             return [];
         }
+    }
+
+    public static function normalizeMinutes(int $minutes): int
+    {
+        return in_array($minutes, self::WINDOWS, true) ? $minutes : 60;
+    }
+
+    public static function windowLabel(int $minutes): string
+    {
+        $minutes = self::normalizeMinutes($minutes);
+        return match ($minutes) {
+            15 => 'last 15 min',
+            30 => 'last 30 min',
+            default => 'last hour',
+        };
     }
 
     private function tableExists(string $table): bool

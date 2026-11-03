@@ -55,6 +55,8 @@ final class CdrSearchService
         if (!empty($f['disposition']) && in_array($f['disposition'], self::DISPOSITIONS, true)) {
             $w[] = 'c.disposition = ?';
             $params[] = $f['disposition'];
+        } elseif (!empty($f['failed_only']) && (string) $f['failed_only'] === '1') {
+            $w[] = "c.disposition <> 'ANSWERED'";
         }
         if (isset($f['min_duration']) && ctype_digit((string) $f['min_duration']) && $f['min_duration'] !== '') {
             $w[] = 'c.duration_actual >= ?';
@@ -76,8 +78,14 @@ final class CdrSearchService
         $cnt->execute($params);
         $total = (int) $cnt->fetchColumn();
 
-        $sql = "SELECT c.*, cu.name AS customer_name, ca.name AS carrier_name FROM cdrs c
-                LEFT JOIN customers cu ON cu.id = c.customer_id LEFT JOIN carriers ca ON ca.id = c.carrier_id
+        $sql = "SELECT c.*, cu.name AS customer_name, ca.name AS carrier_name,
+                       COALESCE(NULLIF(t.name, ''), ca.name) AS trunk_name,
+                       sa.username AS sip_username
+                FROM cdrs c
+                LEFT JOIN customers cu ON cu.id = c.customer_id
+                LEFT JOIN carriers ca ON ca.id = c.carrier_id
+                LEFT JOIN carrier_trunks t ON t.id = c.carrier_trunk_id
+                LEFT JOIN sip_accounts sa ON sa.id = c.sip_account_id
                 WHERE {$where} ORDER BY c.`{$sort}` {$dir}, c.id DESC LIMIT ? OFFSET ?";
         $st = $this->pdo->prepare($sql);
         $i = 1;
@@ -88,11 +96,15 @@ final class CdrSearchService
         $st->bindValue($i, ($page - 1) * $perPage, PDO::PARAM_INT);
         $st->execute();
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as &$r) {
+            $r = self::normalizeRowDisplay($r);
+        }
+        unset($r);
 
         // Customers must never see carrier-side cost/margin.
         if (!$scope->isGlobal()) {
             foreach ($rows as &$r) {
-                foreach (['carrier_cost', 'carrier_rate', 'carrier_connect_fee', 'gross_margin', 'carrier_id', 'carrier_name', 'carrier_trunk_id', 'carrier_initial', 'carrier_subsequent', 'duration_billable_carrier'] as $k) {
+                foreach (['carrier_cost', 'carrier_rate', 'carrier_connect_fee', 'gross_margin', 'carrier_id', 'carrier_name', 'carrier_trunk_id', 'carrier_initial', 'carrier_subsequent', 'duration_billable_carrier', 'trunk_name'] as $k) {
                     unset($r[$k]);
                 }
             }
@@ -104,20 +116,39 @@ final class CdrSearchService
     public function find(TenantScope $scope, int $id): ?array
     {
         [$sql, $params] = $scope->where('owned', 'c');
-        $st = $this->pdo->prepare("SELECT c.*, cu.name AS customer_name, ca.name AS carrier_name FROM cdrs c
-            LEFT JOIN customers cu ON cu.id = c.customer_id LEFT JOIN carriers ca ON ca.id = c.carrier_id
+        $st = $this->pdo->prepare("SELECT c.*, cu.name AS customer_name, ca.name AS carrier_name,
+                       COALESCE(NULLIF(t.name, ''), ca.name) AS trunk_name,
+                       sa.username AS sip_username
+            FROM cdrs c
+            LEFT JOIN customers cu ON cu.id = c.customer_id
+            LEFT JOIN carriers ca ON ca.id = c.carrier_id
+            LEFT JOIN carrier_trunks t ON t.id = c.carrier_trunk_id
+            LEFT JOIN sip_accounts sa ON sa.id = c.sip_account_id
             WHERE c.id = ? AND ({$sql}) LIMIT 1");
         $st->execute([$id, ...$params]);
         $row = $st->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             return null;
         }
+        $row = self::normalizeRowDisplay($row);
         if (!$scope->isGlobal()) {
-            foreach (['carrier_cost', 'carrier_rate', 'carrier_connect_fee', 'gross_margin', 'carrier_id', 'carrier_name', 'carrier_trunk_id', 'carrier_initial', 'carrier_subsequent', 'duration_billable_carrier', 'cgrates_cost', 'rating_discrepancy'] as $k) {
+            foreach (['carrier_cost', 'carrier_rate', 'carrier_connect_fee', 'gross_margin', 'carrier_id', 'carrier_name', 'carrier_trunk_id', 'carrier_initial', 'carrier_subsequent', 'duration_billable_carrier', 'cgrates_cost', 'rating_discrepancy', 'trunk_name'] as $k) {
                 unset($row[$k]);
             }
         }
         return $row;
+    }
+
+    /** @param array<string,mixed> $r @return array<string,mixed> */
+    public static function normalizeRowDisplay(array $r): array
+    {
+        if (isset($r['src']) && is_string($r['src'])) {
+            $r['src'] = OpensipsAccImporter::cleanCallerId($r['src']) ?: OpensipsAccImporter::cleanToken($r['src']);
+        }
+        if (isset($r['dst_normalized']) && is_string($r['dst_normalized'])) {
+            $r['dst_normalized'] = OpensipsAccImporter::cleanCallerId($r['dst_normalized']) ?: $r['dst_normalized'];
+        }
+        return $r;
     }
 
     /** Stream CSV in chunks (keyset on id) so large exports do not exhaust memory. Max 200k rows. */

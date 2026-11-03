@@ -16,7 +16,7 @@ final class CdrController extends BaseController
     {
         [$from, $to] = $this->dateRange($r, 1);
         $f = ['from' => $from, 'to' => $to];
-        foreach (['customer_id', 'carrier_id', 'src', 'dst', 'disposition', 'min_duration'] as $k) {
+        foreach (['customer_id', 'carrier_id', 'src', 'dst', 'disposition', 'min_duration', 'failed_only'] as $k) {
             $v = $r->query($k);
             if (is_string($v) && $v !== '') {
                 $f[$k] = $v;
@@ -44,10 +44,13 @@ final class CdrController extends BaseController
                 $carriers[$c['id']] = $c['name'];
             }
         }
+        $failedOnly = ($f['failed_only'] ?? '') === '1';
         return $this->view('cdr/search', [
-            'title' => 'CDR Search', 'result' => $res, 'f' => $f, 'customers' => $customers, 'carriers' => $carriers,
+            'title' => $failedOnly ? 'Failed CDRs' : 'CDR Search',
+            'result' => $res, 'f' => $f, 'customers' => $customers, 'carriers' => $carriers,
             // Charge (sell) always shown; carrier cost/margin only for staff/global
             'dispositions' => CdrSearchService::DISPOSITIONS, 'showCost' => $scope->isGlobal(), 'query' => $r->query,
+            'failedOnly' => $failedOnly,
         ]);
     }
 
