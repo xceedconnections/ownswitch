@@ -361,12 +361,8 @@ if [[ -f "${mod_dir}/exec.so" && -x "$PHP_BIN" ]]; then
 			\$var(cap_tries) = 0;
 		}
 		\$var(cap_tries) = \$(var(cap_tries){s.int}) + 1;
+		# use_next_gw only — do NOT call apply_* routes (may be undefined on patched live cfgs)
 		if (\$(var(cap_tries){s.int}) < 8 && use_next_gw()) {
-			route(apply_ruri_strip);
-			route(apply_sip_cid);
-			route(check_cid_len);
-			route(apply_trunk_attrs);
-			route(check_trunk_cid_len);
 			route(check_rate_cap);
 			return;
 		}

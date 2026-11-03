@@ -73,10 +73,8 @@ if has_exec:
 			$var(cap_tries) = 0;
 		}}
 		$var(cap_tries) = $(var(cap_tries){{s.int}}) + 1;
+		# Next gw only — never call apply_* (often undefined on live patched cfg)
 		if ($(var(cap_tries){{s.int}}) < 8 && use_next_gw()) {{
-			route(apply_ruri_strip);
-			route(apply_sip_cid);
-			route(apply_trunk_attrs);
 			route(check_rate_cap);
 			return;
 		}}
