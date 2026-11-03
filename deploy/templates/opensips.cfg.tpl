@@ -133,10 +133,8 @@ route {
 	# Accepts Domain = public IP OR any FQDN pointed at this server (no Proxy).
 	# =====================================================================
 	if (is_method("REGISTER")) {
-		# Canonicalize non-IP Request-URI hosts → advertised IP (usrloc use_domain=0)
-		if (!($rd =~ "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$")) {
-			rewritehost("@@PUBLIC_IP@@");
-		}
+		# Always local: never DNS-relay REGISTER (fixes Domain FQDN → 483 Too Many Hops)
+		rewritehost("@@PUBLIC_IP@@");
 		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td ruri=$ru\n");
 		# Realm = softphone Domain ($td): IP or any FQDN. calculate_ha1=1 → plaintext password.
 		if (!www_authorize("$td", "subscriber")) {
