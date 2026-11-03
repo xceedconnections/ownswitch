@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ownswitch\Repositories;
 
 use Ownswitch\Support\Destination;
+use Ownswitch\Support\TenantScope;
 use PDO;
 
 final class AreaCodeRepository extends BaseRepository
@@ -19,6 +20,58 @@ final class AreaCodeRepository extends BaseRepository
             ['code', 'name'],
             ['id', 'code', 'name']
         );
+    }
+
+    public function upsert(string $code, string $name, ?string $notes = null): void
+    {
+        $code = preg_replace('/\D+/', '', $code) ?? '';
+        $name = trim($name);
+        if ($code === '' || $name === '') {
+            return;
+        }
+        $notes = $notes !== null ? trim($notes) : null;
+        if ($notes === '') {
+            $notes = null;
+        }
+        $this->pdo->prepare(
+            'INSERT INTO area_codes (code, name, notes) VALUES (?,?,?)
+             ON DUPLICATE KEY UPDATE name = VALUES(name), notes = VALUES(notes)'
+        )->execute([$code, $name, $notes]);
+    }
+
+    /** @param list<int> $ids */
+    public function deleteByIds(TenantScope $scope, array $ids): int
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn ($i) => $i > 0)));
+        if ($ids === []) {
+            return 0;
+        }
+        [$tw, $tp] = $scope->where($this->tenantMode());
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $st = $this->pdo->prepare("DELETE FROM `{$this->table}` WHERE id IN ({$ph}) AND ({$tw})");
+        $st->execute([...$ids, ...$tp]);
+        return $st->rowCount();
+    }
+
+    /**
+     * @param array<string,mixed> $filters
+     */
+    public function deleteFiltered(TenantScope $scope, array $filters, ?string $search, bool $allowAll = false): int
+    {
+        $hasFilter = false;
+        foreach ($filters as $v) {
+            if ($v !== null && $v !== '') {
+                $hasFilter = true;
+                break;
+            }
+        }
+        if (!$hasFilter && ($search === null || trim($search) === '') && !$allowAll) {
+            return 0;
+        }
+        [$where, $params] = $this->buildWhere($scope, $filters, $search);
+        $st = $this->pdo->prepare("DELETE FROM `{$this->table}` WHERE {$where}");
+        $st->execute($params);
+        return $st->rowCount();
     }
 
     /**

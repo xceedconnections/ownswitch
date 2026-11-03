@@ -95,9 +95,17 @@ $colCount = ($hideIdColumn ? 0 : 1) + count($cols) + 1;
         <h1 class="os-page-title"><?= e($plural) ?> <span class="os-count"><?= e($result['total']) ?></span></h1>
         <p class="os-page-sub"><?= e((int) $result['total'] === 0 && $emptyHint !== '' ? $emptyHint : ('Manage ' . strtolower($plural))) ?></p>
     </div>
-    <?php if ($canWrite): ?>
-        <a class="btn btn-primary btn-sm" href="<?= e(url($base . '/create')) ?>"><i class="bi bi-plus-lg me-1"></i>New <?= e(strtolower($singular)) ?></a>
-    <?php endif; ?>
+    <div class="d-flex flex-wrap gap-2">
+        <?php foreach (($headerLinks ?? []) as $link): ?>
+            <a class="btn <?= e((string) ($link['class'] ?? 'btn-outline-secondary')) ?> btn-sm" href="<?= e(url((string) $link['href'])) ?>">
+                <?php if (!empty($link['icon'])): ?><i class="bi bi-<?= e((string) $link['icon']) ?> me-1"></i><?php endif; ?>
+                <?= e((string) $link['label']) ?>
+            </a>
+        <?php endforeach; ?>
+        <?php if ($canWrite): ?>
+            <a class="btn btn-primary btn-sm" href="<?= e(url($base . '/create')) ?>"><i class="bi bi-plus-lg me-1"></i>New <?= e(strtolower($singular)) ?></a>
+        <?php endif; ?>
+    </div>
 </div>
 
 <?php

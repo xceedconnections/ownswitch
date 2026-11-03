@@ -20,6 +20,7 @@ use Ownswitch\Controllers\LiveMetricsController;
 use Ownswitch\Controllers\ModuleScaffoldController;
 use Ownswitch\Controllers\PaymentController;
 use Ownswitch\Controllers\AreaCodeController;
+use Ownswitch\Controllers\AreaCodeImportController;
 use Ownswitch\Controllers\PrefixController;
 use Ownswitch\Controllers\RatePlanController;
 use Ownswitch\Controllers\RecordingController;
@@ -95,7 +96,15 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     // Rates
     $crud($r, '/rate-plans', new RatePlanController(), $STAFF);
     $crud($r, '/prefixes', new PrefixController(), $STAFF);
-    $crud($r, '/area-codes', new AreaCodeController(), $STAFF);
+    $areaCodes = new AreaCodeController();
+    $r->post('/area-codes/bulk-delete', [$areaCodes, 'bulkDestroy'], [$STAFF]);
+    $crud($r, '/area-codes', $areaCodes, $STAFF);
+    $aci = new AreaCodeImportController();
+    $r->get('/area-codes/import', [$aci, 'form'], [$STAFF]);
+    $r->get('/area-codes/export', [$aci, 'export'], [$STAFF]);
+    $r->post('/area-codes/import/upload', [$aci, 'upload'], [$STAFF]);
+    $r->post('/area-codes/import/preview', [$aci, 'preview'], [$STAFF]);
+    $r->post('/area-codes/import/commit', [$aci, 'commit'], [$STAFF]);
     $tariffs = new TariffController('customer');
     $r->post('/tariffs/bulk-delete', [$tariffs, 'bulkDestroy'], [$STAFF]);
     $crud($r, '/tariffs', $tariffs, $STAFF);

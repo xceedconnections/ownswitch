@@ -48,6 +48,7 @@ final class Menu
                 ['User Custom Rates', '/custom-rates', self::STAFF],
                 ['Import Tariffs', '/tariffs/import', self::STAFF],
                 ['Import Prefixes', '/prefixes/import', self::STAFF],
+                ['Import Area Codes', '/area-codes/import', self::STAFF],
             ]],
             ['Reports', [
                 ['CDR', '/cdrs', self::ALL],
