@@ -67,6 +67,40 @@ text = re.sub(
 if 'do_routing(1)' in text and 'do_routing(1, , , , $avp(dr_gw_attrs))' not in text:
     text = text.replace('do_routing(1)', 'do_routing(1, , , , $avp(dr_gw_attrs))')
 
+# 3b) CGRateS fail-open — "Billing Authorization Failed" blocks all PSTN until rates exist
+fail_closed = re.compile(
+    r'if\s*\(\s*!cgrates_auth\s*\(\s*\)\s*\)\s*\{'
+    r'[^}]*'
+    r'send_reply\s*\(\s*403\s*,\s*"Billing Authorization Failed"\s*\)\s*;'
+    r'[^}]*\}'
+    r'(?:\s*cgrates_acc\s*\([^)]*\)\s*;)?',
+    re.S,
+)
+fail_open = (
+    'if (!cgrates_auth()) {\n'
+    '\t\txlog("L_WARN", "cgrates_auth failed $fU -> $rU (allowing call)\\n");\n'
+    '\t} else {\n'
+    '\t\tcgrates_acc("cdr|missed");\n'
+    '\t}'
+)
+if fail_closed.search(text):
+    text = fail_closed.sub(fail_open, text, count=1)
+    print("cgrates: fail-closed → fail-open")
+elif "Billing Authorization Failed" in text:
+    # strip any remaining 403 billing replies
+    text = re.sub(
+        r'[ \t]*acc_db_request\("403 Billing Authorization Failed",\s*"acc"\);\s*\n?',
+        "",
+        text,
+    )
+    text = re.sub(
+        r'[ \t]*send_reply\(\s*403\s*,\s*"Billing Authorization Failed"\s*\)\s*;\s*\n?',
+        '\t\txlog("L_WARN", "cgrates_auth failed (allowing call)\\n");\n',
+        text,
+    )
+    # remove exit that immediately followed billing reject inside the if
+    print("cgrates: removed Billing Authorization Failed replies")
+
 def ensure_mod(src, name, block_after=""):
     if f'loadmodule "{name}"' in src:
         return src

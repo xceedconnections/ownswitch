@@ -263,14 +263,12 @@ route {
 		$dlg_val(os_dtmf) = "yes";
 	}
 
-	# credit control: fail closed if CGRateS refuses or is unreachable
+	# credit control: fail-open until CGRateS accounts/rates are provisioned
 	if (!cgrates_auth()) {
-		xlog("L_WARN", "cgrates_auth failed for $fU -> $rU from $si\n");
-		acc_db_request("403 Billing Authorization Failed", "acc");
-		send_reply(403, "Billing Authorization Failed");
-		exit;
+		xlog("L_WARN", "cgrates_auth failed for $fU -> $rU from $si (allowing call)\n");
+	} else {
+		cgrates_acc("cdr|missed");
 	}
-	cgrates_acc("cdr|missed");
 	do_accounting("db", "cdr|missed|failed");
 
 	# Media: $avp(os_media) loaded from subscriber.media_policy on digest auth (else relay)
