@@ -32,8 +32,8 @@ final class SipPeerOptions
     ];
 
     public const PEER_TYPE = [
-        'friend' => 'friend (register + call)',
-        'peer' => 'peer (IP / outbound)',
+        'friend' => 'friend (softphone: register + call)',
+        'peer' => 'peer (IP / PBX outbound)',
         'user' => 'user (register only)',
     ];
 

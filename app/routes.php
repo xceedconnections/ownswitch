@@ -11,6 +11,7 @@ use Ownswitch\Controllers\CustomRateController;
 use Ownswitch\Controllers\CustomerController;
 use Ownswitch\Controllers\DashboardController;
 use Ownswitch\Controllers\DestinationPolicyController;
+use Ownswitch\Controllers\FirewallController;
 use Ownswitch\Controllers\FraudController;
 use Ownswitch\Controllers\InvoiceController;
 use Ownswitch\Controllers\IpAuthController;
@@ -213,6 +214,11 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $settings = new SettingsController();
     $r->get('/settings', [$settings, 'edit'], [$STAFF]);
     $r->post('/settings', [$settings, 'update'], [$STAFF]);
+    $fw = new FirewallController();
+    $r->get('/settings/firewall', [$fw, 'index'], [$STAFF]);
+    $r->post('/settings/firewall/unban', [$fw, 'unban'], [$STAFF]);
+    $r->post('/settings/firewall/ban', [$fw, 'ban'], [$STAFF]);
+    $r->post('/settings/firewall/config', [$fw, 'saveConfig'], [$STAFF]);
 
     // Magnus scaffold modules (every remaining menu item)
     $r->get('/modules/{slug}', [new ModuleScaffoldController(), 'show'], [$STAFF]);

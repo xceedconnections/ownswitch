@@ -80,6 +80,7 @@ final class Menu
             ]],
             ['Settings', [
                 ['Settings', '/settings', self::STAFF],
+                ['Firewall', '/settings/firewall', self::STAFF],
                 ['System Status', '/system/status', self::STAFF],
             ]],
         ];

@@ -139,7 +139,7 @@ final class SipUserController extends CrudController
                 'type' => 'select',
                 'options' => SipPeerOptions::PEER_TYPE,
                 'default' => 'friend',
-                'help' => 'friend = register+call; peer = IP/outbound; user = register only. Stored for dialplan/policy.',
+                'help' => 'friend = softphone (register + call). peer = IP/PBX trunk style. user = register-oriented only. Softphones: use friend.',
                 'section' => 'Network',
             ],
             [
@@ -148,7 +148,7 @@ final class SipUserController extends CrudController
                 'type' => 'select',
                 'options' => SipPeerOptions::NAT,
                 'default' => 'force_rport,comedia',
-                'help' => 'OpenSIPS nathelper: force_rport / received. comedia ⇒ prefer media relay for symmetric RTP.',
+                'help' => 'Signalling only (not media IP). Softphones behind NAT: force_rport,comedia. Does not force RTP through this server.',
                 'section' => 'Network',
             ],
             [
@@ -191,7 +191,7 @@ final class SipUserController extends CrudController
                 ],
                 'default' => '',
                 'list' => true,
-                'help' => 'Direct = bridge media end-to-end. Relay = RTPengine. Record = RTPengine with call recording.',
+                'help' => 'Controls media IP. Direct = phone↔carrier (no server in RTP). Relay = RTP via this server (RTPengine). Record = relay + recording. Use Direct if you do not want your server IP in SDP; switch to Relay if you get one-way audio.',
                 'section' => 'Routing & media',
             ],
             [

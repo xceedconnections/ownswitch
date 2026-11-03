@@ -230,6 +230,7 @@ route {
 		# Realm = From domain ($fd): IP or any FQDN; username-only DB lookup
 		# Empty realm = accept Domain IP or FQDN (avoids $fd mismatch → 403 Forbidden)
 		if (!proxy_authorize("", "subscriber")) {
+			xlog("L_WARN", "INVITE auth failed for $fU src=$si\n");
 			proxy_challenge("", "auth");
 			exit;
 		}
