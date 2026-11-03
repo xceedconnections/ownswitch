@@ -213,8 +213,10 @@ syslog_name="opensips"
 auto_aliases=yes
 mpath="{mpath}"
 
-socket=udp:0.0.0.0:{port} as {public_ip}:{port}
-socket=tcp:0.0.0.0:{port} as {public_ip}:{port}
+socket=udp:{public_ip}:{port}
+socket=tcp:{public_ip}:{port}
+socket=udp:127.0.0.1:{port}
+socket=tcp:127.0.0.1:{port}
 alias="{domain}"
 alias="{public_ip}"
 alias="127.0.0.1"
@@ -340,21 +342,36 @@ if [[ -f /etc/default/opensips ]]; then
   sed -i 's/^RUN_OPENSIPS=no/RUN_OPENSIPS=yes/' /etc/default/opensips || true
 fi
 install -d /etc/systemd/system/opensips.service.d
+# Package unit is Type=forking; -F (foreground) requires Type=simple or start fails
 cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<EOF
 [Service]
+Type=simple
 ExecStart=
 ExecStart=/usr/sbin/opensips -F -f ${CFG}
 Restart=on-failure
+RestartSec=2
+TimeoutStartSec=20
 EOF
 systemctl daemon-reload
 systemctl enable opensips
 
 echo "======== E) Syntax + start ========"
 opensips -c -f "$CFG"
+# Clear any stale workers still holding 5060 from earlier failed runs
+systemctl stop opensips 2>/dev/null || true
+fuser -k ${PORT}/udp 2>/dev/null || true
+fuser -k ${PORT}/tcp 2>/dev/null || true
+sleep 1
 systemctl start opensips
 sleep 2
-systemctl is-active opensips
-ss -ulnp | grep -E ":${PORT}\\b" || { echo "FATAL: not listening on ${PORT}"; journalctl -u opensips -n 50 --no-pager; exit 1; }
+if ! systemctl is-active --quiet opensips; then
+  echo "FATAL: opensips.service failed to start"
+  systemctl --no-pager -l status opensips || true
+  journalctl -u opensips --no-pager -n 80 || true
+  exit 1
+fi
+ss -ulnp | grep -E ":${PORT}\\b" || { echo "FATAL: not listening on UDP ${PORT}"; journalctl -u opensips -n 50 --no-pager; exit 1; }
+ss -tlnp | grep -E ":${PORT}\\b" || echo "WARN: no TCP ${PORT}"
 
 echo "======== F) Sync portal SIP users → subscriber.password ========"
 bash "$SRC/deploy/refresh-ui.sh" || true
