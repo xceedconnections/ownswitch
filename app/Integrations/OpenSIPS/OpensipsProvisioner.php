@@ -85,10 +85,23 @@ final class OpensipsProvisioner
             throw new \RuntimeException('opensips.subscriber table missing — re-run deploy stage 50 / OpenSIPS schema');
         }
         $cols = $this->columns('subscriber');
-        // Match username only for lookup when multiple domain rows may exist historically
-        $st = $db->prepare('SELECT id FROM subscriber WHERE username = ? ORDER BY id ASC LIMIT 1');
-        $st->execute([$username]);
-        $id = $st->fetchColumn();
+
+        // use_domain=0 → one subscriber row per username. Prefer exact (user,domain),
+        // then drop any other domain rows for the same user to avoid account_idx dupes.
+        $stExact = $db->prepare('SELECT id FROM subscriber WHERE username = ? AND domain = ? LIMIT 1');
+        $stExact->execute([$username, $domain]);
+        $id = $stExact->fetchColumn();
+        if ($id) {
+            $db->prepare('DELETE FROM subscriber WHERE username = ? AND id <> ?')->execute([$username, $id]);
+        } else {
+            $stAny = $db->prepare('SELECT id FROM subscriber WHERE username = ? ORDER BY id ASC LIMIT 1');
+            $stAny->execute([$username]);
+            $id = $stAny->fetchColumn();
+            if ($id) {
+                // Reuse oldest row; remove siblings first so domain UPDATE cannot collide
+                $db->prepare('DELETE FROM subscriber WHERE username = ? AND id <> ?')->execute([$username, $id]);
+            }
+        }
 
         $set = [
             'domain' => $domain,
@@ -97,7 +110,6 @@ final class OpensipsProvisioner
         if (in_array('ha1b', $cols, true)) {
             $set['ha1b'] = $ha1b;
         }
-        // Plaintext for calculate_ha1=1 (Eyebeam/Asterisk/FS/VOS with Domain=IP or FQDN)
         if (in_array('password', $cols, true)) {
             $plain = '';
             if ($account !== null) {
@@ -112,18 +124,14 @@ final class OpensipsProvisioner
             }
             if ($plain !== '') {
                 $set['password'] = $plain;
-            } elseif ($id) {
-                // keep existing opensips password on updates without a known secret
-            } else {
+            } elseif (!$id) {
                 $set['password'] = '';
             }
         }
         if ($account !== null && in_array('rpid', $cols, true)) {
             $cid = trim((string) ($account['caller_id'] ?? ''));
-            // Empty CallerID = passthrough (ViciDial / softphone From stays); only store fixed CLI in rpid
             $set['rpid'] = $cid !== '' ? $cid : '';
         }
-        // Ensure load_credentials columns → $avp(os_media / os_dtmf / os_cid_mode)
         if ($account !== null) {
             $this->ensureSubscriberExtraColumns();
             $cols = $this->columns('subscriber');
