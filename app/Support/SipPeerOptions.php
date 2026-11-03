@@ -19,6 +19,18 @@ final class SipPeerOptions
         'auto' => 'Auto',
     ];
 
+    /** Allow (pass) or block DTMF toward the far end (INFO + telephone-event). */
+    public const DTMF_PASS = [
+        'yes' => 'Allow DTMF (press 1 works)',
+        'no' => 'Block DTMF (keys ignored)',
+    ];
+
+    public const CALLER_ID_MODE = [
+        'passthrough' => 'Passthrough (ViciDial / softphone From)',
+        'fixed' => 'Fixed portal CallerID',
+        'display_name' => 'Softphone Display Name as CallerID',
+    ];
+
     public const PEER_TYPE = [
         'friend' => 'friend (register + call)',
         'peer' => 'peer (IP / outbound)',
@@ -46,12 +58,17 @@ final class SipPeerOptions
         'port,invite' => 'port,invite',
     ];
 
+    /** Individual codecs for multiselect chips (stored comma-separated). */
     public const CODECS = [
-        'PCMU,PCMA' => 'G.711 μ-law + A-law',
-        'PCMU,PCMA,G729' => 'G.711 + G.729',
-        'PCMU,PCMA,opus' => 'G.711 + Opus',
-        'PCMU,PCMA,G729,opus' => 'G.711 + G.729 + Opus',
-        'opus,PCMU,PCMA' => 'Opus preferred',
-        'G729' => 'G.729 only',
+        'PCMU' => 'G.711 μ-law (ulaw)',
+        'PCMA' => 'G.711 A-law (alaw)',
+        'G729' => 'G.729',
+        'GSM' => 'GSM',
+        'opus' => 'Opus',
+        'G722' => 'G.722',
+        'iLBC' => 'iLBC',
+        'speex' => 'Speex',
+        'G723' => 'G.723',
+        'G726' => 'G.726',
     ];
 }

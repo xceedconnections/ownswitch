@@ -80,11 +80,20 @@ final class SipUserController extends CrudController
             ],
             [
                 'name' => 'caller_id',
-                'label' => 'CallerID',
+                'label' => 'CallerID number',
                 'max' => 32,
                 'pattern' => '/^\+?[0-9]{3,30}$/',
                 'list' => true,
-                'help' => 'Default CallerID. Overridden if the selected Trunk has From user set.',
+                'help' => 'Leave blank for passthrough (ViciDial / softphone From goes out). Used when mode = Fixed. Trunk From user still wins if set.',
+                'section' => 'Account',
+            ],
+            [
+                'name' => 'caller_id_mode',
+                'label' => 'CallerID mode',
+                'type' => 'select',
+                'options' => SipPeerOptions::CALLER_ID_MODE,
+                'default' => 'passthrough',
+                'help' => 'Passthrough = whatever ViciDial/Eyebeam sends. Fixed = portal CallerID number. Display Name = use softphone Display Name as CLI (digits).',
                 'section' => 'Account',
             ],
             [
@@ -202,16 +211,27 @@ final class SipUserController extends CrudController
                 'type' => 'select',
                 'options' => SipPeerOptions::DTMF,
                 'default' => 'RFC2833',
-                'help' => 'Preferred DTMF. RFC2833 = telephone-event (recommended for OpenSIPS/RTPengine).',
+                'help' => 'Signalling style when DTMF is allowed. RFC2833 = telephone-event (recommended).',
+                'section' => 'Routing & media',
+            ],
+            [
+                'name' => 'dtmf_pass',
+                'label' => 'Allow DTMF (press 1)',
+                'type' => 'select',
+                'options' => SipPeerOptions::DTMF_PASS,
+                'default' => 'yes',
+                'help' => 'Block = OpenSIPS absorbs SIP INFO DTMF and strips telephone-event so keypad digits are not passed to the far end.',
                 'section' => 'Routing & media',
             ],
             [
                 'name' => 'codecs',
                 'label' => 'Codecs',
-                'type' => 'select',
+                'type' => 'multiselect',
                 'options' => SipPeerOptions::CODECS,
                 'default' => 'PCMU,PCMA',
-                'help' => 'Allowed audio codecs (portal + ownswitch_sip profile for media policy).',
+                'add_label' => '+ Add codec…',
+                'wide' => true,
+                'help' => 'Select one or more codecs (ulaw, alaw, G729, GSM, …). Chips can be removed with ×.',
                 'section' => 'Routing & media',
             ],
             [
@@ -321,6 +341,19 @@ final class SipUserController extends CrudController
         if (isset($data['codecs']) && is_string($data['codecs']) && $data['codecs'] !== '') {
             $data['disallow'] = 'all';
         }
+        $cid = trim((string) ($data['caller_id'] ?? ''));
+        $data['caller_id'] = $cid !== '' ? $cid : null;
+        $mode = strtolower(trim((string) ($data['caller_id_mode'] ?? 'passthrough')));
+        if (!isset(SipPeerOptions::CALLER_ID_MODE[$mode])) {
+            $mode = $cid !== '' ? 'fixed' : 'passthrough';
+        }
+        // Fixed mode with empty number → treat as passthrough so ViciDial CLI is kept
+        if ($mode === 'fixed' && $cid === '') {
+            $mode = 'passthrough';
+        }
+        $data['caller_id_mode'] = $mode;
+        $dp = strtolower(trim((string) ($data['dtmf_pass'] ?? 'yes')));
+        $data['dtmf_pass'] = $dp === 'no' ? 'no' : 'yes';
         return $data;
     }
 

@@ -64,8 +64,8 @@ loadmodule "auth_db.so"
 modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("auth_db", "calculate_ha1", 0)
 modparam("auth_db", "password_column", "ha1")
-# Load SIP Directmedia (media_policy column on subscriber) into $avp(os_media)
-modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy")
+# Load SIP Directmedia / DTMF pass / CallerID mode from subscriber into AVPs
+modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid")
 # Username-only match: softphones may put FQDN or server IP in Domain while
 # digest realm stays OWNSWITCH_DOMAIN (HA1). use_domain=1 breaks Domain=IP.
 # For Domain=FQDN REGISTER: set Outbound Proxy / Registrar to the server PUBLIC IP
@@ -136,6 +136,12 @@ route {
 
 	# ---- in-dialog requests ----
 	if (has_totag()) {
+		# Absorb DTMF (SIP INFO) when this dialog was created with dtmf_pass=no
+		if (is_method("INFO") && $dlg_val(os_dtmf) == "no") {
+			xlog("L_INFO", "DTMF INFO blocked in-dialog for $fU\n");
+			send_reply(200, "OK");
+			exit;
+		}
 		if (loose_route()) {
 			if (is_method("INVITE|ACK|BYE|UPDATE|PRACK") && $avp(os_media) != "direct") {
 				if ($avp(os_media) == "record") {
@@ -215,6 +221,11 @@ route {
 		xlog("L_INFO", "local AOR hit for $rU from $fU\n");
 		record_route();
 		create_dialog("B");
+		if ($avp(os_dtmf) != NULL) {
+			$dlg_val(os_dtmf) = $avp(os_dtmf);
+		} else {
+			$dlg_val(os_dtmf) = "yes";
+		}
 		do_accounting("db", "cdr|missed|failed");
 		if ($avp(os_media) == NULL || $(avp(os_media){s.len}) == 0) {
 			$avp(os_media) = "relay";
@@ -227,6 +238,12 @@ route {
 
 	record_route();
 	create_dialog("B");
+	# Persist DTMF policy for in-dialog INFO filtering
+	if ($avp(os_dtmf) != NULL) {
+		$dlg_val(os_dtmf) = $avp(os_dtmf);
+	} else {
+		$dlg_val(os_dtmf) = "yes";
+	}
 
 	# credit control: fail closed if CGRateS refuses or is unreachable
 	if (!cgrates_auth()) {
@@ -257,6 +274,7 @@ route {
 	}
 
 	route(apply_ruri_strip);
+	route(apply_sip_cid);
 	route(apply_trunk_attrs);
 	route(relay);
 }
@@ -280,17 +298,57 @@ route[inbound_from_carrier] {
 }
 
 # Direct = skip RTPengine; Relay = rtpengine_manage(); Record = rtpengine + recording
+# dtmf_pass=no → strip telephone-event so RFC2833 DTMF is not negotiated
 route[apply_media] {
+	$var(dtmf_flags) = "";
+	if ($avp(os_dtmf) == "no") {
+		$var(dtmf_flags) = " codec-strip-telephone-event";
+	}
 	if ($avp(os_media) == "direct") {
 		xlog("L_INFO", "media=direct for $fU (no rtpengine)\n");
 		return;
 	}
 	if ($avp(os_media) == "record") {
 		xlog("L_INFO", "media=record for $fU (rtpengine + record)\n");
-		rtpengine_manage("replace-session-connection replace-origin ICE=remove recording-label=$ci");
+		rtpengine_manage("replace-session-connection replace-origin ICE=remove recording-label=$ci$var(dtmf_flags)");
+		return;
+	}
+	if ($(var(dtmf_flags){s.len}) > 0) {
+		rtpengine_manage("replace-session-connection replace-origin ICE=remove$var(dtmf_flags)");
 		return;
 	}
 	rtpengine_manage();
+}
+
+# SIP-user CallerID policy (before trunk From override):
+#   passthrough  = leave From as ViciDial / Eyebeam sent (portal CallerID empty)
+#   fixed        = force portal CallerID (rpid / os_cid)
+#   display_name = use Eyebeam/softphone Display Name as From user when it looks like a number
+route[apply_sip_cid] {
+	if ($avp(os_cid_mode) == NULL || $(avp(os_cid_mode){s.len}) == 0 || $avp(os_cid_mode) == "passthrough") {
+		return;
+	}
+	$var(user) = $fU;
+	$var(dom) = $fd;
+	if ($avp(os_cid_mode) == "fixed" && $avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
+		$var(user) = $avp(os_cid);
+	} else if ($avp(os_cid_mode) == "display_name") {
+		$var(dn) = $fn;
+		if ($var(dn) != NULL && $(var(dn){s.len}) > 0) {
+			# Prefer digits from display name (Eyebeam Display Name used as CLI)
+			$var(digits) = $(var(dn){s.select,0, });
+			if ($var(digits) =~ "^[+0-9]{3,30}$") {
+				$var(user) = $var(digits);
+			} else if ($var(dn) =~ "^[+0-9]{3,30}$") {
+				$var(user) = $var(dn);
+			}
+		}
+	} else {
+		return;
+	}
+	remove_hf("From");
+	append_hf("From: <$var(user)@$var(dom)>;tag=$ft\r\n");
+	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) → $var(user)@$var(dom)\n");
 }
 
 # Multi remove-prefix (attrs rstrip=22,011,00) — strip tech prefix from RURI before send
@@ -376,6 +434,7 @@ failure_route[carrier_failover] {
 	# try next gateway of the selected route
 	if (use_next_gw()) {
 		route(apply_ruri_strip);
+		route(apply_sip_cid);
 		route(apply_trunk_attrs);
 		t_on_failure("carrier_failover");
 		t_relay();

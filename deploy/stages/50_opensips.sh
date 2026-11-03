@@ -135,10 +135,14 @@ else
 fi
 ensure_subscriber_schema
 
-# SIP Directmedia (Default/Direct/Relay) — loaded into $avp(os_media) via auth_db load_credentials
+# SIP Directmedia / DTMF / CID mode — loaded via auth_db load_credentials
 mysql_root "${DB_OPENSIPS}" -e \
   "ALTER TABLE subscriber ADD COLUMN media_policy VARCHAR(16) NOT NULL DEFAULT 'relay'" 2>/dev/null \
   || log_info "subscriber.media_policy already present (or ALTER skipped)"
+mysql_root "${DB_OPENSIPS}" -e \
+  "ALTER TABLE subscriber ADD COLUMN dtmf_pass VARCHAR(8) NOT NULL DEFAULT 'yes'" 2>/dev/null || true
+mysql_root "${DB_OPENSIPS}" -e \
+  "ALTER TABLE subscriber ADD COLUMN cid_mode VARCHAR(16) NOT NULL DEFAULT 'passthrough'" 2>/dev/null || true
 
 # Extra ACC fields for portal Failed-CDR import (matches acc db_extra in opensips.cfg.tpl)
 for _acc_tbl in acc missed_calls; do

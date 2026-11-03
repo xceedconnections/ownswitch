@@ -97,11 +97,12 @@ final class OpensipsProvisioner
         }
         if ($account !== null && in_array('rpid', $cols, true)) {
             $cid = trim((string) ($account['caller_id'] ?? ''));
+            // Empty CallerID = passthrough (ViciDial / softphone From stays); only store fixed CLI in rpid
             $set['rpid'] = $cid !== '' ? $cid : '';
         }
-        // Ensure media_policy column exists for load_credentials → $avp(os_media)
+        // Ensure load_credentials columns → $avp(os_media / os_dtmf / os_cid_mode)
         if ($account !== null) {
-            $this->ensureSubscriberMediaColumn();
+            $this->ensureSubscriberExtraColumns();
             $cols = $this->columns('subscriber');
             if (in_array('media_policy', $cols, true)) {
                 $mp = strtolower(trim((string) ($account['_effective_media'] ?? $account['media_policy'] ?? 'relay')));
@@ -109,6 +110,18 @@ final class OpensipsProvisioner
                     $mp = 'relay';
                 }
                 $set['media_policy'] = in_array($mp, ['direct', 'relay', 'record'], true) ? $mp : 'relay';
+            }
+            if (in_array('dtmf_pass', $cols, true)) {
+                $dp = strtolower(trim((string) ($account['dtmf_pass'] ?? 'yes')));
+                $set['dtmf_pass'] = $dp === 'no' ? 'no' : 'yes';
+            }
+            if (in_array('cid_mode', $cols, true)) {
+                $mode = strtolower(trim((string) ($account['caller_id_mode'] ?? '')));
+                $cid = trim((string) ($account['caller_id'] ?? ''));
+                if ($mode === '' || $mode === 'auto') {
+                    $mode = $cid !== '' ? 'fixed' : 'passthrough';
+                }
+                $set['cid_mode'] = in_array($mode, ['passthrough', 'fixed', 'display_name'], true) ? $mode : 'passthrough';
             }
         }
 
@@ -538,6 +551,7 @@ final class OpensipsProvisioner
     public function syncSipPeerProfile(string $username, string $mediaPolicy, int $maxChannels, ?array $account = null): void
     {
         $db = $this->db();
+        // MySQL 8 reserves QUALIFY — always backtick that identifier.
         $db->exec(
             'CREATE TABLE IF NOT EXISTS ownswitch_sip (
                 username VARCHAR(64) NOT NULL PRIMARY KEY,
@@ -546,33 +560,32 @@ final class OpensipsProvisioner
                 sip_port INT UNSIGNED NOT NULL DEFAULT 5060,
                 codecs VARCHAR(190) NULL,
                 dtmfmode VARCHAR(32) NULL,
+                dtmf_pass VARCHAR(8) NULL,
                 nat VARCHAR(64) NULL,
                 insecure VARCHAR(64) NULL,
                 peer_type VARCHAR(16) NULL,
-                qualify VARCHAR(8) NULL,
+                `qualify` VARCHAR(8) NULL,
                 allowtransfer VARCHAR(8) NULL,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
         foreach ([
-            'sip_port INT UNSIGNED NOT NULL DEFAULT 5060',
-            'codecs VARCHAR(190) NULL',
-            'dtmfmode VARCHAR(32) NULL',
-            'nat VARCHAR(64) NULL',
-            'insecure VARCHAR(64) NULL',
-            'peer_type VARCHAR(16) NULL',
-            'qualify VARCHAR(8) NULL',
-            'allowtransfer VARCHAR(8) NULL',
-        ] as $colDef) {
-            $col = explode(' ', $colDef, 2)[0];
+            ['sip_port', 'INT UNSIGNED NOT NULL DEFAULT 5060'],
+            ['codecs', 'VARCHAR(190) NULL'],
+            ['dtmfmode', 'VARCHAR(32) NULL'],
+            ['dtmf_pass', 'VARCHAR(8) NULL'],
+            ['nat', 'VARCHAR(64) NULL'],
+            ['insecure', 'VARCHAR(64) NULL'],
+            ['peer_type', 'VARCHAR(16) NULL'],
+            ['qualify', 'VARCHAR(8) NULL'],
+            ['allowtransfer', 'VARCHAR(8) NULL'],
+        ] as [$col, $def]) {
             try {
-                $db->exec("ALTER TABLE ownswitch_sip ADD COLUMN {$colDef}");
+                $db->exec("ALTER TABLE ownswitch_sip ADD COLUMN `{$col}` {$def}");
             } catch (\Throwable) {
                 // column already exists
             }
-            unset($col);
         }
-        // Allow -1 unlimited in max_channels
         try {
             $db->exec('ALTER TABLE ownswitch_sip MODIFY max_channels INT NOT NULL DEFAULT 2');
         } catch (\Throwable) {
@@ -584,18 +597,19 @@ final class OpensipsProvisioner
         }
         $st = $db->prepare(
             'INSERT INTO ownswitch_sip
-                (username, media_policy, max_channels, sip_port, codecs, dtmfmode, nat, insecure, peer_type, qualify, allowtransfer)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                (username, media_policy, max_channels, sip_port, codecs, dtmfmode, dtmf_pass, nat, insecure, peer_type, `qualify`, allowtransfer)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
              ON DUPLICATE KEY UPDATE
                 media_policy = VALUES(media_policy),
                 max_channels = VALUES(max_channels),
                 sip_port = VALUES(sip_port),
                 codecs = VALUES(codecs),
                 dtmfmode = VALUES(dtmfmode),
+                dtmf_pass = VALUES(dtmf_pass),
                 nat = VALUES(nat),
                 insecure = VALUES(insecure),
                 peer_type = VALUES(peer_type),
-                qualify = VALUES(qualify),
+                `qualify` = VALUES(`qualify`),
                 allowtransfer = VALUES(allowtransfer)'
         );
         $st->execute([
@@ -605,6 +619,7 @@ final class OpensipsProvisioner
             $port,
             isset($account['codecs']) ? mb_substr((string) $account['codecs'], 0, 190) : null,
             isset($account['dtmfmode']) ? mb_substr((string) $account['dtmfmode'], 0, 32) : null,
+            isset($account['dtmf_pass']) ? mb_substr((string) $account['dtmf_pass'], 0, 8) : 'yes',
             isset($account['nat']) ? mb_substr((string) $account['nat'], 0, 64) : null,
             isset($account['insecure']) ? mb_substr((string) $account['insecure'], 0, 64) : null,
             isset($account['peer_type']) ? mb_substr((string) $account['peer_type'], 0, 16) : null,
@@ -698,22 +713,36 @@ final class OpensipsProvisioner
         );
     }
 
-    private function ensureSubscriberMediaColumn(): void
+    private function ensureSubscriberExtraColumns(): void
     {
         static $done = false;
         if ($done || !$this->tableExists('subscriber')) {
             return;
         }
-        $cols = $this->columns('subscriber');
-        if (!in_array('media_policy', $cols, true)) {
+        foreach ([
+            'media_policy VARCHAR(16) NOT NULL DEFAULT \'relay\'',
+            'dtmf_pass VARCHAR(8) NOT NULL DEFAULT \'yes\'',
+            'cid_mode VARCHAR(16) NOT NULL DEFAULT \'passthrough\'',
+        ] as $colDef) {
+            $col = explode(' ', $colDef, 2)[0];
+            $cols = $this->columns('subscriber');
+            if (in_array($col, $cols, true)) {
+                continue;
+            }
             try {
-                $this->db()->exec("ALTER TABLE subscriber ADD COLUMN media_policy VARCHAR(16) NOT NULL DEFAULT 'relay'");
+                $this->db()->exec("ALTER TABLE subscriber ADD COLUMN {$colDef}");
                 $this->columns('subscriber', true);
             } catch (\Throwable) {
                 // concurrent alter or no DDL rights
             }
         }
         $done = true;
+    }
+
+    /** @deprecated use ensureSubscriberExtraColumns */
+    private function ensureSubscriberMediaColumn(): void
+    {
+        $this->ensureSubscriberExtraColumns();
     }
 
     /**

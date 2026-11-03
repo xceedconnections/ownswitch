@@ -35,35 +35,43 @@ final class CustomerController extends CrudController
     {
         $staff = $this->scope($r)->isStaff();
         $f = [
-            ['name' => 'name', 'label' => 'Username', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'Display / account name'],
-            ['name' => 'contact_email', 'label' => 'Email (portal login)', 'type' => 'email', 'required' => true, 'max' => 190, 'list' => true, 'help' => 'Used to sign in at /login and see CDR, balance, reports'],
+            ['name' => 'name', 'label' => 'Username', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'Portal account / login label', 'section' => 'Account'],
+            ['name' => 'contact_email', 'label' => 'Email (portal login)', 'type' => 'email', 'required' => true, 'max' => 190, 'list' => true, 'help' => 'Used to sign in at /login and see CDR, balance, reports', 'section' => 'Account'],
             [
                 'name' => 'portal_password',
                 'label' => 'Portal password',
                 'type' => 'password',
                 'max' => 128,
-                'help' => 'Required on create. On edit, leave blank to keep current. Min 12 chars with upper, lower, digit. User can also change it under their profile menu.',
+                'help' => 'Required on create. On edit, leave blank to keep current. Min 12 chars with upper, lower, digit.',
+                'section' => 'Account',
             ],
+            ['name' => 'full_name', 'label' => 'Full name', 'max' => 190, 'section' => 'Personal information'],
+            ['name' => 'company_name', 'label' => 'Company name', 'max' => 190, 'list' => true, 'section' => 'Personal information'],
+            ['name' => 'phone', 'label' => 'Phone number', 'max' => 32, 'section' => 'Personal information'],
+            ['name' => 'teams_id', 'label' => 'Microsoft Teams ID', 'max' => 190, 'help' => 'Teams user / UPN or object ID', 'section' => 'Personal information'],
+            ['name' => 'robocall_id', 'label' => 'Robocall ID', 'max' => 64, 'section' => 'Personal information'],
+            ['name' => 'frn_id', 'label' => 'FRN ID', 'max' => 64, 'help' => 'FCC Registration Number', 'section' => 'Personal information'],
+            ['name' => 'filler_499_id', 'label' => '499 filler ID', 'max' => 64, 'help' => 'FCC Form 499 / filler identifier', 'section' => 'Personal information'],
         ];
         if ($staff) {
             $res = ['' => '— none —'];
             foreach ((new ResellerRepository($this->db()))->all(TenantScope::global(), [], 500, 'name') as $x) {
                 $res[$x['id']] = $x['name'];
             }
-            $f[] = ['name' => 'reseller_id', 'label' => 'Group (reseller)', 'type' => 'select', 'options' => $res, 'list' => true];
+            $f[] = ['name' => 'reseller_id', 'label' => 'Group (reseller)', 'type' => 'select', 'options' => $res, 'list' => true, 'section' => 'Billing'];
             $plans = ['' => '— select —'];
             foreach ($this->db()->query('SELECT id, name FROM rate_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
                 $plans[$p['id']] = $p['name'];
             }
             array_push($f,
-                ['name' => 'rate_plan_id', 'label' => 'Plan', 'type' => 'select', 'options' => $plans, 'list' => true],
+                ['name' => 'rate_plan_id', 'label' => 'Plan', 'type' => 'select', 'options' => $plans, 'list' => true, 'section' => 'Billing'],
             );
         }
         array_push($f,
-            ['name' => 'billing_mode', 'label' => 'Type paid', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true, 'default' => 'prepaid'],
-            ['name' => 'status', 'label' => 'Active', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Inactive', 'closed' => 'Closed'], 'list' => true, 'default' => 'active'],
-            ['name' => 'credit_limit', 'label' => 'Credit limit', 'type' => 'number', 'default' => '0', 'help' => 'Postpaid'],
-            ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => -1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true, 'help' => '-1 = unlimited concurrent calls'],
+            ['name' => 'billing_mode', 'label' => 'Type paid', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true, 'default' => 'prepaid', 'section' => 'Billing'],
+            ['name' => 'status', 'label' => 'Active', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Inactive', 'closed' => 'Closed'], 'list' => true, 'default' => 'active', 'section' => 'Billing'],
+            ['name' => 'credit_limit', 'label' => 'Credit limit', 'type' => 'number', 'default' => '0', 'help' => 'Postpaid', 'section' => 'Billing'],
+            ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => -1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true, 'help' => '-1 = unlimited concurrent calls', 'section' => 'Billing'],
         );
         return $f;
     }
