@@ -45,6 +45,30 @@ if os.path.isfile(cgrates_so):
 for name, params in extras:
     text = ensure_mod(text, name, params)
 
+# Repair prior bad gw_attrs_avp strip (orphan ') line) + remove obsolete param
+text = re.sub(
+    r"""^[ \t]*modparam\(\s*"drouting"\s*,\s*"gw_attrs_avp"\s*,\s*'[^'\n]*'\s*\)\s*\n?""",
+    "",
+    text,
+    flags=re.M,
+)
+text = re.sub(r"""^[ \t]*'\)\s*\n""", "", text, flags=re.M)
+
+# dialog must load before cgrates
+if 'loadmodule "cgrates.so"' in text and 'loadmodule "dialog.so"' in text:
+    di = text.find('loadmodule "dialog.so"')
+    ci = text.find('loadmodule "cgrates.so"')
+    if di > ci:
+        m = re.search(r'loadmodule "dialog\.so"\n(?:modparam\("dialog"[^\n]*\n)*', text)
+        if m:
+            block = m.group(0)
+            text = text[: m.start()] + text[m.end() :]
+            ci = text.find('loadmodule "cgrates.so"')
+            text = text[:ci] + block + text[ci:]
+elif 'loadmodule "cgrates.so"' in text and 'loadmodule "dialog.so"' not in text:
+    text = re.sub(r'^[ \t]*loadmodule\s+"cgrates\.so"\s*\n?', "", text, flags=re.M)
+    text = re.sub(r'^[ \t]*modparam\(\s*"cgrates"[^\n]*\n?', "", text, flags=re.M)
+
 cgrates_block = ""
 if 'loadmodule "cgrates.so"' in text:
     # Fail-open: do not block PSTN while CGRateS is down
