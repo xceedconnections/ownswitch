@@ -2,7 +2,18 @@
 /**
  * @var ?array $customer @var string $balance @var string $available @var ?float $runwayDays
  * @var int $sipCount @var array $metrics
+ * @var int $ccAllowed @var int $ccUsing @var bool $ccUnlimited
+ * @var int $cpsAllowed @var bool $cpsUnlimited @var list<array> $sipLimits
  */
+$ccAllowed = $ccAllowed ?? 0;
+$ccUsing = $ccUsing ?? 0;
+$ccUnlimited = !empty($ccUnlimited);
+$cpsAllowed = $cpsAllowed ?? 0;
+$cpsUnlimited = !empty($cpsUnlimited);
+$sipLimits = $sipLimits ?? [];
+$limLabel = static function (int $n, bool $unlimited): string {
+    return $unlimited || $n < 0 ? '∞' : (string) $n;
+};
 $w = $metrics['window60'];
 $t = $metrics['today'];
 $failed = $metrics['failed24'];
@@ -59,25 +70,30 @@ $lowRunway = $runwayDays !== null && $runwayDays < 2;
                 <span class="os-cc-k">CC</span>
                 <span class="os-cc-v" data-os-cc-value><?= e((string) ($ccLabel ?? '— / —')) ?></span>
             </div>
+            <div class="os-cc-pill" title="Calls per second allowed">
+                <span class="os-cc-k">CPS</span>
+                <span class="os-cc-v"><?= e($limLabel((int) $cpsAllowed, $cpsUnlimited)) ?></span>
+            </div>
             <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/sip-users')) ?>">SIP users</a>
+            <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/my-rates')) ?>">My tariff</a>
         </div>
     </div>
 
     <div class="os-dash-grid os-dash-kpis mb-3">
         <div class="os-kpi os-kpi--teal">
-            <div class="lbl">Attempts (60 min)</div>
-            <div class="val"><?= e(number_format($w['attempts'])) ?></div>
-            <div class="sub"><?= e(number_format($w['last_min'])) ?> last minute</div>
+            <div class="lbl">Concurrent (CC)</div>
+            <div class="val"><?= e($limLabel((int) $ccAllowed, $ccUnlimited)) ?></div>
+            <div class="sub">Allowed · <span data-os-cc-value><?= e((string) ($ccLabel ?? '— / —')) ?></span> in use</div>
+        </div>
+        <div class="os-kpi os-kpi--blue">
+            <div class="lbl">CPS allowed</div>
+            <div class="val"><?= e($limLabel((int) $cpsAllowed, $cpsUnlimited)) ?></div>
+            <div class="sub">Calls/sec · from your SIP users</div>
         </div>
         <div class="os-kpi os-kpi--green">
             <div class="lbl">Answered (60 min)</div>
             <div class="val"><?= e(number_format($w['answered'])) ?></div>
-            <div class="sub">Avg talk <?= e($acdFmt($w['acd'])) ?></div>
-        </div>
-        <div class="os-kpi os-kpi--blue">
-            <div class="lbl">Answer rate</div>
-            <div class="val"><?= e($w['asr']) ?>%</div>
-            <div class="sub">Today <?= e($t['asr']) ?>%</div>
+            <div class="sub">ASR <?= e($w['asr']) ?>% · ACD <?= e($acdFmt($w['acd'])) ?></div>
         </div>
         <div class="os-kpi os-kpi--amber">
             <div class="lbl">Spend (60 min)</div>
@@ -95,6 +111,27 @@ $lowRunway = $runwayDays !== null && $runwayDays < 2;
             <div class="sub"><?= e((string) $sipCount) ?> active SIP · today pace <?= e(fmt_money($t['spend'], 2)) ?></div>
         </div>
     </div>
+
+    <?php if ($sipLimits !== []): ?>
+    <div class="os-widget mb-3">
+        <div class="os-widget-h"><h2 class="os-widget-title">Your SIP limits</h2></div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 os-table">
+                <thead><tr><th>SIP</th><th class="os-num">CC</th><th class="os-num">CPS</th><th class="os-num">CAP</th></tr></thead>
+                <tbody>
+                <?php foreach ($sipLimits as $s): ?>
+                    <tr>
+                        <td class="os-mono"><?= e((string) $s['username']) ?></td>
+                        <td class="os-num"><?= e($limLabel((int) ($s['max_channels'] ?? 0), (int) ($s['max_channels'] ?? 0) < 0)) ?></td>
+                        <td class="os-num"><?= e($limLabel((int) ($s['max_cps'] ?? 0), (int) ($s['max_cps'] ?? 0) < 0)) ?></td>
+                        <td class="os-num os-mono"><?= e(($s['rate_cap'] ?? null) !== null && $s['rate_cap'] !== '' ? (string) $s['rate_cap'] : '—') ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <div class="os-dash-grid os-dash-mid mb-3">
         <div class="os-widget">

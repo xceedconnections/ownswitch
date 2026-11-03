@@ -31,7 +31,7 @@ $cell = static function (array $f, mixed $v): string {
     if (($f['type'] ?? '') === 'number') {
         return '<span class="os-mono">' . e($v) . '</span>';
     }
-    if (in_array(($f['name'] ?? ''), ['max_concurrent_calls', 'max_channels'], true)) {
+    if (in_array(($f['name'] ?? ''), ['max_concurrent_calls', 'max_channels', 'max_cps'], true)) {
         if ((string) $v === '-1') {
             return '<span class="badge text-bg-secondary">Unlimited</span>';
         }

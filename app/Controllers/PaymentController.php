@@ -54,12 +54,14 @@ final class PaymentController extends BaseController
             $total = 0;
             $rows = [];
         }
+        $isCustomer = $scope->isCustomerRole();
         return $this->view('payments/index', [
             'title' => 'Payments',
             'result' => ['rows' => $rows, 'total' => $total, 'page' => $page, 'per_page' => $per, 'pages' => max(1, (int) ceil($total / $per))],
-            'customers' => $this->customerOptions($r),
+            'customers' => $isCustomer ? [] : $this->customerOptions($r),
             'customer_id' => $cid !== null ? (string) $cid : '',
             'canWrite' => in_array($this->user($r)['role'] ?? '', ['super_admin', 'admin', 'reseller'], true),
+            'isCustomer' => $isCustomer,
             'query' => $r->query,
         ]);
     }

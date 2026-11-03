@@ -22,7 +22,8 @@ final class SipUserController extends CrudController
     protected string $base = '/sip-users';
     protected string $singular = 'SIP User';
     protected string $plural = 'SIP Users';
-    protected array $writeRoles = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech'];
+    /** Customers may view SIP users only — staff/reseller create and edit. */
+    protected array $writeRoles = ['super_admin', 'admin', 'reseller'];
     protected string $emptyHint = 'No SIP users. Create an account so a phone or PBX can register to OpenSIPS.';
 
     private ?string $plainPassword = null;
@@ -215,13 +216,26 @@ final class SipUserController extends CrudController
             ],
             [
                 'name' => 'max_channels',
-                'label' => 'Call limit',
+                'label' => 'Call limit (CC)',
                 'type' => 'int',
                 'min' => -1,
                 'max' => 10000,
                 'required' => true,
                 'default' => '2',
-                'help' => '-1 = unlimited concurrent calls',
+                'list' => true,
+                'help' => 'Max concurrent calls for this SIP user. -1 = unlimited.',
+                'section' => 'Routing & media',
+            ],
+            [
+                'name' => 'max_cps',
+                'label' => 'CPS',
+                'type' => 'int',
+                'min' => -1,
+                'max' => 1000,
+                'required' => true,
+                'default' => '1',
+                'list' => true,
+                'help' => 'Max calls per second for this SIP user. -1 = unlimited. Typical PBX values: 1–10.',
                 'section' => 'Routing & media',
             ],
             [
@@ -440,6 +454,16 @@ final class SipUserController extends CrudController
                     $data[$k] = null;
                 }
             }
+        }
+        if (array_key_exists('max_cps', $data)) {
+            $cps = (int) $data['max_cps'];
+            if ($cps < -1) {
+                $cps = -1;
+            }
+            if ($cps > 1000) {
+                $cps = 1000;
+            }
+            $data['max_cps'] = $cps === 0 ? 1 : $cps;
         }
         if (!array_key_exists('rate_cap', $data) || $data['rate_cap'] === '' || $data['rate_cap'] === null) {
             $data['rate_cap'] = null;

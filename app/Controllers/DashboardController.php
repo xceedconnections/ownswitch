@@ -100,9 +100,29 @@ final class DashboardController extends BaseController
                 $sipCount = (int) $sip->fetchColumn();
             } catch (\Throwable) {
             }
-            $cc = ['label' => '— / —'];
+            $cc = ['label' => '— / —', 'allowed' => 0, 'using' => 0, 'unlimited' => false];
             try {
                 $cc = (new ConcurrentCallsService($pdo))->forCustomer((int) $scope->customerId);
+            } catch (\Throwable) {
+            }
+            $cpsAllowed = 0;
+            $cpsUnlimited = false;
+            $sipLimits = [];
+            try {
+                $st = $pdo->prepare(
+                    "SELECT username, max_channels, max_cps, rate_cap
+                     FROM sip_accounts WHERE customer_id = ? AND status = 'active' ORDER BY username LIMIT 50"
+                );
+                $st->execute([(int) $scope->customerId]);
+                $sipLimits = $st->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+                foreach ($sipLimits as $s) {
+                    $cps = (int) ($s['max_cps'] ?? 0);
+                    if ($cps < 0) {
+                        $cpsUnlimited = true;
+                    } elseif ($cps > $cpsAllowed) {
+                        $cpsAllowed = $cps;
+                    }
+                }
             } catch (\Throwable) {
             }
             $data['customer'] = $cust;
@@ -111,6 +131,12 @@ final class DashboardController extends BaseController
             $data['runwayDays'] = $runwayDays;
             $data['sipCount'] = $sipCount;
             $data['ccLabel'] = $cc['label'] ?? '— / —';
+            $data['ccAllowed'] = $cc['allowed'] ?? 0;
+            $data['ccUsing'] = $cc['using'] ?? 0;
+            $data['ccUnlimited'] = !empty($cc['unlimited']);
+            $data['cpsAllowed'] = $cpsAllowed;
+            $data['cpsUnlimited'] = $cpsUnlimited;
+            $data['sipLimits'] = $sipLimits;
             return $this->view('dashboard/customer', $data);
         }
 

@@ -18,6 +18,7 @@ use Ownswitch\Controllers\IpAuthController;
 use Ownswitch\Controllers\LedgerController;
 use Ownswitch\Controllers\LiveMetricsController;
 use Ownswitch\Controllers\ModuleScaffoldController;
+use Ownswitch\Controllers\MyRatesController;
 use Ownswitch\Controllers\PaymentController;
 use Ownswitch\Controllers\AreaCodeController;
 use Ownswitch\Controllers\AreaCodeImportController;
@@ -87,6 +88,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/calls-online', [$callsOnline, 'index'], [$role(Menu::SIP_USERS)]);
     $r->post('/calls-online/hangup', [$callsOnline, 'hangup'], [$role(Menu::SIP_USERS)]);
     $crud($r, '/ip-auth', new IpAuthController(), $role(Menu::SIP_USERS)); // CallerID / IP allowlist
+    $r->get('/my-rates', [MyRatesController::class, 'index'], [$role(Menu::CUSTOMER_RATES)]);
 
     // DIDs (inbound)
     $crud($r, '/did-providers', new DidController('providers'), $role(Menu::DID_STAFF));

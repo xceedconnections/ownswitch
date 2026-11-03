@@ -13,10 +13,11 @@ final class Menu
     public const ALL = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech', 'reporter'];
     public const RESELLER_UP = ['super_admin', 'admin', 'reseller'];
     public const SIP_USERS = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech'];
-    public const FINANCE = ['super_admin', 'admin', 'reseller', 'customer_owner', 'reporter'];
+    public const FINANCE = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech', 'reporter'];
     public const LEDGER_READ = ['super_admin', 'admin', 'reseller', 'customer_owner', 'reporter'];
     public const DID_STAFF = ['super_admin', 'admin', 'reseller'];
     public const DID_VIEW = ['super_admin', 'admin', 'reseller', 'customer_owner', 'customer_tech'];
+    public const CUSTOMER_RATES = ['customer_owner', 'customer_tech'];
 
     /** @return list<array{label:string,items:list<array{label:string,path:string}>}> */
     public static function for(string $role): array
@@ -71,6 +72,7 @@ final class Menu
                 ['Audit Log', '/audit-logs', self::STAFF],
             ]],
             ['Routes', [
+                ['My Tariff', '/my-rates', self::CUSTOMER_RATES],
                 ['Providers', '/providers', self::STAFF],
                 ['Trunks', '/trunks', self::STAFF],
                 ['Trunk Groups', '/trunk-groups', self::STAFF],
