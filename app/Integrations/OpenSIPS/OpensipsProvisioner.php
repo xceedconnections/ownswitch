@@ -882,14 +882,15 @@ final class OpensipsProvisioner
         }
         $hasRecv = in_array('received', $cols, true);
         $hasExp = in_array('expires', $cols, true);
-        // Prefer non-expired rows; still show row if expires column missing/odd (tz skew)
+        // OpenSIPS 3.6 location.expires is INT unix timestamp (not DATETIME).
+        // Comparing INT to UTC_TIMESTAMP() filtered out every contact → portal always "offline".
         $sql = 'SELECT username, contact'
             . ($hasRecv ? ', received' : '')
             . ($hasExp ? ', expires' : '')
             . ' FROM location';
         if ($hasExp) {
-            $sql .= ' WHERE expires IS NULL OR expires > UTC_TIMESTAMP() - INTERVAL 1 MINUTE'
-                . ' OR expires > FROM_UNIXTIME(UNIX_TIMESTAMP() - 60)';
+            $sql .= ' WHERE expires IS NULL OR expires > UNIX_TIMESTAMP() - 60'
+                . ' OR expires > UTC_TIMESTAMP()'; // DATETIME schema fallback
         }
         $out = [];
         try {
