@@ -83,8 +83,8 @@ route[apply_outbound_cid] {
 
 	if ($var(forced) == 1) {
 		remove_hf("From");
-		append_hf("From: <$var(user)@$var(dom)>;tag=$ft\r\n");
-		xlog("L_WARN", "OWNSWITCH outbound From $fU → $var(user)@$var(dom)\n");
+		append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
+		xlog("L_WARN", "OWNSWITCH outbound From $fU → sip:$var(user)@$var(dom)\n");
 	} else if (!($fU =~ "^[+0-9]{3,30}$")) {
 		xlog("L_WARN", "OWNSWITCH From=$fU is non-numeric — trunk may 403. Set SIP user CallerID or trunk From user.\n");
 	}

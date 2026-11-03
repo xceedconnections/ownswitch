@@ -357,8 +357,8 @@ route[apply_sip_cid] {
 		return;
 	}
 	remove_hf("From");
-	append_hf("From: <$var(user)@$var(dom)>;tag=$ft\r\n");
-	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) → $var(user)@$var(dom)\n");
+	append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
+	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) → sip:$var(user)@$var(dom)\n");
 }
 
 # Multi remove-prefix (attrs rstrip=22,011,00) — strip tech prefix from RURI before send
@@ -419,8 +419,8 @@ route[apply_trunk_attrs] {
 	if (($var(fu) != NULL && $(var(fu){s.len}) > 0) || ($var(fd) != NULL && $(var(fd){s.len}) > 0)
 		|| ($var(cidadd) != NULL && $(var(cidadd){s.len}) > 0) || ($var(cidrem) != NULL && $(var(cidrem){s.len}) > 0)) {
 		remove_hf("From");
-		append_hf("From: <$var(user)@$var(dom)>;tag=$ft\r\n");
-		xlog("L_INFO", "trunk From rewrite → $var(user)@$var(dom)\n");
+		append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
+		xlog("L_INFO", "trunk From rewrite → sip:$var(user)@$var(dom)\n");
 	}
 }
 

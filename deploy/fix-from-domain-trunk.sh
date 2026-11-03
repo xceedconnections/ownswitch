@@ -61,8 +61,8 @@ route[apply_outbound_cid] {
 
 	# Always set From to user@trunk-host when dialing off-net (do_routing already set $rd)
 	remove_hf("From");
-	append_hf("From: <$var(user)@$var(dom)>;tag=$ft\r\n");
-	xlog("L_WARN", "OWNSWITCH outbound From → $var(user)@$var(dom) (dst=$rU gw=$rd)\n");
+	append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
+	xlog("L_WARN", "OWNSWITCH outbound From → sip:$var(user)@$var(dom) (dst=$rU gw=$rd)\n");
 }
 '''
 
