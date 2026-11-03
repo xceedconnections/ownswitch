@@ -14,8 +14,10 @@ final class SipAccountRepository extends BaseRepository
             $pdo,
             'sip_accounts',
             [
-                'reseller_id', 'customer_id', 'username', 'domain', 'ha1', 'ha1b', 'caller_id', 'sip_host',
-                'routing_plan_id', 'max_channels', 'media_policy', 'status', 'notes', 'password_changed_at',
+                'reseller_id', 'customer_id', 'username', 'domain', 'ha1', 'ha1b', 'caller_id',
+                'sip_host', 'sip_port', 'codecs', 'disallow', 'nat', 'directmedia', 'qualify',
+                'routing_plan_id', 'dtmfmode', 'insecure', 'peer_type', 'allowtransfer',
+                'max_channels', 'media_policy', 'status', 'notes', 'password_changed_at',
             ],
             'owned',
             ['username', 'caller_id'],

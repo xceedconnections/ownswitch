@@ -10,6 +10,7 @@ use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
 use Ownswitch\Services\Routing\OpensipsRoutingSync;
+use Ownswitch\Services\Sip\SipOptionsProbe;
 use Ownswitch\Support\Crypto;
 use Ownswitch\Support\SipPeerOptions;
 
@@ -59,10 +60,14 @@ final class CarrierController extends CrudController
             ['name' => 'host', 'label' => 'Host', 'required' => true, 'max' => 190, 'pattern' => '/^[A-Za-z0-9.\-:\[\]]{1,190}$/', 'list' => true],
             ['name' => 'port', 'label' => 'Port', 'type' => 'int', 'min' => 1, 'max' => 65535, 'required' => true, 'default' => '5060', 'list' => true],
             ['name' => 'transport', 'label' => 'Transport', 'type' => 'select', 'required' => true, 'options' => ['udp' => 'UDP', 'tcp' => 'TCP', 'tls' => 'TLS'], 'default' => 'udp'],
-            ['name' => 'auth_mode', 'label' => 'Auth mode', 'type' => 'select', 'required' => true, 'list' => true, 'default' => 'ip', 'options' => [
+            ['name' => 'auth_mode', 'label' => 'Auth', 'type' => 'select', 'required' => true, 'list' => true, 'default' => 'ip', 'options' => [
                 'ip' => 'IP peer (vendor allowlists us)',
                 'register' => 'Outbound REGISTER (user/pass)',
                 'invite' => 'Invite digest only',
+            ], 'list_options' => [
+                'ip' => 'IP peer',
+                'register' => 'REGISTER',
+                'invite' => 'Invite digest',
             ], 'help' => 'OpenSIPS: IP → address table; Register → uac_registrant'],
             ['name' => 'auth_username', 'label' => 'Username', 'max' => 120],
             ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Leave blank on edit to keep current.'],
@@ -73,13 +78,35 @@ final class CarrierController extends CrudController
             ['name' => 'cid_add_prefix', 'label' => 'CID add prefix', 'max' => 32],
             ['name' => 'cid_remove_prefix', 'label' => 'CID remove prefix', 'max' => 32],
             ['name' => 'qualify', 'label' => 'Probe gateway', 'type' => 'select', 'options' => SipPeerOptions::YES_NO, 'default' => 'yes', 'help' => 'OpenSIPS probe_mode'],
-            ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Soft limit for portal/reporting'],
+            ['name' => 'max_channels', 'label' => 'Channels', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Soft limit for portal/reporting'],
+            ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true, 'list_only' => true],
             $status,
         ];
     }
 
     protected function enrichRows(Request $r, array $rows): array
     {
+        if ($this->kind !== 'trunk' || $rows === []) {
+            return $rows;
+        }
+        foreach ($rows as &$row) {
+            $host = (string) ($row['host'] ?? '');
+            $port = (int) ($row['port'] ?? 5060);
+            $active = ($row['status'] ?? '') === 'active';
+            $qualify = strtolower((string) ($row['qualify'] ?? 'yes')) === 'yes';
+            $ms = null;
+            if ($active && $qualify && $host !== '') {
+                $ms = SipOptionsProbe::rttMs($host, $port);
+            }
+            if (!$active || $host === '') {
+                $row['latency_ms'] = '—';
+            } elseif (!$qualify) {
+                $row['latency_ms'] = '—';
+            } else {
+                $row['latency_ms'] = ($ms !== null) ? $ms : 'n/a';
+            }
+        }
+        unset($row);
         return $rows;
     }
 

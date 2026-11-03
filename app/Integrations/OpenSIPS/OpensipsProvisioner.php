@@ -102,10 +102,7 @@ final class OpensipsProvisioner
                 if ($mp === '' || $mp === 'default' || $mp === 'inherit') {
                     $mp = 'relay';
                 }
-                if ($mp === 'record') {
-                    $mp = 'relay';
-                }
-                $set['media_policy'] = in_array($mp, ['direct', 'relay'], true) ? $mp : 'relay';
+                $set['media_policy'] = in_array($mp, ['direct', 'relay', 'record'], true) ? $mp : 'relay';
             }
         }
 
@@ -131,13 +128,25 @@ final class OpensipsProvisioner
             $db->prepare($sql)->execute(array_values($insert));
         }
 
-        // Fixed-host SIP users → permissions address (customer group)
+        // Fixed-host SIP users → permissions address (customer group); honour sip_port
         if ($account !== null && $this->tableExists('address')) {
             $host = trim((string) ($account['sip_host'] ?? 'dynamic'));
             $ctx = 'sip:' . $username;
             $db->prepare('DELETE FROM address WHERE grp = ? AND context_info = ?')->execute([self::GRP_CUSTOMER, $ctx]);
             if ($host !== '' && strtolower($host) !== 'dynamic' && filter_var($host, FILTER_VALIDATE_IP)) {
-                $this->upsertAddress(self::GRP_CUSTOMER, $host, str_contains($host, ':') ? 128 : 32, 0, 'any', $ctx);
+                $port = (int) ($account['sip_port'] ?? 5060);
+                if ($port < 0 || $port > 65535) {
+                    $port = 5060;
+                }
+                // 0 = any port (OpenSIPS address semantics)
+                $this->upsertAddress(
+                    self::GRP_CUSTOMER,
+                    $host,
+                    str_contains($host, ':') ? 128 : 32,
+                    $port,
+                    'any',
+                    $ctx
+                );
             }
         }
     }
@@ -515,23 +524,87 @@ final class OpensipsProvisioner
         return [];
     }
 
-    /** Sync SIP media/call-limit into OpenSIPS for dialplan lookups. */
-    public function syncSipPeerProfile(string $username, string $mediaPolicy, int $maxChannels): void
+    /**
+     * Sync SIP peer profile into OpenSIPS for dialplan / media lookups.
+     *
+     * @param array<string,mixed>|null $account optional codecs, dtmf, nat, etc.
+     */
+    public function syncSipPeerProfile(string $username, string $mediaPolicy, int $maxChannels, ?array $account = null): void
     {
         $db = $this->db();
         $db->exec(
             'CREATE TABLE IF NOT EXISTS ownswitch_sip (
                 username VARCHAR(64) NOT NULL PRIMARY KEY,
                 media_policy VARCHAR(16) NOT NULL DEFAULT \'relay\',
-                max_channels INT UNSIGNED NOT NULL DEFAULT 2,
+                max_channels INT NOT NULL DEFAULT 2,
+                sip_port INT UNSIGNED NOT NULL DEFAULT 5060,
+                codecs VARCHAR(190) NULL,
+                dtmfmode VARCHAR(32) NULL,
+                nat VARCHAR(64) NULL,
+                insecure VARCHAR(64) NULL,
+                peer_type VARCHAR(16) NULL,
+                qualify VARCHAR(8) NULL,
+                allowtransfer VARCHAR(8) NULL,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
+        foreach ([
+            'sip_port INT UNSIGNED NOT NULL DEFAULT 5060',
+            'codecs VARCHAR(190) NULL',
+            'dtmfmode VARCHAR(32) NULL',
+            'nat VARCHAR(64) NULL',
+            'insecure VARCHAR(64) NULL',
+            'peer_type VARCHAR(16) NULL',
+            'qualify VARCHAR(8) NULL',
+            'allowtransfer VARCHAR(8) NULL',
+        ] as $colDef) {
+            $col = explode(' ', $colDef, 2)[0];
+            try {
+                $db->exec("ALTER TABLE ownswitch_sip ADD COLUMN {$colDef}");
+            } catch (\Throwable) {
+                // column already exists
+            }
+            unset($col);
+        }
+        // Allow -1 unlimited in max_channels
+        try {
+            $db->exec('ALTER TABLE ownswitch_sip MODIFY max_channels INT NOT NULL DEFAULT 2');
+        } catch (\Throwable) {
+        }
+
+        $port = (int) ($account['sip_port'] ?? 5060);
+        if ($port < 0 || $port > 65535) {
+            $port = 5060;
+        }
         $st = $db->prepare(
-            'INSERT INTO ownswitch_sip (username, media_policy, max_channels) VALUES (?,?,?)
-             ON DUPLICATE KEY UPDATE media_policy = VALUES(media_policy), max_channels = VALUES(max_channels)'
+            'INSERT INTO ownswitch_sip
+                (username, media_policy, max_channels, sip_port, codecs, dtmfmode, nat, insecure, peer_type, qualify, allowtransfer)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE
+                media_policy = VALUES(media_policy),
+                max_channels = VALUES(max_channels),
+                sip_port = VALUES(sip_port),
+                codecs = VALUES(codecs),
+                dtmfmode = VALUES(dtmfmode),
+                nat = VALUES(nat),
+                insecure = VALUES(insecure),
+                peer_type = VALUES(peer_type),
+                qualify = VALUES(qualify),
+                allowtransfer = VALUES(allowtransfer)'
         );
-        $st->execute([$username, $mediaPolicy, max(1, $maxChannels)]);
+        $st->execute([
+            $username,
+            $mediaPolicy,
+            (int) $maxChannels,
+            $port,
+            isset($account['codecs']) ? mb_substr((string) $account['codecs'], 0, 190) : null,
+            isset($account['dtmfmode']) ? mb_substr((string) $account['dtmfmode'], 0, 32) : null,
+            isset($account['nat']) ? mb_substr((string) $account['nat'], 0, 64) : null,
+            isset($account['insecure']) ? mb_substr((string) $account['insecure'], 0, 64) : null,
+            isset($account['peer_type']) ? mb_substr((string) $account['peer_type'], 0, 16) : null,
+            isset($account['qualify']) ? mb_substr((string) $account['qualify'], 0, 8) : null,
+            isset($account['allowtransfer']) ? mb_substr((string) $account['allowtransfer'], 0, 8) : null,
+        ]);
     }
 
     public function removeSipPeerProfile(string $username): void

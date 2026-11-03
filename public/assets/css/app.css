@@ -277,37 +277,77 @@ a { text-decoration: none; color: inherit; }
   overflow: hidden;
 }
 .os-table-wrap > .os-empty { padding: 2rem 1rem; }
-.os-table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.os-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+}
+/* Generic os-table (dashboards / reports also use this class with Bootstrap .table) */
 .os-table {
   width: 100%;
   margin: 0;
-  border-collapse: collapse;
-  table-layout: auto;
-}
-.os-table > :not(caption) > * > * {
-  box-sizing: border-box;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 .os-table thead th {
   font-size: .72rem; text-transform: uppercase; letter-spacing: .05em;
   color: var(--os-muted); font-weight: 700;
-  border-bottom: 1px solid var(--os-line);
   background: #f7f9fb;
-  white-space: nowrap;
+  border-bottom: 1px solid var(--os-line);
   vertical-align: middle;
-  padding: .7rem .9rem;
+  padding: .65rem .85rem;
+  white-space: nowrap;
 }
 .os-table tbody td {
   vertical-align: middle;
-  padding: .7rem .9rem;
+  padding: .65rem .85rem;
   border-bottom: 1px solid var(--os-line);
 }
 .os-table tbody tr:last-child td { border-bottom: 0; }
-.os-col-id { width: 4.5rem; white-space: nowrap; }
-.os-col-actions { width: 1%; white-space: nowrap; }
+
+/* CRUD list: grow with content + sticky Actions so columns never crush into each other */
+.os-table-scroll > .os-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+.os-table-scroll > .os-table thead th,
+.os-table-scroll > .os-table tbody td {
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 14rem;
+}
+.os-table-scroll > .os-table thead th {
+  position: sticky; top: 0; z-index: 2;
+}
+.os-table-scroll > .os-table tbody td { background: var(--os-card); }
+.os-table-scroll > .os-table tbody tr:hover td { background: #f8fafc; }
+.os-table-scroll > .os-table .os-col-id { width: 4rem; max-width: 4rem; }
+.os-table-scroll > .os-table .os-col-actions {
+  width: 9rem;
+  min-width: 9rem;
+  max-width: none;
+  overflow: visible;
+  text-align: right !important;
+  position: sticky; right: 0; z-index: 2;
+  background: var(--os-card) !important;
+  box-shadow: -8px 0 10px -8px rgba(15, 23, 42, .18);
+}
+.os-table-scroll > .os-table thead th.os-col-actions {
+  background: #f7f9fb !important;
+  z-index: 4;
+}
+.os-table-scroll > .os-table tbody tr:hover td.os-col-actions { background: #f8fafc !important; }
 .os-actions-inner {
   display: inline-flex; align-items: center; justify-content: flex-end; gap: .35rem;
+  flex-wrap: nowrap;
 }
 .os-actions-inner form { display: inline-flex; margin: 0; }
+.os-table .badge { white-space: nowrap; }
 .os-num { text-align: right; font-variant-numeric: tabular-nums; }
 .os-empty { text-align: center; padding: 2rem 1rem; color: var(--os-muted); }
 .os-empty-title { font-weight: 700; color: var(--os-ink); margin-bottom: .35rem; }

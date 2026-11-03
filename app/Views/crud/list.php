@@ -9,7 +9,7 @@ $cell = static function (array $f, mixed $v): string {
         return '<span class="text-muted">—</span>';
     }
     if (($f['type'] ?? '') === 'select' && isset($f['options'][$v])) {
-        $label = (string) $f['options'][$v];
+        $label = (string) ($f['list_options'][$v] ?? $f['options'][$v]);
         if ($f['name'] === 'status') {
             $cls = ['active' => 'success', 'suspended' => 'warning', 'disabled' => 'secondary', 'closed' => 'dark'][$v] ?? 'secondary';
             return '<span class="badge text-bg-' . e($cls) . '">' . e($label) . '</span>';
@@ -49,11 +49,11 @@ $cell = static function (array $f, mixed $v): string {
         return '<span class="os-mono">' . e((string) $v) . '</span>';
     }
     if (($f['name'] ?? '') === 'reg_status') {
-        $online = ($v === 'registered' || $v === 'online' || $v === 'Active');
+        $online = ($v === 'registered' || $v === 'online' || $v === 'Active' || $v === 'reachable');
         $cls = $online ? 'success' : 'secondary';
         return '<span class="badge text-bg-' . $cls . '">' . e((string) $v) . '</span>';
     }
-    return e($v);
+    return e((string) $v);
 };
 $statusField = null;
 foreach ($fields as $f) {
@@ -61,6 +61,7 @@ foreach ($fields as $f) {
         $statusField = $f;
     }
 }
+$colCount = 1 + count($cols) + 1;
 ?>
 <div class="os-page-head">
     <div>
@@ -104,27 +105,34 @@ foreach ($fields as $f) {
             <?php endif; ?>
         </div>
     <?php else: ?>
-        <div class="table-responsive os-table-scroll">
-            <table class="table table-hover table-sm mb-0 os-table align-middle">
-                <thead><tr>
-                    <th scope="col" class="os-col-id">ID</th>
-                    <?php foreach ($cols as $c): ?><th scope="col"><?= e($c['label']) ?></th><?php endforeach; ?>
-                    <th scope="col" class="text-end os-col-actions">Actions</th>
-                </tr></thead>
+        <div class="os-table-scroll">
+            <table class="os-table">
+                <colgroup>
+                    <col class="os-col-id">
+                    <?php foreach ($cols as $_): ?><col><?php endforeach; ?>
+                    <col class="os-col-actions">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th scope="col" class="os-col-id">ID</th>
+                        <?php foreach ($cols as $c): ?><th scope="col"><?= e($c['label']) ?></th><?php endforeach; ?>
+                        <th scope="col" class="os-col-actions">Actions</th>
+                    </tr>
+                </thead>
                 <tbody>
                 <?php foreach ($result['rows'] as $row): ?>
                     <tr>
                         <td class="os-mono os-col-id"><?= e($row['id']) ?></td>
                         <?php foreach ($cols as $c): ?><td><?= $cell($c, $row[$c['name']] ?? null) ?></td><?php endforeach; ?>
-                        <td class="text-end os-actions os-col-actions">
+                        <td class="os-col-actions">
                             <div class="os-actions-inner">
                                 <a class="btn btn-outline-secondary btn-sm" href="<?= e(url($base . '/' . (int) $row['id'] . '/edit')) ?>">
-                                    <i class="bi bi-<?= $canWrite ? 'pencil' : 'eye' ?> me-1"></i><?= $canWrite ? 'Edit' : 'View' ?>
+                                    <i class="bi bi-<?= $canWrite ? 'pencil' : 'eye' ?>"></i> <?= $canWrite ? 'Edit' : 'View' ?>
                                 </a>
                                 <?php if ($canWrite): ?>
                                     <form method="post" action="<?= e(url($base . '/' . (int) $row['id'] . '/delete')) ?>" data-confirm="Delete this <?= e(strtolower($singular)) ?>? This cannot be undone.">
                                         <?= csrf_field() ?>
-                                        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+                                        <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Delete"><i class="bi bi-trash"></i></button>
                                     </form>
                                 <?php endif; ?>
                             </div>
@@ -137,3 +145,4 @@ foreach ($fields as $f) {
         <?php include __DIR__ . '/../partials/pagination.php'; ?>
     <?php endif; ?>
 </div>
+<?php unset($colCount); ?>

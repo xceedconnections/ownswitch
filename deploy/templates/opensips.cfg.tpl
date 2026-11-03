@@ -131,7 +131,11 @@ route {
 	if (has_totag()) {
 		if (loose_route()) {
 			if (is_method("INVITE|ACK|BYE|UPDATE|PRACK") && $avp(os_media) != "direct") {
-				rtpengine_manage();
+				if ($avp(os_media) == "record") {
+					rtpengine_manage("replace-session-connection replace-origin ICE=remove recording-label=$ci");
+				} else {
+					rtpengine_manage();
+				}
 			}
 			route(relay);
 		} else {
@@ -248,10 +252,15 @@ route[inbound_from_carrier] {
 	route(relay);
 }
 
-# Direct = skip RTPengine; Relay = rtpengine_manage()
+# Direct = skip RTPengine; Relay = rtpengine_manage(); Record = rtpengine + recording
 route[apply_media] {
 	if ($avp(os_media) == "direct") {
 		xlog("L_INFO", "media=direct for $fU (no rtpengine)\n");
+		return;
+	}
+	if ($avp(os_media) == "record") {
+		xlog("L_INFO", "media=record for $fU (rtpengine + record)\n");
+		rtpengine_manage("replace-session-connection replace-origin ICE=remove recording-label=$ci");
 		return;
 	}
 	rtpengine_manage();
