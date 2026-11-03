@@ -35,8 +35,8 @@ final class CustomerController extends CrudController
     {
         $staff = $this->scope($r)->isStaff();
         $f = [
-            ['name' => 'name', 'label' => 'Username', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'Portal account / login label', 'section' => 'Account'],
-            ['name' => 'contact_email', 'label' => 'Email (portal login)', 'type' => 'email', 'required' => true, 'max' => 190, 'list' => true, 'help' => 'Used to sign in at /login and see CDR, balance, reports', 'section' => 'Account'],
+            ['name' => 'name', 'label' => 'Username', 'required' => true, 'max' => 120, 'list' => true, 'help' => 'Portal login username (also accepted at /login)', 'section' => 'Account'],
+            ['name' => 'contact_email', 'label' => 'Email (portal login)', 'type' => 'email', 'required' => true, 'max' => 190, 'list' => true, 'help' => 'Email or Username both work at /login', 'section' => 'Account'],
             [
                 'name' => 'portal_password',
                 'label' => 'Portal password',
@@ -168,7 +168,9 @@ final class CustomerController extends CrudController
             App::session()->flash('warning', 'User saved, but portal login failed: ' . $res['detail']);
             return null;
         }
-        return $res['detail'] . ' They sign in with email + portal password to view CDR, balance and reports.';
+        // Refresh OpenSIPS allow_calls when prepaid balance / status changes
+        \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig()->refreshAllowCallsForCustomer($id);
+        return $res['detail'] . ' Sign in with username or email + portal password.';
     }
 
     protected function beforeDelete(Request $r, array $row): ?string

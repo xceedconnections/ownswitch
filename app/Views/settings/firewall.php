@@ -3,6 +3,7 @@
 $s = $status;
 $available = !empty($available);
 $banned = $s['banned'] ?? [];
+$details = $s['ban_details'] ?? [];
 ?>
 <div class="os-page-head">
     <div>
@@ -26,7 +27,7 @@ $banned = $s['banned'] ?? [];
 <?php endif; ?>
 
 <div class="row g-3">
-    <div class="col-lg-5">
+    <div class="col-lg-4">
         <div class="os-panel p-3">
             <h2 class="h6 mb-3">Ban thresholds</h2>
             <form method="post" action="<?= e(url('/settings/firewall/config')) ?>">
@@ -42,16 +43,13 @@ $banned = $s['banned'] ?? [];
                 <div class="mb-3">
                     <label class="form-label" for="findtime">Window (findtime)</label>
                     <input class="form-control form-control-sm" id="findtime" name="findtime" value="<?= e((string) ($s['findtime'] ?? '10m')) ?>" required<?= !$available ? ' disabled' : '' ?>>
-                    <div class="form-text">Examples: 10m, 1h</div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label" for="bantime">Ban duration</label>
                     <input class="form-control form-control-sm" id="bantime" name="bantime" value="<?= e((string) ($s['bantime'] ?? '1h')) ?>" required<?= !$available ? ' disabled' : '' ?>>
-                    <div class="form-text">Examples: 1h, 24h, 1d</div>
                 </div>
                 <button type="submit" class="btn btn-primary btn-sm" data-once<?= !$available ? ' disabled' : '' ?>>Save</button>
             </form>
-            <p class="small text-muted mt-3 mb-0">Counts password failures on REGISTER and INVITE only. IP-auth trunks (address table) are not counted.</p>
         </div>
 
         <div class="os-panel p-3 mt-3">
@@ -69,23 +67,44 @@ $banned = $s['banned'] ?? [];
         </div>
     </div>
 
-    <div class="col-lg-7">
+    <div class="col-lg-8">
         <div class="os-panel overflow-hidden">
             <div class="px-3 py-2 border-bottom d-flex justify-content-between align-items-center">
                 <span class="fw-semibold">Currently banned</span>
                 <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/settings/firewall')) ?>"><i class="bi bi-arrow-clockwise"></i></a>
             </div>
             <?php if ($banned === []): ?>
-                <div class="os-empty py-4"><div class="os-empty-title">No banned IPs</div><div>Attackers hitting wrong SIP passwords will appear here after <?= e((string) ($s['maxretry'] ?? '5')) ?> failures.</div></div>
+                <div class="os-empty py-4"><div class="os-empty-title">No banned IPs</div><div>Attackers with wrong SIP passwords appear here after <?= e((string) ($s['maxretry'] ?? '5')) ?> failures.</div></div>
             <?php else: ?>
                 <div class="table-responsive">
                     <table class="table table-sm mb-0 os-table">
-                        <thead><tr><th>IP</th><th></th></tr></thead>
+                        <thead><tr><th>IP</th><th>Country</th><th>Why banned</th><th>Recent attempts</th><th></th></tr></thead>
                         <tbody>
-                        <?php foreach ($banned as $ip): ?>
+                        <?php foreach ($banned as $ip):
+                            $d = $details[$ip] ?? ['country' => '—', 'city' => '', 'isp' => '', 'reason' => '—', 'attempts' => []];
+                            ?>
                             <tr>
-                                <td class="os-mono"><?= e($ip) ?></td>
-                                <td class="text-end">
+                                <td class="os-mono">
+                                    <?= e($ip) ?>
+                                    <?php if (($d['isp'] ?? '') !== ''): ?><div class="small text-muted"><?= e($d['isp']) ?></div><?php endif; ?>
+                                </td>
+                                <td>
+                                    <?= e((string) ($d['country'] ?? '—')) ?>
+                                    <?php if (($d['city'] ?? '') !== ''): ?><div class="small text-muted"><?= e($d['city']) ?></div><?php endif; ?>
+                                </td>
+                                <td class="small"><?= e((string) ($d['reason'] ?? '—')) ?></td>
+                                <td class="small">
+                                    <?php if (($d['attempts'] ?? []) === []): ?>
+                                        <span class="text-muted">No journal lines captured</span>
+                                    <?php else: ?>
+                                        <ul class="mb-0 ps-3" style="max-height:7rem;overflow:auto">
+                                            <?php foreach ($d['attempts'] as $line): ?>
+                                                <li class="os-mono" style="font-size:.7rem"><?= e($line) ?></li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="text-end text-nowrap">
                                     <form method="post" action="<?= e(url('/settings/firewall/unban')) ?>" class="d-inline" data-confirm="Unban <?= e($ip) ?>?">
                                         <?= csrf_field() ?>
                                         <input type="hidden" name="ip" value="<?= e($ip) ?>">
@@ -99,6 +118,6 @@ $banned = $s['banned'] ?? [];
                 </div>
             <?php endif; ?>
         </div>
-        <p class="small text-muted mt-2 mb-0">Helper: <code><?= e($helperPath) ?></code> · Also protects SSH via the installer fail2ban jail.</p>
+        <p class="small text-muted mt-2 mb-0">Helper: <code><?= e($helperPath) ?></code></p>
     </div>
 </div>

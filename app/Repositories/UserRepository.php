@@ -38,6 +38,27 @@ final class UserRepository extends BaseRepository
         return $row === false ? null : $row;
     }
 
+    /** Login by email or portal username (`users.name` / customers.Username). */
+    public function findByLogin(string $login): ?array
+    {
+        $login = trim($login);
+        if ($login === '') {
+            return null;
+        }
+        $byEmail = $this->findByEmail(mb_strtolower($login));
+        if ($byEmail !== null) {
+            return $byEmail;
+        }
+        $st = $this->pdo->prepare(
+            'SELECT u.*, r.code AS role FROM users u
+             JOIN roles r ON r.id = u.role_id
+             WHERE LOWER(u.name) = LOWER(?) LIMIT 1'
+        );
+        $st->execute([$login]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $row;
+    }
+
     public function roleId(string $code): ?int
     {
         $st = $this->pdo->prepare('SELECT id FROM roles WHERE code = ?');

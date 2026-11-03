@@ -70,7 +70,7 @@ modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("auth_db", "calculate_ha1", 1)
 modparam("auth_db", "password_column", "password")
 # Load SIP Directmedia / DTMF pass / CallerID mode from subscriber into AVPs
-modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid")
+modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid;$avp(os_cid_min)=cid_min_len;$avp(os_cid_max)=cid_max_len;$avp(os_allow)=allow_calls")
 # Username-only match (ignore Domain in subscriber row)
 modparam("auth_db", "use_domain", 0)
 
@@ -238,6 +238,13 @@ route {
 		consume_credentials();
 	}
 
+	# Disabled SIP / prepaid empty balance → Payment Required (before ACC / dialog — no CDR)
+	if ($avp(os_allow) != NULL && $(avp(os_allow){s.int}) == 0) {
+		xlog("L_WARN", "Payment Required user=$au from=$si\n");
+		send_reply(402, "Payment Required");
+		exit;
+	}
+
 	# DID → SIP user (when alias_db is loaded)
 	@@OPENSIPS_ALIAS_LOOKUP@@
 
@@ -279,9 +286,9 @@ route {
 		$dlg_val(os_dtmf) = "yes";
 	}
 
-	# credit control: fail-open until CGRateS accounts/rates are provisioned
+	# CGRateS: accounting when available; portal prepaid empty balance already blocked via allow_calls
 	if (!cgrates_auth()) {
-		xlog("L_WARN", "cgrates_auth failed for $fU -> $rU from $si (allowing call)\n");
+		xlog("L_WARN", "cgrates_auth failed user=$au to=$rU from=$si (continuing; portal allow_calls enforced)\n");
 	} else {
 		cgrates_acc("cdr|missed");
 	}
@@ -307,7 +314,9 @@ route {
 
 	route(apply_ruri_strip);
 	route(apply_sip_cid);
+	route(check_cid_len);
 	route(apply_trunk_attrs);
+	route(check_trunk_cid_len);
 	route(acc_cli_gw);
 	route(relay);
 }
@@ -467,6 +476,44 @@ route[apply_trunk_attrs] {
 	}
 }
 
+# SIP-user CallerID digit length (from subscriber cid_min_len / cid_max_len)
+route[check_cid_len] {
+	$var(clid) = $(fU{re.subst,/[^0-9]//g});
+	$var(clen) = $(var(clid){s.len});
+	if ($avp(os_cid_min) != NULL && $(avp(os_cid_min){s.int}) > 0 && $var(clen) < $(avp(os_cid_min){s.int})) {
+		xlog("L_WARN", "Wrong CallerID Length min user=$au len=$var(clen)\n");
+		send_reply(484, "Wrong CallerID Length");
+		exit;
+	}
+	if ($avp(os_cid_max) != NULL && $(avp(os_cid_max){s.int}) > 0 && $var(clen) > $(avp(os_cid_max){s.int})) {
+		xlog("L_WARN", "Wrong CallerID Length max user=$au len=$var(clen)\n");
+		send_reply(484, "Wrong CallerID Length");
+		exit;
+	}
+}
+
+# Trunk attrs cidmin=/cidmax= after From rewrite
+route[check_trunk_cid_len] {
+	if ($avp(dr_gw_attrs) == NULL) {
+		return;
+	}
+	$var(attrs) = $avp(dr_gw_attrs);
+	$var(cmin) = $(var(attrs){param.value,cidmin});
+	$var(cmax) = $(var(attrs){param.value,cidmax});
+	$var(clid) = $(fU{re.subst,/[^0-9]//g});
+	$var(clen) = $(var(clid){s.len});
+	if ($var(cmin) != NULL && $(var(cmin){s.int}) > 0 && $var(clen) < $(var(cmin){s.int})) {
+		xlog("L_WARN", "Wrong CallerID Length trunk min len=$var(clen)\n");
+		send_reply(484, "Wrong CallerID Length");
+		exit;
+	}
+	if ($var(cmax) != NULL && $(var(cmax){s.int}) > 0 && $var(clen) > $(var(cmax){s.int})) {
+		xlog("L_WARN", "Wrong CallerID Length trunk max len=$var(clen)\n");
+		send_reply(484, "Wrong CallerID Length");
+		exit;
+	}
+}
+
 route[relay] {
 	if (!t_relay()) {
 		send_reply(500, "Internal Error");
@@ -496,7 +543,9 @@ failure_route[carrier_failover] {
 	if (use_next_gw()) {
 		route(apply_ruri_strip);
 		route(apply_sip_cid);
+		route(check_cid_len);
 		route(apply_trunk_attrs);
+		route(check_trunk_cid_len);
 		route(acc_cli_gw);
 		t_on_failure("carrier_failover");
 		t_relay();

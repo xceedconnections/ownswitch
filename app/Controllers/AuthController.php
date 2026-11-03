@@ -17,16 +17,19 @@ final class AuthController extends BaseController
         if (App::session()->userId() !== null) {
             return $this->redirect($r, '/');
         }
-        return $this->view('auth/login', ['title' => 'Sign in', 'error' => null, 'email' => '']);
+        return $this->view('auth/login', ['title' => 'Sign in', 'error' => null, 'email' => '', 'login' => '']);
     }
 
     public function login(Request $r, array $p = []): Response
     {
-        $email = is_string($r->post['email'] ?? null) ? (string) $r->post['email'] : '';
+        $login = is_string($r->post['login'] ?? null) ? (string) $r->post['login'] : '';
+        if ($login === '' && is_string($r->post['email'] ?? null)) {
+            $login = (string) $r->post['email']; // backwards compatible
+        }
         $pass = is_string($r->post['password'] ?? null) ? (string) $r->post['password'] : '';
-        $res = App::auth()->attempt($email, $pass, $r->ip());
+        $res = App::auth()->attempt($login, $pass, $r->ip());
         if (!$res['ok']) {
-            return $this->view('auth/login', ['title' => 'Sign in', 'error' => $res['error'], 'email' => $email], 401);
+            return $this->view('auth/login', ['title' => 'Sign in', 'error' => $res['error'], 'email' => $login, 'login' => $login], 401);
         }
         $r->setAttr('user', $res['user']);
         $this->audit($r, 'login', 'user', (int) $res['user']['id']);

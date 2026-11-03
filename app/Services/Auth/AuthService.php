@@ -25,42 +25,42 @@ final class AuthService
     /**
      * @return array{ok:bool,error?:string,user?:array<string,mixed>}  error messages are deliberately generic.
      */
-    public function attempt(string $email, string $password, string $ip): array
+    public function attempt(string $login, string $password, string $ip): array
     {
         $cfg = (array) App::config('security.auth', []);
-        $email = mb_strtolower(trim($email));
-        $generic = ['ok' => false, 'error' => 'Invalid email or password.'];
+        $login = trim($login);
+        $generic = ['ok' => false, 'error' => 'Invalid username/email or password.'];
 
         if ($this->ipThrottled($ip, (int) ($cfg['ip_window_minutes'] ?? 15), (int) ($cfg['ip_max_failures'] ?? 30))) {
             return ['ok' => false, 'error' => 'Too many attempts. Please try again later.'];
         }
-        $user = $this->users->findByEmail($email);
+        $user = $this->users->findByLogin($login);
         if ($user === null) {
             password_verify($password, self::dummy());
-            $this->logAttempt($ip, $email, false);
+            $this->logAttempt($ip, $login, false);
             return $generic;
         }
         if ($user['locked_until'] !== null && strtotime((string) $user['locked_until'] . ' UTC') > time()) {
             password_verify($password, self::dummy());
-            $this->logAttempt($ip, $email, false);
+            $this->logAttempt($ip, $login, false);
             return $generic;
         }
         $status = strtolower((string) ($user['status'] ?? ''));
         if ($status !== 'active') {
             password_verify($password, self::dummy());
-            $this->logAttempt($ip, $email, false);
+            $this->logAttempt($ip, $login, false);
             return ['ok' => false, 'error' => 'This account is disabled. Ask an admin to set the user Active and reset the portal password.'];
         }
         if (!password_verify($password, (string) $user['password_hash'])) {
             $this->users->recordFailure((int) $user['id'], (int) ($cfg['max_failed_logins'] ?? 5), (int) ($cfg['lockout_minutes'] ?? 15));
-            $this->logAttempt($ip, $email, false);
+            $this->logAttempt($ip, $login, false);
             return $generic;
         }
         if (password_needs_rehash((string) $user['password_hash'], PASSWORD_DEFAULT)) {
             $this->users->setPasswordHash((int) $user['id'], password_hash($password, PASSWORD_DEFAULT));
         }
         $this->users->recordSuccess((int) $user['id'], $ip);
-        $this->logAttempt($ip, $email, true);
+        $this->logAttempt($ip, $login, true);
         $this->session->login((int) $user['id']);   // regenerates session id
         unset($user['password_hash']);
         return ['ok' => true, 'user' => $user];

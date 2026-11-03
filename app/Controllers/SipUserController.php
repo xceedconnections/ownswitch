@@ -98,6 +98,24 @@ final class SipUserController extends CrudController
                 'section' => 'Account',
             ],
             [
+                'name' => 'cid_min_len',
+                'label' => 'Min CallerID length',
+                'type' => 'int',
+                'min' => 0,
+                'max' => 32,
+                'help' => 'Digits only. Example USA with country code: 11. 0/blank = no minimum. Shorter CLI → call rejected (Wrong CallerID Length).',
+                'section' => 'Account',
+            ],
+            [
+                'name' => 'cid_max_len',
+                'label' => 'Max CallerID length',
+                'type' => 'int',
+                'min' => 0,
+                'max' => 32,
+                'help' => 'Digits only. Example USA: 11. 0/blank = no maximum. Longer CLI → rejected.',
+                'section' => 'Account',
+            ],
+            [
                 'name' => 'status',
                 'label' => 'Status',
                 'type' => 'select',
@@ -381,6 +399,16 @@ final class SipUserController extends CrudController
         $data['caller_id_mode'] = $mode;
         $dp = strtolower(trim((string) ($data['dtmf_pass'] ?? 'yes')));
         $data['dtmf_pass'] = $dp === 'no' ? 'no' : 'yes';
+        foreach (['cid_min_len', 'cid_max_len'] as $k) {
+            if (!array_key_exists($k, $data) || $data[$k] === '' || $data[$k] === null) {
+                $data[$k] = null;
+            } else {
+                $data[$k] = max(0, (int) $data[$k]);
+                if ($data[$k] === 0) {
+                    $data[$k] = null;
+                }
+            }
+        }
         return $data;
     }
 

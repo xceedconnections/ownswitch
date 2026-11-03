@@ -69,6 +69,8 @@ final class CdrIngestService
             'customer_charge' => '0.000000', 'carrier_cost' => '0.000000', 'customer_connect_fee' => '0.000000',
             'carrier_connect_fee' => '0.000000', 'gross_margin' => '0.000000',
             'sip_response' => $d['sip_response'], 'disposition' => $d['disposition'], 'failure_reason' => $d['failure_reason'],
+            'source_ip' => $d['source_ip'] ?? null,
+            'media_ip' => $this->resolveMediaIp($d),
             'media_policy_requested' => $d['media_policy_requested'], 'media_policy_actual' => $d['media_policy_actual'],
             'recording_status' => $d['recording_status'], 'settlement_status' => $customer === null ? 'unattributed' : 'no_charge',
             'currency' => $customer['currency'] ?? null, 'is_demo' => 0,
@@ -183,7 +185,9 @@ final class CdrIngestService
             'carrier_trunk_id' => isset($raw['carrier_trunk_id']) && $raw['carrier_trunk_id'] !== '' ? (int) $raw['carrier_trunk_id'] : null,
             'routing_rule_id' => isset($raw['routing_rule_id']) && $raw['routing_rule_id'] !== '' ? (int) $raw['routing_rule_id'] : null,
             'username' => $str($raw['username'] ?? null, 64), 'domain' => $str($raw['domain'] ?? null, 128),
-            'source_ip' => $str($raw['source_ip'] ?? null, 45), 'customer_id' => isset($raw['customer_id']) ? (int) $raw['customer_id'] : null,
+            'source_ip' => $str($raw['source_ip'] ?? null, 45),
+            'media_ip' => $str($raw['media_ip'] ?? null, 64),
+            'customer_id' => isset($raw['customer_id']) ? (int) $raw['customer_id'] : null,
             'cgrates_cost' => ($cg === null || $cg === '') ? null : RatingService::round((string) $cg, 6),
             'media_policy_requested' => $str($raw['media_policy_requested'] ?? null, 16),
             'media_policy_actual' => $str($raw['media_policy_actual'] ?? null, 16),
@@ -274,6 +278,25 @@ final class CdrIngestService
         $st->execute([$trunkId]);
         $v = $st->fetchColumn();
         return $v === false ? null : (int) $v;
+    }
+
+    /** Prefer ACC/media_ip; else derive from media policy (direct = signalling IP, relay = switch public IP). */
+    private function resolveMediaIp(array $d): ?string
+    {
+        $raw = trim((string) ($d['media_ip'] ?? ''));
+        if ($raw !== '' && filter_var($raw, FILTER_VALIDATE_IP)) {
+            return mb_substr($raw, 0, 64);
+        }
+        $policy = strtolower(trim((string) ($d['media_policy_actual'] ?? $d['media_policy_requested'] ?? '')));
+        if ($policy === 'direct') {
+            $src = trim((string) ($d['source_ip'] ?? ''));
+            return $src !== '' ? mb_substr($src, 0, 64) : null;
+        }
+        if (in_array($policy, ['relay', 'record'], true)) {
+            $pub = trim((string) (\Ownswitch\App::config('app.integrations.opensips.public_ip', '') ?: ''));
+            return $pub !== '' ? mb_substr($pub, 0, 64) : null;
+        }
+        return null;
     }
 
     private function ts(mixed $v): ?string

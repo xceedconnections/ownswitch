@@ -101,6 +101,14 @@ final class OpensipsAccImporter
                 error_log('[ownswitch] opensips acc skip id=' . $id . ' table=' . $table);
                 break;
             }
+            // Disabled SIP / Payment Required: consume ACC row but do not create portal CDR / reports
+            $codeSkip = (int) ($payload['sip_response'] ?? 0);
+            if ($codeSkip === 402 || $this->isDisabledSipPayload($payload)) {
+                if ($id > $maxId) {
+                    $maxId = $id;
+                }
+                continue;
+            }
             try {
                 $ins->execute([json_encode($payload, JSON_THROW_ON_ERROR), 'opensips_' . $table]);
                 $this->recordAttemptLeg($payload);
@@ -211,6 +219,18 @@ final class OpensipsAccImporter
             $disposition = 'NO_ANSWER';
         }
 
+        $mediaPolicy = $this->mediaPolicyForUser($username);
+        $mediaIp = self::cleanToken((string) ($row['media_ip'] ?? ''));
+        if ($mediaIp === '' && $mediaPolicy === 'direct' && $sourceIp !== '') {
+            $mediaIp = $sourceIp;
+        }
+        if ($mediaIp === '' && in_array($mediaPolicy, ['relay', 'record'], true)) {
+            $pub = trim((string) (\Ownswitch\App::config('app.integrations.opensips.public_ip', '') ?: ''));
+            if ($pub !== '') {
+                $mediaIp = $pub;
+            }
+        }
+
         $payload = [
             'external_cdr_key' => 'osacc:' . $table . ':' . ($row['id'] ?? $callid),
             'sip_call_id' => mb_substr($callid, 0, 190),
@@ -218,6 +238,9 @@ final class OpensipsAccImporter
             'dst' => $dst,
             'username' => $username,
             'source_ip' => $sourceIp !== '' ? $sourceIp : null,
+            'media_ip' => $mediaIp !== '' ? $mediaIp : null,
+            'media_policy_requested' => $mediaPolicy,
+            'media_policy_actual' => $mediaPolicy,
             'setup_at' => is_string($setup) ? $setup : gmdate('Y-m-d H:i:s'),
             'end_at' => gmdate('Y-m-d H:i:s'),
             'duration' => $disposition === 'ANSWERED' ? max(0, $duration) : 0,
@@ -229,6 +252,24 @@ final class OpensipsAccImporter
             $payload['carrier_trunk_id'] = $trunkId;
         }
         return $payload;
+    }
+
+    private function mediaPolicyForUser(?string $username): string
+    {
+        $u = trim((string) $username);
+        if ($u === '') {
+            return 'relay';
+        }
+        try {
+            $st = $this->portalDb->prepare('SELECT media_policy FROM sip_accounts WHERE username = ? LIMIT 1');
+            $st->execute([$u]);
+            $mp = strtolower(trim((string) ($st->fetchColumn() ?: '')));
+            if (in_array($mp, ['direct', 'relay', 'record'], true)) {
+                return $mp;
+            }
+        } catch (\Throwable) {
+        }
+        return 'relay';
     }
 
     /** @param array<string,mixed> $payload */
@@ -288,6 +329,26 @@ final class OpensipsAccImporter
             $st = $this->portalDb->prepare('SELECT 1 FROM sip_accounts WHERE username = ? LIMIT 1');
             $st->execute([$username]);
             return (bool) $st->fetchColumn();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /** @param array<string,mixed> $payload */
+    private function isDisabledSipPayload(array $payload): bool
+    {
+        $u = trim((string) ($payload['sip_username'] ?? $payload['username'] ?? ''));
+        if ($u === '') {
+            $u = self::userPart((string) ($payload['src'] ?? ''));
+        }
+        if ($u === '') {
+            return false;
+        }
+        try {
+            $st = $this->portalDb->prepare("SELECT status FROM sip_accounts WHERE username = ? LIMIT 1");
+            $st->execute([$u]);
+            $status = $st->fetchColumn();
+            return $status !== false && strtolower((string) $status) !== 'active';
         } catch (\Throwable) {
             return false;
         }

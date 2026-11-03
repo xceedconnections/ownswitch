@@ -64,6 +64,10 @@ final class Fail2banService
             }
         }
         $list = array_values(array_unique($list));
+        $details = [];
+        foreach ($list as $ip) {
+            $details[$ip] = $this->banDetail($ip);
+        }
         return [
             'ok' => true,
             'detail' => ($kv['detail'] ?? '') !== '' ? (string) $kv['detail'] : 'ok',
@@ -71,11 +75,49 @@ final class Fail2banService
             'currently_banned' => (int) ($kv['currently_banned'] ?? count($list)),
             'total_banned' => (int) ($kv['total_banned'] ?? 0),
             'banned' => $list,
+            'ban_details' => $details,
             'maxretry' => (string) ($kv['maxretry'] ?? '5'),
             'findtime' => (string) ($kv['findtime'] ?? '10m'),
             'bantime' => (string) ($kv['bantime'] ?? '1h'),
             'jail_enabled' => (string) ($kv['jail_enabled'] ?? 'true'),
             'sip_port' => (string) ($kv['sip_port'] ?? '5060'),
+        ];
+    }
+
+    /**
+     * Why this IP was banned: geo + recent OpenSIPS auth-fail log lines.
+     *
+     * @return array{ip:string,country:string,city:string,isp:string,reason:string,attempts:list<string>}
+     */
+    public function banDetail(string $ip): array
+    {
+        $geo = \Ownswitch\Support\GeoIp::lookup($ip);
+        $attempts = [];
+        [$code, $out] = $this->run(['ip-log', $ip]);
+        if ($code === 0 && trim($out) !== '') {
+            foreach (preg_split("/\r\n|\n|\r/", trim($out)) ?: [] as $line) {
+                $line = trim($line);
+                if ($line !== '') {
+                    $attempts[] = $line;
+                }
+            }
+        }
+        $reason = 'SIP digest auth failures (wrong password) on port 5060';
+        $sample = $attempts !== [] ? $attempts[count($attempts) - 1] : '';
+        if (stripos($sample, 'REGISTER') !== false) {
+            $reason = 'Repeated REGISTER with wrong SIP password';
+        } elseif (stripos($sample, 'INVITE') !== false) {
+            $reason = 'Repeated INVITE with wrong SIP password';
+        } elseif ($attempts === []) {
+            $reason = 'Banned by opensips-auth jail (threshold reached) or manual ban';
+        }
+        return [
+            'ip' => $ip,
+            'country' => $geo['country'],
+            'city' => $geo['city'],
+            'isp' => $geo['isp'],
+            'reason' => $reason,
+            'attempts' => array_slice($attempts, -12),
         ];
     }
 

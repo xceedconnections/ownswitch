@@ -154,6 +154,15 @@ final class OpensipsProvisioner
                 }
                 $set['cid_mode'] = in_array($mode, ['passthrough', 'fixed', 'display_name'], true) ? $mode : 'passthrough';
             }
+            if (in_array('cid_min_len', $cols, true)) {
+                $set['cid_min_len'] = max(0, (int) ($account['cid_min_len'] ?? 0));
+            }
+            if (in_array('cid_max_len', $cols, true)) {
+                $set['cid_max_len'] = max(0, (int) ($account['cid_max_len'] ?? 0));
+            }
+            if (in_array('allow_calls', $cols, true)) {
+                $set['allow_calls'] = $this->customerAllowsCalls($account) ? 1 : 0;
+            }
         }
 
         if ($id) {
@@ -211,7 +220,81 @@ final class OpensipsProvisioner
         if ($this->tableExists('address')) {
             $db->prepare('DELETE FROM address WHERE grp = ? AND context_info = ?')->execute([self::GRP_CUSTOMER, 'sip:' . $username]);
         }
+        // Drop live registrations so disabled SIP cannot place calls
+        if ($this->tableExists('location')) {
+            try {
+                $db->prepare('DELETE FROM location WHERE username = ?')->execute([$username]);
+            } catch (\Throwable) {
+            }
+        }
+        if ($this->hasMi()) {
+            $this->miCall('ul_rm', ['AOR' => $username]);
+            $this->miCall('ul_rm', [$username]);
+        }
         unset($domain);
+    }
+
+    /** Disabled SIP / inactive customer / prepaid with no funds → allow_calls=0 → 402. */
+    private function customerAllowsCalls(array $account): bool
+    {
+        if (strtolower(trim((string) ($account['status'] ?? 'active'))) !== 'active') {
+            return false;
+        }
+        $cid = isset($account['customer_id']) ? (int) $account['customer_id'] : 0;
+        if ($cid <= 0) {
+            return true;
+        }
+        try {
+            $portal = \Ownswitch\App::db();
+            $st = $portal->prepare('SELECT billing_mode, credit_limit, status FROM customers WHERE id = ? LIMIT 1');
+            $st->execute([$cid]);
+            $c = $st->fetch(\PDO::FETCH_ASSOC);
+            if (!$c) {
+                return true;
+            }
+            if (strtolower((string) ($c['status'] ?? '')) !== 'active') {
+                return false;
+            }
+            if (strtolower((string) ($c['billing_mode'] ?? '')) !== 'prepaid') {
+                return true;
+            }
+            $bst = $portal->prepare('SELECT balance, reserved FROM balances WHERE customer_id = ? LIMIT 1');
+            $bst->execute([$cid]);
+            $b = $bst->fetch(\PDO::FETCH_ASSOC) ?: ['balance' => '0', 'reserved' => '0'];
+            $avail = (float) ($b['balance'] ?? 0) - (float) ($b['reserved'] ?? 0);
+            return $avail > 0.000001;
+        } catch (\Throwable) {
+            return true;
+        }
+    }
+
+    /** Re-push allow_calls for every active SIP account of a customer (after top-up / spend). */
+    public function refreshAllowCallsForCustomer(int $customerId): void
+    {
+        if ($customerId <= 0 || !$this->enabled()) {
+            return;
+        }
+        try {
+            $portal = \Ownswitch\App::db();
+            $st = $portal->prepare("SELECT * FROM sip_accounts WHERE customer_id = ? AND status = 'active'");
+            $st->execute([$customerId]);
+            foreach ($st->fetchAll(\PDO::FETCH_ASSOC) ?: [] as $row) {
+                $effective = \Ownswitch\Support\MediaPolicy::resolve(
+                    isset($row['media_policy']) ? (string) $row['media_policy'] : null,
+                    $portal
+                );
+                $row['_effective_media'] = $effective;
+                $this->upsertSubscriber(
+                    (string) $row['username'],
+                    (string) $row['domain'],
+                    (string) $row['ha1'],
+                    (string) ($row['ha1b'] ?? ''),
+                    $row
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] refreshAllowCallsForCustomer: ' . $e->getMessage());
+        }
     }
 
     public function upsertAddress(int $group, string $ip, int $mask, int $port, string $proto, string $context = ''): void
@@ -386,6 +469,14 @@ final class OpensipsProvisioner
             if ($v !== '') {
                 $parts[] = $k . '=' . rawurlencode($v);
             }
+        }
+        $cmin = (int) ($trunk['cid_min_len'] ?? 0);
+        $cmax = (int) ($trunk['cid_max_len'] ?? 0);
+        if ($cmin > 0) {
+            $parts[] = 'cidmin=' . $cmin;
+        }
+        if ($cmax > 0) {
+            $parts[] = 'cidmax=' . $cmax;
         }
         $rawRem = trim((string) ($trunk['remove_prefix'] ?? ''));
         if ($rawRem !== '') {
@@ -848,6 +939,9 @@ final class OpensipsProvisioner
             'media_policy VARCHAR(16) NOT NULL DEFAULT \'relay\'',
             'dtmf_pass VARCHAR(8) NOT NULL DEFAULT \'yes\'',
             'cid_mode VARCHAR(16) NOT NULL DEFAULT \'passthrough\'',
+            'cid_min_len INT UNSIGNED NOT NULL DEFAULT 0',
+            'cid_max_len INT UNSIGNED NOT NULL DEFAULT 0',
+            'allow_calls TINYINT(1) NOT NULL DEFAULT 1',
         ] as $colDef) {
             $col = explode(' ', $colDef, 2)[0];
             $cols = $this->columns('subscriber');

@@ -77,6 +77,8 @@ final class CarrierController extends CrudController
             ['name' => 'from_domain', 'label' => 'From domain', 'max' => 128],
             ['name' => 'cid_add_prefix', 'label' => 'CID add prefix', 'max' => 32],
             ['name' => 'cid_remove_prefix', 'label' => 'CID remove prefix', 'max' => 32],
+            ['name' => 'cid_min_len', 'label' => 'Min CallerID length', 'type' => 'int', 'min' => 0, 'max' => 32, 'help' => 'After trunk CID rewrite. USA+CC example: 11. 0/blank = off. Too short → reject (Wrong CallerID Length).'],
+            ['name' => 'cid_max_len', 'label' => 'Max CallerID length', 'type' => 'int', 'min' => 0, 'max' => 32, 'help' => 'After trunk CID rewrite. USA example: 11. 0/blank = off.'],
             ['name' => 'qualify', 'label' => 'Probe gateway', 'type' => 'select', 'options' => SipPeerOptions::YES_NO, 'default' => 'yes', 'help' => 'OpenSIPS probe_mode'],
             ['name' => 'max_channels', 'label' => 'Channels', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Soft limit for portal/reporting'],
             ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true, 'list_only' => true],
@@ -132,6 +134,16 @@ final class CarrierController extends CrudController
             foreach (['add_prefix', 'from_user', 'from_domain', 'cid_add_prefix', 'cid_remove_prefix'] as $k) {
                 if (array_key_exists($k, $data) && ($data[$k] === null || $data[$k] === '')) {
                     $data[$k] = null;
+                }
+            }
+            foreach (['cid_min_len', 'cid_max_len'] as $k) {
+                if (!array_key_exists($k, $data) || $data[$k] === '' || $data[$k] === null) {
+                    $data[$k] = null;
+                } else {
+                    $data[$k] = max(0, (int) $data[$k]);
+                    if ($data[$k] === 0) {
+                        $data[$k] = null;
+                    }
                 }
             }
             if (array_key_exists('remove_prefix', $data)) {

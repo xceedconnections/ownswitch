@@ -19,7 +19,7 @@ final class CarrierRepository extends BaseRepository
     {
         return new self($pdo, 'carrier_trunks',
             ['carrier_id', 'name', 'host', 'port', 'transport', 'add_prefix', 'remove_prefix',
-                'from_user', 'from_domain', 'cid_add_prefix', 'cid_remove_prefix', 'qualify',
+                'from_user', 'from_domain', 'cid_add_prefix', 'cid_remove_prefix', 'cid_min_len', 'cid_max_len', 'qualify',
                 'auth_username', 'auth_secret_enc', 'auth_mode', 'outbound_proxy',
                 'register_status', 'register_checked_at', 'max_channels', 'media_policy',
                 'initial_increment', 'subsequent_increment', 'default_rate', 'connect_fee', 'priority', 'status'],

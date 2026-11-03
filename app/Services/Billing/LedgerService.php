@@ -38,7 +38,7 @@ final class LedgerService
         }
         $affects = $e['affects_balance'] ?? true;
 
-        return $this->tx(function () use ($e, $affects): array {
+        $result = $this->tx(function () use ($e, $affects): array {
             $cid = (int) $e['customer_id'];
             $this->ensureBalanceRow($cid);
             $this->pdo->prepare('SELECT balance FROM balances WHERE customer_id = ? FOR UPDATE')->execute([$cid]);
@@ -47,7 +47,7 @@ final class LedgerService
             $dup->execute([$e['idempotency_key']]);
             $existing = $dup->fetchColumn();
             if ($existing !== false) {
-                return ['id' => (int) $existing, 'duplicate' => true];
+                return ['id' => (int) $existing, 'duplicate' => true, 'balance_changed' => false];
             }
 
             try {
@@ -64,7 +64,7 @@ final class LedgerService
             } catch (PDOException $ex) {
                 if ($ex->getCode() === '23000') {   // concurrent duplicate key
                     $dup->execute([$e['idempotency_key']]);
-                    return ['id' => (int) $dup->fetchColumn(), 'duplicate' => true];
+                    return ['id' => (int) $dup->fetchColumn(), 'duplicate' => true, 'balance_changed' => false];
                 }
                 throw $ex;
             }
@@ -73,8 +73,18 @@ final class LedgerService
                 $this->pdo->prepare('UPDATE balances SET balance = balance + ? WHERE customer_id = ?')
                     ->execute([RatingService::round($e['amount'], 6), $cid]);
             }
-            return ['id' => $id, 'duplicate' => false];
+            return ['id' => $id, 'duplicate' => false, 'balance_changed' => (bool) $affects];
         });
+        // Sync OpenSIPS allow_calls after top-up / spend (402 Payment Required gate)
+        if (!empty($result['balance_changed'])) {
+            try {
+                \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig()
+                    ->refreshAllowCallsForCustomer((int) $e['customer_id']);
+            } catch (\Throwable $ex) {
+                error_log('[ownswitch] allow_calls sync after ledger: ' . $ex->getMessage());
+            }
+        }
+        return ['id' => (int) $result['id'], 'duplicate' => (bool) $result['duplicate']];
     }
 
     /** Post a reversing entry that nets the original to zero. */

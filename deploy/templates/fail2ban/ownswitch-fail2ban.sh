@@ -149,6 +149,17 @@ cmd_reload() {
   echo "OK reloaded"
 }
 
+# Recent OpenSIPS auth-fail lines for an IP (why it was banned)
+cmd_ip_log() {
+  local ip="${1:-}"
+  [[ -n "$ip" ]] || die "usage: ip-log <ip>"
+  # Prefer journald for opensips.service
+  journalctl -u opensips --no-pager -n 800 2>/dev/null \
+    | grep -F "$ip" \
+    | grep -iE 'auth failed|REGISTER|INVITE|Forbidden|Unauthorized' \
+    | tail -n 40 || true
+}
+
 case "${1:-}" in
   status)     shift; cmd_status "$@" ;;
   banned)     shift; cmd_banned "$@" ;;
@@ -157,8 +168,9 @@ case "${1:-}" in
   config)     shift; cmd_config "$@" ;;
   set-config) shift; cmd_set_config "$@" ;;
   reload)     shift; cmd_reload "$@" ;;
+  ip-log)     shift; cmd_ip_log "$@" ;;
   *)
-    echo "usage: $0 {status|banned|unban|ban|config|set-config|reload}" >&2
+    echo "usage: $0 {status|banned|unban|ban|config|set-config|reload|ip-log}" >&2
     exit 2
     ;;
 esac

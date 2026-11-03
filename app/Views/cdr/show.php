@@ -3,12 +3,27 @@
 $legs = $legs ?? [];
 $code = (int) ($cdr['sip_response'] ?? 0);
 $codeLabel = \Ownswitch\Support\SipCode::label($code);
+$mediaPolicy = strtolower((string) ($cdr['media_policy_actual'] ?? $cdr['media_policy_requested'] ?? ''));
+$mediaIp = trim((string) ($cdr['media_ip'] ?? ''));
+if ($mediaIp === '') {
+    if ($mediaPolicy === 'direct') {
+        $mediaIp = 'peer (direct — not via switch)';
+    } elseif (in_array($mediaPolicy, ['relay', 'record'], true)) {
+        $pub = (string) \Ownswitch\App::config('app.integrations.opensips.public_ip', '');
+        $mediaIp = $pub !== '' ? $pub . ' (RTPengine relay)' : 'switch RTPengine';
+    } else {
+        $mediaIp = '—';
+    }
+}
+$sigIp = trim((string) ($cdr['source_ip'] ?? ''));
 $rows = [
     'UUID' => $cdr['uuid'], 'External key' => $cdr['external_cdr_key'], 'SIP Call-ID' => $cdr['sip_call_id'],
     'Customer' => $cdr['customer_name'] ?? '-', 'SIP user' => $cdr['sip_username'] ?? '-', 'CallerID' => $cdr['src'],
     'Destination (raw)' => $cdr['dst_raw'], 'Destination (normalised)' => $cdr['dst_normalized'],
     'Matched prefix' => $cdr['dst_prefix'], 'Setup (UTC)' => $cdr['setup_at'], 'Answer (UTC)' => $cdr['answer_at'], 'End (UTC)' => $cdr['end_at'],
     'Disposition' => $cdr['disposition'], 'SIP code' => $codeLabel, 'Failure reason' => $cdr['failure_reason'],
+    'Signalling IP' => $sigIp !== '' ? $sigIp : '—',
+    'Media IP' => $mediaIp,
     'Actual duration (s)' => $cdr['duration_actual'], 'Billable customer (s)' => $cdr['duration_billable_customer'],
     'Customer rate / min' => $cdr['customer_rate'], 'Customer I/S' => ($cdr['customer_initial'] ?? '-') . '/' . ($cdr['customer_subsequent'] ?? '-'),
     'Connection fee' => $cdr['customer_connect_fee'], 'Charge (total)' => $cdr['customer_charge'] . ' ' . $cdr['currency'],
@@ -40,7 +55,7 @@ if ($showCost) {
 <div class="os-panel col-xl-8 overflow-hidden mt-3" id="sip-trace">
     <div class="px-3 py-2 border-bottom fw-semibold"><i class="bi bi-diagram-3 me-1"></i>SIP failover trace</div>
     <table class="table table-sm mb-0 os-table">
-        <thead><tr><th>#</th><th>Trunk</th><th>Code</th><th>Disposition</th><th>Reason</th></tr></thead>
+        <thead><tr><th>#</th><th>Trunk</th><th>Code</th><th>Disposition</th><th>Reason</th><th>Media</th></tr></thead>
         <tbody>
         <?php foreach ($legs as $leg): ?>
             <tr>
@@ -49,6 +64,7 @@ if ($showCost) {
                 <td><?= e($leg['sip_code_label'] ?? (string) ($leg['sip_code'] ?? '—')) ?></td>
                 <td><?= e((string) ($leg['disposition'] ?? '—')) ?></td>
                 <td class="small text-muted"><?= e((string) ($leg['sip_reason'] ?? '')) ?></td>
+                <td class="os-mono small"><?= e($mediaIp) ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
