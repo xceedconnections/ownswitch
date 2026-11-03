@@ -64,9 +64,11 @@ import re, sys
 path, db_url = sys.argv[1:3]
 text = open(path, encoding="utf-8", errors="replace").read()
 
-# --- Remove illegal OpenSIPS 3.6 params ---
-text = re.sub(r'^[ \t]*modparam\(\s*"acc"\s*,\s*"db_extra"[^)]*\)\s*\n?', "", text, flags=re.M)
-text = re.sub(r'^[ \t]*modparam\(\s*"drouting"\s*,\s*"gw_attrs_avp"[^)]*\)\s*\n?', "", text, flags=re.M)
+# --- Remove illegal OpenSIPS 3.6 params + leftovers from nested-paren strip ---
+text = re.sub(r'^[ \t]*modparam\(\s*"acc"\s*,\s*"db_extra".*$', "", text, flags=re.M)
+text = re.sub(r'^[ \t]*;dst_user=.*$', "", text, flags=re.M)
+text = re.sub(r'^[ \t]*;src_user=.*$', "", text, flags=re.M)
+text = re.sub(r'^[ \t]*modparam\(\s*"drouting"\s*,\s*"gw_attrs_avp".*$', "", text, flags=re.M)
 
 def ensure_after_acc_load(src, block):
     if 'modparam("acc", "extra_fields"' in src:

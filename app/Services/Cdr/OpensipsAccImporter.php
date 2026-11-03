@@ -139,9 +139,13 @@ final class OpensipsAccImporter
         if ($dst === '') {
             $dst = $this->userPart((string) ($row['to_uri'] ?? $row['callee_id'] ?? $row['to_user'] ?? $row['ruri'] ?? ''));
         }
-        // Portal CDR validate() requires digits in destination
+        // Portal CDR validate() requires digits in destination — keep failed legs too
         if ($dst === '' || !preg_match('/\d/', $dst)) {
-            return null;
+            if ($src !== '' && preg_match('/\d/', $src)) {
+                $dst = '0'; // unknown dialed number; still record attempt for ASR
+            } else {
+                return null;
+            }
         }
         $setup = $row['time'] ?? $row['created'] ?? $row['setuptime'] ?? gmdate('Y-m-d H:i:s');
         $duration = (int) ($row['duration'] ?? $row['ms_duration'] ?? 0);
