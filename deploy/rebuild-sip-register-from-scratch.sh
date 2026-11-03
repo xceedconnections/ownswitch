@@ -92,12 +92,14 @@ MOD_DIR="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules
 MPATH="${MOD_DIR}/"
 echo "MPATH=$MPATH"
 # uri.so removed in OpenSIPS 3.x — do not require it
+# proto_udp.so / proto_tcp.so are BUILT INTO the opensips binary (no .so on disk)
+# but loadmodule "proto_udp.so" is still required in the cfg.
 for so in auth.so auth_db.so usrloc.so registrar.so sipmsgops.so db_mysql.so \
-          signaling.so sl.so tm.so rr.so maxfwd.so mi_fifo.so \
-          proto_udp.so proto_tcp.so; do
+          signaling.so sl.so tm.so rr.so maxfwd.so mi_fifo.so; do
   [[ -f "${MPATH}${so}" ]] || { echo "FATAL: missing ${so}"; ls "$MPATH" | head -n 100; exit 1; }
   echo "  OK ${so}"
 done
+echo "  OK proto_udp/proto_tcp (built-in to opensips binary)"
 if [[ -f "${MPATH}nathelper.so" ]]; then
   echo "  OK nathelper.so"
   USE_NATHELPER=1
