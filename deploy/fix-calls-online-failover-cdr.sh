@@ -15,13 +15,18 @@ git fetch origin main
 git reset --hard origin/main
 chattr -i "$CFG" 2>/dev/null || true
 
-# Patch failure_route failover status check
+# Patch failure_route — only call route() names that already exist in live cfg
 python3 - "$CFG" <<'PY'
 import re, sys
 path = sys.argv[1]
 text = open(path, encoding="utf-8", errors="replace").read()
-# Default pattern until settings sync
 pat = "408|480|486|503|500|502|504"
+defined = set(re.findall(r'(?:^|\n)\s*route\[([^\]]+)\]', text))
+calls = []
+for name in ("apply_ruri_strip", "apply_sip_cid", "apply_trunk_attrs", "acc_cli_gw"):
+    if name in defined:
+        calls.append(f"\t\troute({name});")
+call_block = ("\n".join(calls) + "\n") if calls else ""
 block = f'''failure_route[carrier_failover] {{
 \tif (t_was_cancelled()) {{
 \t\texit;
@@ -33,11 +38,7 @@ block = f'''failure_route[carrier_failover] {{
 \t}}
 \txlog("L_WARN", "failover after code=$T_reply_code trying next trunk\\n");
 \tif (use_next_gw()) {{
-\t\troute(apply_ruri_strip);
-\t\troute(apply_sip_cid);
-\t\troute(apply_trunk_attrs);
-\t\troute(acc_cli_gw);
-\t\tt_on_failure("carrier_failover");
+{call_block}\t\tt_on_failure("carrier_failover");
 \t\tt_relay();
 \t\texit;
 \t}}
@@ -60,7 +61,6 @@ if start >= 0:
 else:
     text += "\n" + block
 
-# Ensure gw_id_avp
 if 'gw_id_avp' not in text:
     text = re.sub(
         r'(modparam\(\s*"drouting"\s*,\s*"db_url"[^\n]*\n)',
@@ -69,7 +69,7 @@ if 'gw_id_avp' not in text:
     )
 
 open(path, "w", encoding="utf-8").write(text)
-print("OK failover_route")
+print("OK failover_route calls=", calls or ["(none — use_next_gw + t_relay only)"])
 PY
 
 opensips -c -f "$CFG"

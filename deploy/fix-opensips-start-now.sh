@@ -78,6 +78,94 @@ if "INVITE auth failed" not in text and 'proxy_authorize("", "subscriber")' in t
         text = text2
         print("inserted INVITE auth failed xlog")
 
+def defined_routes(src: str) -> set[str]:
+    return set(re.findall(r'(?:^|\n)\s*route\[([^\]]+)\]', src))
+
+def called_routes(src: str) -> set[str]:
+    return set(re.findall(r'\broute\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)', src))
+
+def replace_named_block(src: str, header: str, new_block: str) -> str:
+    start = src.find(header)
+    if start < 0:
+        return src + "\n" + new_block + "\n"
+    brace = src.find("{", start)
+    if brace < 0:
+        return src
+    depth = 0
+    i = brace
+    while i < len(src):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[:start] + new_block + src[i + 1 :]
+        i += 1
+    return src
+
+# Inject empty stubs for any route() call whose route[name] is missing
+# (common after failover patch on a minimal live cfg).
+needed = [
+    "apply_ruri_strip",
+    "apply_sip_cid",
+    "apply_trunk_attrs",
+    "acc_cli_gw",
+    "apply_media",
+    "relay",
+]
+defined = defined_routes(text)
+called = called_routes(text)
+missing = sorted(r for r in needed if r in called and r not in defined)
+stubs = []
+for name in missing:
+    stubs.append(f"route[{name}] {{\n\t# stub added by fix-opensips-start-now (was referenced but missing)\n}}")
+    print(f"stub route[{name}]")
+if stubs:
+    # Insert stubs just before failure_route if present, else append
+    stub_txt = "\n\n" + "\n\n".join(stubs) + "\n"
+    idx = text.find("failure_route[carrier_failover]")
+    if idx >= 0:
+        text = text[:idx] + stub_txt + text[idx:]
+    else:
+        text += stub_txt
+    defined = defined_routes(text)
+
+# Rewrite carrier_failover to only call routes that exist; keep t_check_status
+pat_codes = "408|480|486|503|500|502|504"
+m = re.search(r't_check_status\("([^"]+)"\)', text)
+if m and "|" in m.group(1):
+    pat_codes = m.group(1)
+# Prefer settings placeholder if still present
+if "@@FAILOVER_SIP_STATUS@@" in text:
+    pat_codes = "408|480|486|503|500|502|504"
+
+calls = []
+for name in ("apply_ruri_strip", "apply_sip_cid", "apply_trunk_attrs", "acc_cli_gw"):
+    if name in defined_routes(text):
+        calls.append(f"\t\troute({name});")
+call_block = ("\n".join(calls) + "\n") if calls else ""
+failover = f'''failure_route[carrier_failover] {{
+	if (t_was_cancelled()) {{
+		exit;
+	}}
+	if (!t_check_status("{pat_codes}")) {{
+		xlog("L_INFO", "failover skip: reply $T_reply_code not in failover list\\n");
+		rtpengine_delete();
+		exit;
+	}}
+	xlog("L_WARN", "failover after code=$T_reply_code trying next trunk\\n");
+	if (use_next_gw()) {{
+{call_block}		t_on_failure("carrier_failover");
+		t_relay();
+		exit;
+	}}
+	rtpengine_delete();
+}}
+'''
+if "failure_route[carrier_failover]" in text or "use_next_gw()" in text:
+    text = replace_named_block(text, "failure_route[carrier_failover]", failover)
+    print("rewrote failure_route[carrier_failover]")
+
 if text != orig:
     open(path, "w", encoding="utf-8").write(text)
     print("OK wrote sanitized opensips.cfg")
