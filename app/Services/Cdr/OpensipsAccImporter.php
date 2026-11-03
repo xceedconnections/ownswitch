@@ -95,18 +95,21 @@ final class OpensipsAccImporter
         $n = 0;
         foreach ($rows as $row) {
             $id = (int) ($row['id'] ?? 0);
-            if ($id > $maxId) {
-                $maxId = $id;
-            }
             $payload = $this->mapRow($row, $table);
             if ($payload === null) {
-                continue;
+                // Do not advance last_id past unmapped rows — retry next cycle
+                error_log('[ownswitch] opensips acc skip id=' . $id . ' table=' . $table);
+                break;
             }
             try {
                 $ins->execute([json_encode($payload, JSON_THROW_ON_ERROR), 'opensips_' . $table]);
                 $n++;
+                if ($id > $maxId) {
+                    $maxId = $id;
+                }
             } catch (\Throwable $e) {
                 error_log('[ownswitch] opensips acc queue: ' . $e->getMessage());
+                break;
             }
         }
         if ($maxId > $last) {
@@ -133,19 +136,19 @@ final class OpensipsAccImporter
         $reason = trim((string) ($row['sip_reason'] ?? ''));
         $src = trim((string) ($row['src_user'] ?? ''));
         $dst = trim((string) ($row['dst_user'] ?? ''));
-        if ($src === '') {
+        if ($src === '' || strcasecmp($src, 'null') === 0) {
             $src = $this->userPart((string) ($row['from_uri'] ?? $row['caller_id'] ?? $row['from_user'] ?? ''));
         }
-        if ($dst === '') {
+        if ($dst === '' || strcasecmp($dst, 'null') === 0) {
             $dst = $this->userPart((string) ($row['to_uri'] ?? $row['callee_id'] ?? $row['to_user'] ?? $row['ruri'] ?? ''));
         }
-        // Portal CDR validate() requires digits in destination — keep failed legs too
+        // ACC extras often NULL on older legs — still import for portal/ASR
+        if ($src === '') {
+            $src = 'unknown';
+        }
         if ($dst === '' || !preg_match('/\d/', $dst)) {
-            if ($src !== '' && preg_match('/\d/', $src)) {
-                $dst = '0'; // unknown dialed number; still record attempt for ASR
-            } else {
-                return null;
-            }
+            // validate() needs digits in dst
+            $dst = '0000000000';
         }
         $setup = $row['time'] ?? $row['created'] ?? $row['setuptime'] ?? gmdate('Y-m-d H:i:s');
         $duration = (int) ($row['duration'] ?? $row['ms_duration'] ?? 0);
