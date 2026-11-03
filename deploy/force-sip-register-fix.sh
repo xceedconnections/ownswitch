@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Emergency fix: Domain REGISTER was returning SIP 500 because the FQDN was not an
-# OpenSIPS local alias (IP REGISTER worked). Forces correct PUBLIC_IP, re-renders
-# opensips.cfg, verifies Domain REGISTER returns 401 (auth challenge) not 500.
+# MUST fix Domain REGISTER 483/500 and open REGISTER-without-auth on IP.
+# Run on the VoIP server as root (copy-paste exactly):
 #
 #   curl -fsSL https://raw.githubusercontent.com/xceedconnections/ownswitch/main/deploy/force-sip-register-fix.sh | sudo bash
-#   sudo bash /opt/ownswitch-src/deploy/force-sip-register-fix.sh USER 'Password'
+#
 set -euo pipefail
 [[ "$(id -u)" -eq 0 ]] || { echo "Run as root"; exit 1; }
 
@@ -15,6 +14,8 @@ SRC="${OWNSWITCH_SRC_DIR:-/opt/ownswitch-src}"
 OWN_ETC=/etc/ownswitch
 ENV_FILE="${OWN_ETC}/ownswitch.env"
 IC="${OWN_ETC}/install.conf"
+CFG=/etc/opensips/opensips.cfg
+
 cd "$SRC"
 git fetch origin main
 git reset --hard origin/main
@@ -24,88 +25,50 @@ DOMAIN="${DOMAIN:-voip.xceedconnections.com}"
 DNS_IP="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1; exit}' || true)"
 DETECT_IP="$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || true)"
 LOCAL_IPS="$(hostname -I 2>/dev/null || true)"
-
-# Prefer DNS A if it is assigned on this host; else detected egress IP
 PUBLIC_IP="$DETECT_IP"
 if [[ -n "$DNS_IP" && " $LOCAL_IPS " == *" $DNS_IP "* ]]; then
   PUBLIC_IP="$DNS_IP"
-elif [[ -n "$DNS_IP" && -z "$PUBLIC_IP" ]]; then
+elif [[ -z "$PUBLIC_IP" && -n "$DNS_IP" ]]; then
   PUBLIC_IP="$DNS_IP"
 fi
-[[ -n "$PUBLIC_IP" ]] || { echo "FATAL: cannot determine PUBLIC_IP"; exit 1; }
-
-echo "======== force-sip-register-fix ========"
-echo "DOMAIN=$DOMAIN"
-echo "DNS_IP=$DNS_IP"
-echo "DETECT_IP=$DETECT_IP"
-echo "LOCAL_IPS=$LOCAL_IPS"
-echo "PUBLIC_IP(forced)=$PUBLIC_IP"
-
-# Persist IPs for stage 50
-touch "$IC"
-grep -vE '^(PRIVATE_IP|PUBLIC_IP|OWNSWITCH_DOMAIN)=' "$IC" > /tmp/ic.$$ || true
+[[ -n "$PUBLIC_IP" ]] || { echo "FATAL: no PUBLIC_IP"; exit 1; }
 PRIV="$(echo "$LOCAL_IPS" | awk '{print $1}')"
-{
-  echo "OWNSWITCH_DOMAIN=${DOMAIN}"
-  echo "PUBLIC_IP=${PUBLIC_IP}"
-  echo "PRIVATE_IP=${PRIV}"
-  cat /tmp/ic.$$
-} > "$IC"
+
+echo "DOMAIN=$DOMAIN PUBLIC_IP=$PUBLIC_IP DNS=$DNS_IP LOCAL=$LOCAL_IPS"
+
+# Persist
+grep -vE '^(PRIVATE_IP|PUBLIC_IP|OWNSWITCH_DOMAIN)=' "$IC" > /tmp/ic.$$ 2>/dev/null || true
+{ echo "OWNSWITCH_DOMAIN=${DOMAIN}"; echo "PUBLIC_IP=${PUBLIC_IP}"; echo "PRIVATE_IP=${PRIV}"; cat /tmp/ic.$$; } > "$IC"
 rm -f /tmp/ic.$$
+grep -q '^OPENSIPS_SIP_DOMAIN=' "$ENV_FILE" 2>/dev/null && sed -i "s/^OPENSIPS_SIP_DOMAIN=.*/OPENSIPS_SIP_DOMAIN=${DOMAIN}/" "$ENV_FILE" || echo "OPENSIPS_SIP_DOMAIN=${DOMAIN}" >>"$ENV_FILE"
+grep -q '^SIP_PUBLIC_IP=' "$ENV_FILE" 2>/dev/null && sed -i "s/^SIP_PUBLIC_IP=.*/SIP_PUBLIC_IP=${PUBLIC_IP}/" "$ENV_FILE" || echo "SIP_PUBLIC_IP=${PUBLIC_IP}" >>"$ENV_FILE"
 
-# Env for portal softphone hints + provisioner
-touch "$ENV_FILE"
-grep -q '^OPENSIPS_SIP_DOMAIN=' "$ENV_FILE" && sed -i "s/^OPENSIPS_SIP_DOMAIN=.*/OPENSIPS_SIP_DOMAIN=${DOMAIN}/" "$ENV_FILE" || echo "OPENSIPS_SIP_DOMAIN=${DOMAIN}" >>"$ENV_FILE"
-grep -q '^SIP_PUBLIC_IP=' "$ENV_FILE" && sed -i "s/^SIP_PUBLIC_IP=.*/SIP_PUBLIC_IP=${PUBLIC_IP}/" "$ENV_FILE" || echo "SIP_PUBLIC_IP=${PUBLIC_IP}" >>"$ENV_FILE"
-
-export OWNSWITCH_DOMAIN="$DOMAIN" PUBLIC_IP="$PUBLIC_IP" PRIVATE_IP="$PRIV" SIP_PORT=5060
+export OWNSWITCH_DOMAIN="$DOMAIN" PUBLIC_IP="$PUBLIC_IP" PRIVATE_IP="$PRIV" SIP_PORT="${SIP_PORT:-5060}"
 bash "$SRC/deploy/fix-opensips-provision.sh" || true
 bash "$SRC/deploy/install.sh" --only 50 --yes --non-interactive
 
-echo
-echo "== Verify rendered aliases / auth =="
-CFG=/etc/opensips/opensips.cfg
-grep -nE '^alias=|^socket=|calculate_ha1|password_column|www_authorize|use_domain' "$CFG" || true
-if ! grep -q "alias=\"${DOMAIN}\"" "$CFG"; then
-  echo "FATAL: opensips.cfg missing alias for ${DOMAIN}"
+# Hard assertions on rendered config
+grep -q "alias=\"${DOMAIN}\"" "$CFG" || { echo "FATAL: missing alias $DOMAIN in $CFG"; exit 1; }
+grep -q "alias=\"${PUBLIC_IP}\"" "$CFG" || { echo "FATAL: missing alias $PUBLIC_IP in $CFG"; exit 1; }
+grep -q 'www_authorize' "$CFG" || { echo "FATAL: www_authorize missing"; exit 1; }
+# REGISTER must appear before Max-Forwards processing
+reg_line="$(grep -n 'is_method("REGISTER")' "$CFG" | head -1 | cut -d: -f1 || true)"
+mf_line="$(grep -n 'mf_process_maxfwd_header' "$CFG" | head -1 | cut -d: -f1 || true)"
+echo "REGISTER handler line=$reg_line  Max-Forwards line=$mf_line"
+if [[ -n "$reg_line" && -n "$mf_line" && "$reg_line" -gt "$mf_line" ]]; then
+  echo "FATAL: REGISTER handler is AFTER Max-Forwards — old cfg still live"
   exit 1
 fi
-if ! grep -q "alias=\"${PUBLIC_IP}\"" "$CFG"; then
-  echo "FATAL: opensips.cfg missing alias for ${PUBLIC_IP}"
-  exit 1
-fi
-if ! grep -q 'calculate_ha1", 0' "$CFG" && ! grep -q 'calculate_ha1",0' "$CFG"; then
-  echo "WARN: expected calculate_ha1=0"
-fi
-if ! grep -q 'www_authorize' "$CFG"; then
-  echo "FATAL: www_authorize missing — REGISTER would be open/broken"
-  exit 1
-fi
+grep -nE '^alias=|^socket=|calculate_ha1|www_authorize|rewritehost|is_method\("REGISTER"\)' "$CFG" | head -n 40
 
 opensips -c -f "$CFG"
 systemctl restart opensips
 sleep 2
-systemctl is-active opensips
-ss -ulnp | grep ':5060' || echo "FAIL: no UDP 5060"
-ss -tlnp | grep ':5060' || echo "WARN: no TCP 5060"
+systemctl --no-pager -l status opensips | head -n 20 || true
 
-# Align portal SIP domains + push HA1
-mysql --protocol=socket -uroot ownswitch -e "UPDATE sip_accounts SET domain='${DOMAIN}';" 2>/dev/null || true
-bash "$SRC/deploy/refresh-ui.sh" || true
-CUR="$(readlink -f /opt/ownswitch/current)"
-runuser -u ownswitch -- env OWNSWITCH_ENV_FILE="$ENV_FILE" php "$CUR/bin/sync-opensips-sip-users.php" || \
-  env OWNSWITCH_ENV_FILE="$ENV_FILE" php "$CUR/bin/sync-opensips-sip-users.php" || true
-
-command -v ufw >/dev/null && {
-  ufw allow 5060/udp || true
-  ufw allow 5060/tcp || true
-  ufw allow 30000:40000/udp || true
-}
-
-probe_register() {
+probe() {
   local host="$1"
-  local out
-  out="$(PROBE_HOST="$host" python3 - <<'PY'
+  PROBE_HOST="$host" python3 - <<'PY'
 import os, socket
 host = os.environ["PROBE_HOST"]
 msg = (
@@ -114,7 +77,7 @@ msg = (
   f"Max-Forwards: 70\r\n"
   f"From: <sip:forceprobe@{host}>;tag=force\r\n"
   f"To: <sip:forceprobe@{host}>\r\n"
-  f"Call-ID: force@127.0.0.1\r\n"
+  f"Call-ID: force-{host}@127.0.0.1\r\n"
   f"CSeq: 1 REGISTER\r\n"
   f"Contact: <sip:forceprobe@127.0.0.1:5099>\r\n"
   f"Expires: 60\r\n"
@@ -125,55 +88,50 @@ s.settimeout(3)
 s.sendto(msg.encode(), ("127.0.0.1", 5060))
 try:
     data, _ = s.recvfrom(8192)
-    print(data.decode(errors="replace").splitlines()[0])
+    line = data.decode(errors="replace").splitlines()[0]
 except Exception as e:
-    print("NO_RESPONSE", e)
+    line = f"NO_RESPONSE {e}"
 s.close()
+print(line)
+open("/tmp/sip_probe_code.txt","w").write(line)
 PY
-)"
-  echo "REGISTER sip:${host} → ${out}"
-  case "$out" in
-    "SIP/2.0 401"*|"SIP/2.0 407"*) return 0 ;;
-    "SIP/2.0 200"*) echo "WARN: accepted without auth (config not challenging)"; return 1 ;;
-    "SIP/2.0 500"*) echo "FAIL: 500 Internal Error — domain still not local"; return 1 ;;
-    "SIP/2.0 483"*) echo "FAIL: 483 Too Many Hops — routing loop"; return 1 ;;
-    *) return 1 ;;
-  esac
 }
 
 echo
-echo "== Local REGISTER probes (expect 401 Unauthorized) =="
-ok=0
-probe_register "$DOMAIN" && ok=1 || true
-probe_register "$PUBLIC_IP" && ok=1 || true
+echo "== Probes (BOTH must be 401 Unauthorized) =="
+D_CODE="$(probe "$DOMAIN")"
+I_CODE="$(probe "$PUBLIC_IP")"
+echo "Domain $DOMAIN → $D_CODE"
+echo "IP     $PUBLIC_IP → $I_CODE"
 
-if [[ "$ok" -ne 1 ]]; then
+fail=0
+[[ "$D_CODE" == SIP/2.0\ 401* || "$D_CODE" == SIP/2.0\ 407* ]] || fail=1
+[[ "$I_CODE" == SIP/2.0\ 401* || "$I_CODE" == SIP/2.0\ 407* ]] || fail=1
+if [[ "$fail" -eq 1 ]]; then
   echo
-  echo "REGISTER probe failed. Last opensips log:"
-  journalctl -u opensips --no-pager -n 50 || true
+  echo "FATAL: OpenSIPS still not challenging REGISTER correctly."
+  echo "journalctl:"
+  journalctl -u opensips --no-pager -n 80 || true
   exit 1
 fi
 
+mysql --protocol=socket -uroot ownswitch -e "UPDATE sip_accounts SET domain='${DOMAIN}';" 2>/dev/null || true
+bash "$SRC/deploy/refresh-ui.sh" || true
+CUR="$(readlink -f /opt/ownswitch/current)"
+runuser -u ownswitch -- env OWNSWITCH_ENV_FILE="$ENV_FILE" php "$CUR/bin/sync-opensips-sip-users.php" || true
+runuser -u ownswitch -- env OWNSWITCH_ENV_FILE="$ENV_FILE" php "$CUR/bin/diagnose-sip-portal.php" || true
+
+command -v ufw >/dev/null && { ufw allow 5060/udp || true; ufw allow 5060/tcp || true; ufw allow 30000:40000/udp || true; }
+
 if [[ -n "$TEST_USER" && -n "$TEST_PASS" ]]; then
-  echo
-  echo "== Authenticated REGISTER test =="
-  runuser -u ownswitch -- env OWNSWITCH_ENV_FILE="$ENV_FILE" \
-    php "$CUR/bin/test-sip-register.php" "$TEST_USER" "$TEST_PASS" || \
-    env OWNSWITCH_ENV_FILE="$ENV_FILE" php "$CUR/bin/test-sip-register.php" "$TEST_USER" "$TEST_PASS" || true
-  mysql --protocol=socket -uroot opensips -e "SELECT username,domain,contact,expires FROM location;" 2>/dev/null || true
+  runuser -u ownswitch -- env OWNSWITCH_ENV_FILE="$ENV_FILE" php "$CUR/bin/test-sip-register.php" "$TEST_USER" "$TEST_PASS" || true
 fi
 
 echo
 echo "################################################################"
-echo " Eyebeam settings (REQUIRED)"
-echo "################################################################"
-echo "  User / Auth name : <SIP username>"
-echo "  Password         : reset in portal → Save (after this script)"
-echo "  Domain           : ${DOMAIN}"
-echo "  Proxy/Registrar  : ${PUBLIC_IP}"
-echo "  Port             : 5060"
-echo "  Protocol         : UDP  (or TCP if UDP blocked)"
-echo
-echo " Domain REGISTER must get 401 then 200 with password."
-echo " If Eyebeam still fails with Proxy blank, it never hits this server."
+echo " SUCCESS criteria met: Domain + IP REGISTER → 401"
+echo " Next:"
+echo "  1) Portal → SIP Users → set password → Save"
+echo "  2) Eyebeam Domain=${DOMAIN}  Proxy=${PUBLIC_IP}  Port=5060 UDP"
+echo "  3) sudo -u ownswitch env OWNSWITCH_ENV_FILE=$ENV_FILE php $CUR/bin/diagnose-sip-portal.php"
 echo "################################################################"

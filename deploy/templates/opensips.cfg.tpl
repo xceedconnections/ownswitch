@@ -124,6 +124,31 @@ modparam("drouting", "gw_attrs_avp", '$avp(dr_gw_attrs)')
 ####### Routing logic #########
 
 route {
+	# =====================================================================
+	# REGISTER FIRST — never proxy/relay (FQDN DNS to ourselves → 483/500).
+	# Must run before Max-Forwards / loose_route / is_myself checks.
+	# =====================================================================
+	if (is_method("REGISTER")) {
+		# Normalize Domain=FQDN onto advertised IP so usrloc/aliases always match
+		if ($rd == "@@OWNSWITCH_DOMAIN@@") {
+			rewritehost("@@PUBLIC_IP@@");
+		}
+		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td ruri=$ru\n");
+		if (!www_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
+			xlog("L_WARN", "REGISTER auth failed for $tU@$td realm=@@OWNSWITCH_DOMAIN@@ src=$si\n");
+			www_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
+			exit;
+		}
+		@@OPENSIPS_NAT_REGISTER_BLOCK@@
+		if (!save("location")) {
+			xlog("L_ERR", "REGISTER save() failed for $tU\n");
+			sl_reply_error();
+			exit;
+		}
+		xlog("L_INFO", "REGISTER OK $tU@$td from $si\n");
+		exit;
+	}
+
 	if (!mf_process_maxfwd_header(10)) {
 		send_reply(483, "Too Many Hops");
 		exit;
@@ -131,6 +156,10 @@ route {
 
 	# SIP keep-alive towards us
 	if (is_method("OPTIONS") && !$rU) {
+		send_reply(200, "OK");
+		exit;
+	}
+	if (is_method("OPTIONS")) {
 		send_reply(200, "OK");
 		exit;
 	}
@@ -174,31 +203,8 @@ route {
 
 	t_check_trans();
 
-	if (!is_method("INVITE|REGISTER|OPTIONS")) {
+	if (!is_method("INVITE|OPTIONS")) {
 		send_reply(405, "Method Not Allowed");
-		exit;
-	}
-
-	if (is_method("REGISTER")) {
-		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td\n");
-		# Challenge realm = portal SIP domain (matches subscriber.ha1). Softphone Domain
-		# field may still be FQDN or IP — digest uses this challenge realm.
-		if (!www_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
-			xlog("L_WARN", "REGISTER auth failed for $tU@$td realm=@@OWNSWITCH_DOMAIN@@ src=$si\n");
-			www_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
-			exit;
-		}
-		@@OPENSIPS_NAT_REGISTER_BLOCK@@
-		if (!save("location")) {
-			xlog("L_ERR", "REGISTER save() failed for $tU\n");
-			sl_reply_error();
-		}
-		xlog("L_INFO", "REGISTER OK $tU@$td from $si\n");
-		exit;
-	}
-
-	if (is_method("OPTIONS")) {
-		send_reply(200, "OK");
 		exit;
 	}
 

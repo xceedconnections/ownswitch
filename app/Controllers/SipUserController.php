@@ -257,11 +257,32 @@ final class SipUserController extends CrudController
             return $rows;
         }
         $prov = OpensipsProvisioner::fromConfig();
+        if (!$prov->enabled()) {
+            App::session()->flash(
+                'warning',
+                'Cannot read OpenSIPS registrations: '
+                . ($prov->initError() !== '' ? $prov->initError() : 'OPENSIPS_ENABLED off / DB credentials missing in ownswitch.env')
+            );
+        }
         $regs = $prov->enabled() ? $prov->registeredContacts() : [];
         foreach ($rows as &$row) {
-            $user = strtolower((string) ($row['username'] ?? ''));
+            $user = strtolower(trim((string) ($row['username'] ?? '')));
             $qualify = strtolower((string) ($row['qualify'] ?? 'yes')) === 'yes';
             $reg = $regs[$user] ?? null;
+            // usrloc may key contacts with domain suffix in some dumps
+            if ($reg === null) {
+                foreach ($regs as $k => $info) {
+                    if ($k === $user || str_starts_with((string) $k, $user . '@') || str_ends_with((string) $k, '@' . $user)) {
+                        $reg = $info;
+                        break;
+                    }
+                    $c = strtolower((string) ($info['contact'] ?? ''));
+                    if ($c !== '' && str_contains($c, 'sip:' . $user . '@')) {
+                        $reg = $info;
+                        break;
+                    }
+                }
+            }
             $host = trim((string) ($row['sip_host'] ?? 'dynamic'));
             $port = (int) ($row['sip_port'] ?? 5060);
             if ($port <= 0) {
