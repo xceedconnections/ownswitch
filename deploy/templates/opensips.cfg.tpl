@@ -20,7 +20,7 @@ xlog_level=3
 stderror_enabled=no
 syslog_enabled=yes
 syslog_facility=LOG_LOCAL0
-log_name="opensips"
+syslog_name="opensips"
 
 udp_workers=@@OPENSIPS_UDP_WORKERS@@
 tcp_workers=4
@@ -134,7 +134,8 @@ route {
 	# =====================================================================
 	if (is_method("REGISTER")) {
 		# Always local: never DNS-relay REGISTER (fixes Domain FQDN → 483 Too Many Hops)
-		rewritehost("@@PUBLIC_IP@@");
+		# OpenSIPS 3.3+: rewritehost() removed → sethost()
+		sethost("@@PUBLIC_IP@@");
 		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td ruri=$ru\n");
 		# Realm = softphone Domain ($td): IP or any FQDN. calculate_ha1=1 → plaintext password.
 		if (!www_authorize("$td", "subscriber")) {

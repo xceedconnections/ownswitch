@@ -209,7 +209,7 @@ xlog_level=3
 stderror_enabled=no
 syslog_enabled=yes
 syslog_facility=LOG_LOCAL0
-log_name="opensips"
+syslog_name="opensips"
 auto_aliases=yes
 mpath="{mpath}"
 
@@ -259,7 +259,7 @@ modparam("permissions", "db_url", "{db_url}")
 route {{
 	# ---- REGISTER first (never DNS-loop → 483) ----
 	if (is_method("REGISTER")) {{
-		rewritehost("{public_ip}");
+		sethost("{public_ip}");
 		xlog("L_INFO", "REG $si $tU@$td\\n");
 		if (!www_authorize("$td", "subscriber")) {{
 			www_challenge("$td", "auth");
@@ -329,7 +329,7 @@ print("wrote", path)
 PY
 
 grep -q 'www_authorize' "$CFG" || { echo "FATAL: write failed"; exit 1; }
-grep -q 'rewritehost' "$CFG" || { echo "FATAL: no rewritehost"; exit 1; }
+grep -qE 'sethost\(|\$rd\s*=' "$CFG" || { echo "FATAL: no sethost/\$rd in REGISTER"; exit 1; }
 grep -q "alias=\"${DOMAIN}\"" "$CFG" || { echo "FATAL: no domain alias"; exit 1; }
 
 # Prevent Magnus/cron from silently overwriting until we unlock

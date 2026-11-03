@@ -68,7 +68,7 @@ def repl(m):
         return m.group(0)
     # rebuild body up to save
     new_body = f'''
-		rewritehost("{public_ip}");
+		sethost("{public_ip}");
 		xlog("L_INFO", "REG $si:$sp $tU@$td\\n");
 		if (!www_authorize("$td", "subscriber")) {{
 			www_challenge("$td", "auth");
