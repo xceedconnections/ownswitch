@@ -63,6 +63,12 @@ final class OpensipsProvisioner
         return $this->miUrl !== '';
     }
 
+    /** OpenSIPS MySQL handle (null when provisioning disabled). */
+    public function pdo(): ?PDO
+    {
+        return $this->osDb;
+    }
+
     public static function ha1(string $username, string $realm, string $password): array
     {
         return [md5("{$username}:{$realm}:{$password}"), md5("{$username}@{$realm}:{$realm}:{$password}")];
@@ -712,10 +718,90 @@ final class OpensipsProvisioner
 
     /**
      * Registered contacts keyed by username (best contact prefers `received` for NAT).
+     * Prefers live MI usrloc dump (memory); falls back to SQL location table.
      *
      * @return array<string, array{contact:string, received:string, expires:int}>
      */
     public function registeredContacts(): array
+    {
+        $fromMi = $this->registeredContactsFromMi();
+        if ($fromMi !== []) {
+            return $fromMi;
+        }
+        return $this->registeredContactsFromSql();
+    }
+
+    /**
+     * @return array<string, array{contact:string, received:string, expires:int}>
+     */
+    private function registeredContactsFromMi(): array
+    {
+        if (!$this->hasMi()) {
+            return [];
+        }
+        foreach (['ul_dump', 'reg_list', 'usrloc:dump'] as $method) {
+            $r = $this->miCall($method);
+            if ($r === null || isset($r['error'])) {
+                continue;
+            }
+            $out = [];
+            $walk = static function ($node) use (&$walk, &$out): void {
+                if (!is_array($node)) {
+                    return;
+                }
+                $user = $node['username'] ?? $node['AOR'] ?? $node['aor'] ?? $node['User'] ?? null;
+                if (is_string($user) && str_contains($user, '@')) {
+                    $user = explode('@', $user, 2)[0];
+                }
+                $contact = $node['Contact'] ?? $node['contact'] ?? $node['address'] ?? null;
+                $received = $node['Received'] ?? $node['received'] ?? '';
+                $expires = $node['Expires'] ?? $node['expires'] ?? $node['Expiry'] ?? null;
+                if (is_string($user) && $user !== '' && (is_string($contact) || is_array($contact))) {
+                    $u = strtolower($user);
+                    if (is_array($contact)) {
+                        $received = (string) ($contact['received'] ?? $contact['Received'] ?? $received);
+                        $expires = $contact['Expires'] ?? $contact['expires'] ?? $expires;
+                        $contact = (string) ($contact['Contact'] ?? $contact['contact'] ?? $contact['address'] ?? '');
+                    }
+                    $expTs = time() + 60;
+                    if (is_numeric($expires)) {
+                        $expTs = (int) $expires;
+                        // OpenSIPS sometimes returns remaining seconds
+                        if ($expTs > 0 && $expTs < 86400 * 10) {
+                            $expTs = time() + $expTs;
+                        }
+                    } elseif (is_string($expires) && $expires !== '') {
+                        $ts = strtotime($expires);
+                        if ($ts !== false) {
+                            $expTs = $ts;
+                        }
+                    }
+                    if ($expTs >= time() && !isset($out[$u])) {
+                        $out[$u] = [
+                            'contact' => (string) $contact,
+                            'received' => is_string($received) ? $received : '',
+                            'expires' => $expTs,
+                        ];
+                    }
+                }
+                foreach ($node as $v) {
+                    if (is_array($v)) {
+                        $walk($v);
+                    }
+                }
+            };
+            $walk($r['result'] ?? $r);
+            if ($out !== []) {
+                return $out;
+            }
+        }
+        return [];
+    }
+
+    /**
+     * @return array<string, array{contact:string, received:string, expires:int}>
+     */
+    private function registeredContactsFromSql(): array
     {
         if (!$this->enabled() || !$this->tableExists('location')) {
             return [];
@@ -752,7 +838,6 @@ final class OpensipsProvisioner
             if ($expires > 0 && $expires < time()) {
                 continue;
             }
-            // Prefer freshest / keep first if multiple
             if (isset($out[$u])) {
                 continue;
             }

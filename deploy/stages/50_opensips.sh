@@ -140,6 +140,13 @@ mysql_root "${DB_OPENSIPS}" -e \
   "ALTER TABLE subscriber ADD COLUMN media_policy VARCHAR(16) NOT NULL DEFAULT 'relay'" 2>/dev/null \
   || log_info "subscriber.media_policy already present (or ALTER skipped)"
 
+# Extra ACC fields for portal Failed-CDR import (matches acc db_extra in opensips.cfg.tpl)
+for _acc_tbl in acc missed_calls; do
+  mysql_root "${DB_OPENSIPS}" -e \
+    "ALTER TABLE ${_acc_tbl} ADD COLUMN src_user VARCHAR(64) NULL; ALTER TABLE ${_acc_tbl} ADD COLUMN dst_user VARCHAR(64) NULL; ALTER TABLE ${_acc_tbl} ADD COLUMN src_ip VARCHAR(45) NULL" \
+    2>/dev/null || true
+done
+
 # Make sure the portal/runtime account can use everything created by root
 mysql_root -e "FLUSH PRIVILEGES"
 

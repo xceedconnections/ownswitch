@@ -30,6 +30,7 @@ return [
             'enabled'    => (bool) Env::get('OPENSIPS_ENABLED', Env::get('OPENSIPS_DB_PASSWORD', '') !== ''),
             'sip_domain' => (string) (Env::get('OPENSIPS_SIP_DOMAIN')
                 ?: (parse_url((string) Env::get('APP_URL', ''), PHP_URL_HOST) ?: 'localhost')),
+            'public_ip'  => (string) (Env::get('SIP_PUBLIC_IP') ?: Env::get('PUBLIC_IP', '')),
             'mi_url'     => (string) (Env::get('OPENSIPS_MI_URL') ?: Env::get('OPENSIPS_MI_HTTP_URL', '')),
             'db' => [
                 'host'     => Env::get('OPENSIPS_DB_HOST', '127.0.0.1'),

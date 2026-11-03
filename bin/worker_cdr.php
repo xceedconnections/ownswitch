@@ -19,12 +19,14 @@ if (PHP_SAPI !== 'cli') {
 require __DIR__ . '/../app/bootstrap.php';
 
 use Ownswitch\App;
+use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\CdrRepository;
 use Ownswitch\Services\Billing\LedgerService;
 use Ownswitch\Services\Billing\PrepaidService;
 use Ownswitch\Services\Billing\RateResolver;
 use Ownswitch\Services\Billing\RatingService;
 use Ownswitch\Services\Cdr\CdrIngestService;
+use Ownswitch\Services\Cdr\OpensipsAccImporter;
 use Ownswitch\Services\Settings\SettingsService;
 
 $loop = in_array('--loop', $argv, true);
@@ -52,6 +54,16 @@ foreach ([$spool, "$spool/done", "$spool/failed"] as $d) {
 $cycle = static function () use ($pdo, $ingest, $prepaid, $limit, $spool): int {
     $done = 0;
     $prepaid->expireStale();
+
+    // Bridge OpenSIPS acc / missed_calls → portal queue (failed + completed)
+    try {
+        $pulled = (new OpensipsAccImporter($pdo, OpensipsProvisioner::fromConfig()))->import($limit);
+        if ($pulled > 0) {
+            echo gmdate('c') . " queued {$pulled} OpenSIPS acc row(s)\n";
+        }
+    } catch (\Throwable $e) {
+        fwrite(STDERR, 'opensips acc import: ' . $e->getMessage() . "\n");
+    }
 
     $rows = $pdo->query("SELECT id, payload, source FROM cdr_ingest_queue WHERE status = 'pending' ORDER BY id LIMIT " . (int) $limit)->fetchAll();
     foreach ($rows as $row) {

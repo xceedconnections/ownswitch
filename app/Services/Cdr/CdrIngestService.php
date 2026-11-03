@@ -215,7 +215,7 @@ final class CdrIngestService
                 $customerId = (int) $ep['customer_id'];
             }
         }
-        if ($customerId === null && $d['customer_id'] !== null && in_array($source, ['worker', 'internal', 'seed', 'opensips'], true)) {
+        if ($customerId === null && $d['customer_id'] !== null && in_array($source, ['worker', 'internal', 'seed', 'opensips', 'opensips_acc', 'opensips_missed_calls'], true)) {
             $customerId = $d['customer_id'];   // only trusted internal sources may name the customer directly
         }
         if ($customerId !== null) {

@@ -29,6 +29,9 @@ mpath="@@OPENSIPS_MPATH@@"
 
 socket=@@SIP_SOCKET_UDP@@
 socket=@@SIP_SOCKET_TCP@@
+# Accept softphones that put either FQDN or public IP in Domain / Request-URI host
+alias="@@OWNSWITCH_DOMAIN@@"
+alias="@@PUBLIC_IP@@"
 
 ####### Modules #########
 
@@ -63,12 +66,15 @@ modparam("auth_db", "calculate_ha1", 0)
 modparam("auth_db", "password_column", "ha1")
 # Load SIP Directmedia (media_policy column on subscriber) into $avp(os_media)
 modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy")
-# Magnus-style: match subscriber by username only. Softphones often put the
-# server IP in the Domain field while HA1 realm is OWNSWITCH_DOMAIN — use_domain=1 breaks that.
+# Username-only match: softphones may put FQDN or server IP in Domain while
+# digest realm stays OWNSWITCH_DOMAIN (HA1). use_domain=1 breaks Domain=IP.
+# For Domain=FQDN REGISTER: set Outbound Proxy / Registrar to the server PUBLIC IP
+# (Cloudflare/DNS to the HTTP frontend will black-hole SIP).
 modparam("auth_db", "use_domain", 0)
 
 loadmodule "usrloc.so"
-modparam("usrloc", "working_mode_preset", "single-instance-sql-write-back")
+# write-through so portal registration status reads opensips.location live
+modparam("usrloc", "working_mode_preset", "single-instance-sql-write-through")
 modparam("usrloc", "db_url", "@@OPENSIPS_DB_URL@@")
 
 loadmodule "registrar.so"
@@ -98,7 +104,8 @@ modparam("rtpengine", "rtpengine_sock", "@@RTPENGINE_SOCK@@")
 loadmodule "acc.so"
 modparam("acc", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("acc", "early_media", 0)
-modparam("acc", "report_cancels", 0)
+modparam("acc", "report_cancels", 1)
+modparam("acc", "db_extra", "src_user=$fU;dst_user=$rU;src_ip=$si")
 
 # dynamic routing (carrier selection / failover) - data loaded from the opensips DB
 loadmodule "drouting.so"
@@ -167,8 +174,9 @@ route {
 
 	if (is_method("REGISTER")) {
 		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td\n");
+		# Always challenge/verify with portal SIP realm (HA1). Domain field may be FQDN or IP.
 		if (!www_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
-			xlog("L_WARN", "REGISTER auth failed for $tU realm=@@OWNSWITCH_DOMAIN@@ src=$si\n");
+			xlog("L_WARN", "REGISTER auth failed for $tU@$td realm=@@OWNSWITCH_DOMAIN@@ src=$si\n");
 			www_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
 			exit;
 		}
@@ -187,19 +195,34 @@ route {
 	}
 
 	# ---- INVITE ----
-	if (check_source_address(2)) {
-		# call coming from a carrier towards a registered customer endpoint
+	# Carrier inbound only when source is carrier ACL and NOT also a customer IP ACL
+	# (overlap used to send softphone calls into lookup→404 Not Found)
+	if (check_source_address(2) && !check_source_address(1)) {
 		route(inbound_from_carrier);
 		exit;
 	}
 
 	if (!check_source_address(1)) {
-		# not an IP-authenticated customer trunk: require SIP digest
 		if (!proxy_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
 			proxy_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
 			exit;
 		}
 		consume_credentials();
+	}
+
+	# Local extension / SIP-user → registered AOR (only when R-URI host is us)
+	if (is_myself("$rd") && lookup("location")) {
+		xlog("L_INFO", "local AOR hit for $rU from $fU\n");
+		record_route();
+		create_dialog("B");
+		do_accounting("db", "cdr|missed|failed");
+		if ($avp(os_media) == NULL || $(avp(os_media){s.len}) == 0) {
+			$avp(os_media) = "relay";
+		}
+		route(apply_media);
+		t_on_reply("handle_reply");
+		route(relay);
+		exit;
 	}
 
 	record_route();
@@ -208,6 +231,7 @@ route {
 	# credit control: fail closed if CGRateS refuses or is unreachable
 	if (!cgrates_auth()) {
 		xlog("L_WARN", "cgrates_auth failed for $fU -> $rU from $si\n");
+		acc_db_request("403 Billing Authorization Failed", "acc");
 		send_reply(403, "Billing Authorization Failed");
 		exit;
 	}
@@ -227,6 +251,7 @@ route {
 	# strip + pri_prefix are applied by drouting from dr_gateways
 	if (!do_routing("1")) {
 		xlog("L_WARN", "no route for $rU (from $fU) — sync trunks/routes to OpenSIPS\n");
+		acc_db_request("503 No Route", "acc");
 		send_reply(503, "No Route");
 		exit;
 	}
@@ -243,9 +268,11 @@ route[inbound_from_carrier] {
 	@@OPENSIPS_ALIAS_LOOKUP@@
 	if (!lookup("location")) {
 		xlog("L_WARN", "inbound: no registration for $rU\n");
+		acc_db_request("404 Not Found", "acc");
 		send_reply(404, "Not Found");
 		exit;
 	}
+	do_accounting("db", "cdr|missed|failed");
 	$avp(os_media) = "relay";
 	route(apply_media);
 	t_on_reply("handle_reply");

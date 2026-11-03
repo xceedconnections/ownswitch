@@ -365,13 +365,19 @@ final class SipUserController extends CrudController
             }
         }
         if ($this->plainPassword !== null && $row) {
-            $host = (string) App::config('app.integrations.opensips.sip_domain', (string) $row['domain']);
+            $realm = (string) App::config('app.integrations.opensips.sip_domain', (string) $row['domain']);
+            $proxy = trim((string) App::config('app.integrations.opensips.public_ip', ''));
+            if ($proxy === '') {
+                $proxy = $realm;
+            }
             $port = (int) ($row['sip_port'] ?? 5060);
             if ($port <= 0) {
                 $port = 5060;
             }
-            return "SIP user saved. Softphone: User={$row['username']}  Pass={$this->plainPassword}  "
-                . "Domain/Realm={$row['domain']}  Server/Proxy={$host}  Port={$port}  Transport=UDP";
+            return "SIP user saved. Eyebeam/softphone: User={$row['username']}  Pass={$this->plainPassword}  "
+                . "Domain={$realm}  (or {$proxy})  Auth realm={$realm}  "
+                . "Registrar/Outbound Proxy={$proxy}  Port={$port}  Transport=UDP. "
+                . "Important: Domain alone (without Proxy={$proxy}) often fails if DNS/Cloudflare points SIP at the web frontend — always set Proxy to the server public IP.";
         }
         return null;
     }
