@@ -25,6 +25,9 @@ $cell = static function (array $f, mixed $v): string {
     if (($f['name'] ?? '') === 'media_policy' && ($v === null || $v === '')) {
         return e((string) ($f['options'][''] ?? 'Default'));
     }
+    if (($f['name'] ?? '') === 'balance') {
+        return '<span class="os-mono">' . e(function_exists('fmt_money') ? fmt_money((string) $v, 2) : (string) $v) . '</span>';
+    }
     if (($f['type'] ?? '') === 'number') {
         return '<span class="os-mono">' . e($v) . '</span>';
     }

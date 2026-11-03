@@ -373,10 +373,14 @@ final class OpensipsProvisioner
         return min(32, strlen($p));
     }
 
-    /** @param array<string,mixed> $trunk OpenSIPS-applied attrs only (From / CID rewrite / multi-strip). */
+    /** @param array<string,mixed> $trunk OpenSIPS-applied attrs only (From / CID rewrite / multi-strip / tid). */
     public static function trunkAttrs(array $trunk): string
     {
         $parts = [];
+        $tid = (int) ($trunk['id'] ?? 0);
+        if ($tid > 0) {
+            $parts[] = 'tid=' . $tid;
+        }
         foreach (['fu' => 'from_user', 'fd' => 'from_domain', 'cidadd' => 'cid_add_prefix', 'cidrem' => 'cid_remove_prefix'] as $k => $col) {
             $v = trim((string) ($trunk[$col] ?? ''));
             if ($v !== '') {

@@ -179,6 +179,9 @@ final class OpensipsAccImporter
         }
 
         $trunkId = self::trunkIdFromGw((string) ($row['gw'] ?? ''));
+        if ($trunkId === null) {
+            $trunkId = $this->soleActiveTrunkId();
+        }
         $sourceIp = self::cleanToken((string) ($row['src_ip'] ?? $row['ip'] ?? ''));
 
         $setup = $row['time'] ?? $row['created'] ?? $row['setuptime'] ?? gmdate('Y-m-d H:i:s');
@@ -244,6 +247,17 @@ final class OpensipsAccImporter
             $st = $this->portalDb->query("SELECT username FROM sip_accounts WHERE status = 'active' LIMIT 2");
             $rows = $st ? ($st->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
             return count($rows) === 1 ? (string) $rows[0] : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function soleActiveTrunkId(): ?int
+    {
+        try {
+            $st = $this->portalDb->query("SELECT id FROM carrier_trunks WHERE status = 'active' LIMIT 2");
+            $rows = $st ? ($st->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
+            return count($rows) === 1 ? (int) $rows[0] : null;
         } catch (\Throwable) {
             return null;
         }

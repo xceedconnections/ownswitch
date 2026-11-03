@@ -116,6 +116,8 @@ modparam("acc", "extra_fields", "db: src->src_user; dst->dst_user; ip->src_ip; c
 # dynamic routing (carrier selection / failover) - data loaded from the opensips DB
 loadmodule "drouting.so"
 modparam("drouting", "db_url", "@@OPENSIPS_DB_URL@@")
+# OpenSIPS 3.6+: gw_id_avp defaults OFF — enable so ACC can store selected trunk (T{id})
+modparam("drouting", "gw_id_avp", "$avp(dr_gw_id)")
 # OpenSIPS 3.x: no gw_attrs_avp modparam — pass $avp(dr_gw_attrs) as do_routing() 5th arg
 
 # DID → SIP user aliases (Ownswitch DID assignments)
@@ -381,8 +383,19 @@ route[acc_cli_gw] {
 	$acc_extra(dst) = $dlg_val(os_dst);
 	$acc_extra(ip) = $si;
 	$acc_extra(cli) = $fU;
-	$acc_extra(gw) = $avp(___dr_gw_id);
-	xlog("L_INFO", "ACC cli=$fU sip=$dlg_val(os_src) gw=$avp(___dr_gw_id)\n");
+	# Prefer gw_id_avp (gwid like T12); fall back to attrs tid=
+	$var(gw) = $avp(dr_gw_id);
+	if ($var(gw) == NULL || $(var(gw){s.len}) == 0) {
+		$var(gw) = $avp(___dr_gw_id);
+	}
+	if (($var(gw) == NULL || $(var(gw){s.len}) == 0) && $avp(dr_gw_attrs) != NULL) {
+		$var(tid) = $(avp(dr_gw_attrs){param.value,tid});
+		if ($var(tid) != NULL && $(var(tid){s.len}) > 0) {
+			$var(gw) = "T" + $var(tid);
+		}
+	}
+	$acc_extra(gw) = $var(gw);
+	xlog("L_INFO", "ACC cli=$fU sip=$dlg_val(os_src) gw=$var(gw)\n");
 }
 
 # Multi remove-prefix (attrs rstrip=22,011,00) — strip tech prefix from RURI before send

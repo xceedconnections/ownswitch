@@ -70,10 +70,35 @@ final class CustomerController extends CrudController
         array_push($f,
             ['name' => 'billing_mode', 'label' => 'Type paid', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true, 'default' => 'prepaid', 'section' => 'Billing'],
             ['name' => 'status', 'label' => 'Active', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Inactive', 'closed' => 'Closed'], 'list' => true, 'default' => 'active', 'section' => 'Billing'],
+            ['name' => 'balance', 'label' => 'Balance', 'type' => 'number', 'list' => true, 'list_only' => true, 'section' => 'Billing'],
             ['name' => 'credit_limit', 'label' => 'Credit limit', 'type' => 'number', 'default' => '0', 'help' => 'Postpaid', 'section' => 'Billing'],
             ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => -1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true, 'help' => '-1 = unlimited concurrent calls', 'section' => 'Billing'],
         );
         return $f;
+    }
+
+    protected function enrichRows(Request $r, array $rows): array
+    {
+        if ($rows === []) {
+            return $rows;
+        }
+        $ids = array_map(static fn ($row) => (int) $row['id'], $rows);
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $bal = [];
+        try {
+            $st = $this->db()->prepare("SELECT customer_id, balance FROM balances WHERE customer_id IN ({$ph})");
+            $st->execute($ids);
+            foreach ($st->fetchAll(\PDO::FETCH_ASSOC) ?: [] as $b) {
+                $bal[(int) $b['customer_id']] = (string) $b['balance'];
+            }
+        } catch (\Throwable) {
+        }
+        foreach ($rows as &$row) {
+            $id = (int) $row['id'];
+            $row['balance'] = $bal[$id] ?? '0.000000';
+        }
+        unset($row);
+        return $rows;
     }
 
     protected function prepare(Request $r, array $data, ?array $existing): array
