@@ -111,7 +111,8 @@ final class AreaCodeImportController extends BaseController
      */
     private function vars(string $step, ?string $flash = null, array $extra = []): array
     {
-        return [
+        // array_merge so $extra overrides defaults (PHP + keeps left-hand keys).
+        return array_merge([
             'title' => 'Area code import / export',
             'step' => $step,
             'flash' => $flash,
@@ -123,6 +124,6 @@ final class AreaCodeImportController extends BaseController
             'preview' => null,
             'fields' => AreaCodeCsvService::HEADERS,
             'required' => AreaCodeCsvService::REQUIRED,
-        ] + $extra;
+        ], $extra);
     }
 }
