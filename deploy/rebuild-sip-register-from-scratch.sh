@@ -200,6 +200,36 @@ CREATE TABLE IF NOT EXISTS address (
 DELETE FROM version WHERE table_name='address';
 INSERT INTO version (table_name, table_version) VALUES ('address', 5);
 SQL
+
+# FORCE correct OpenSIPS 3.6 location schema (stale/Magnus tables cause REGISTER → 500)
+echo "Recreating opensips.location (usrloc 1013)..."
+mysql --protocol=socket -uroot opensips <<'SQL'
+DROP TABLE IF EXISTS location;
+CREATE TABLE location (
+  contact_id BIGINT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  username CHAR(64) DEFAULT '' NOT NULL,
+  domain CHAR(64) DEFAULT NULL,
+  contact TEXT NOT NULL,
+  received CHAR(255) DEFAULT NULL,
+  path CHAR(255) DEFAULT NULL,
+  expires INT(10) UNSIGNED NOT NULL,
+  q FLOAT(10,2) DEFAULT 1.0 NOT NULL,
+  callid CHAR(255) DEFAULT 'Default-Call-ID' NOT NULL,
+  cseq INT(11) DEFAULT 13 NOT NULL,
+  last_modified DATETIME DEFAULT '1900-01-01 00:00:01' NOT NULL,
+  flags INT(11) DEFAULT 0 NOT NULL,
+  cflags CHAR(255) DEFAULT NULL,
+  user_agent CHAR(255) DEFAULT '' NOT NULL,
+  socket CHAR(64) DEFAULT NULL,
+  methods INT(11) DEFAULT NULL,
+  sip_instance CHAR(255) DEFAULT NULL,
+  kv_store TEXT(512) DEFAULT NULL,
+  attr CHAR(255) DEFAULT NULL
+) ENGINE=InnoDB;
+DELETE FROM version WHERE table_name='location';
+INSERT INTO version (table_name, table_version) VALUES ('location', 1013);
+SQL
+
 mysql --protocol=socket -uroot opensips -e \
   "ALTER TABLE subscriber ADD COLUMN password VARCHAR(64) NOT NULL DEFAULT ''" 2>/dev/null || true
 mysql --protocol=socket -uroot opensips -e \
@@ -208,6 +238,12 @@ mysql --protocol=socket -uroot opensips -e \
   "ALTER TABLE subscriber ADD COLUMN dtmf_pass VARCHAR(8) NOT NULL DEFAULT 'yes'" 2>/dev/null || true
 mysql --protocol=socket -uroot opensips -e \
   "ALTER TABLE subscriber ADD COLUMN cid_mode VARCHAR(16) NOT NULL DEFAULT 'passthrough'" 2>/dev/null || true
+mysql --protocol=socket -uroot opensips -e \
+  "ALTER TABLE subscriber ADD COLUMN rpid VARCHAR(64) NOT NULL DEFAULT ''" 2>/dev/null || true
+# Grants for opensips DB user
+PW_SQL="$PW"
+mysql --protocol=socket -uroot -e \
+  "GRANT ALL PRIVILEGES ON opensips.* TO 'opensips'@'localhost'; GRANT ALL PRIVILEGES ON opensips.* TO 'opensips'@'127.0.0.1'; FLUSH PRIVILEGES;" || true
 
 echo "======== D) Write Ownswitch digest REGISTER cfg (atomic) ========"
 # Unlock if previously immutable
@@ -225,9 +261,11 @@ NAT_REG=""
 if [[ "${USE_NATHELPER:-0}" == "1" ]]; then
   NAT_BLOCK='loadmodule "nathelper.so"
 modparam("nathelper", "received_avp", "$avp(received)")'
-  # Always — Eyebeam behind NAT gets 408 without this
+  # force_rport only first; fix_nated_register can 500 if received_avp misconfigured
   NAT_REG='force_rport();
-		fix_nated_register();'
+		if (nat_uac_test("19")) {
+			fix_nated_register();
+		}'
 fi
 
 python3 - "$CFG" "$MPATH" "$DOMAIN" "$PUBLIC_IP" "$PORT" "$DB_URL" "$EXTRA" "$NAT_BLOCK" "$NAT_REG" <<'PY'
@@ -477,6 +515,9 @@ for label, host in (("Domain", domain), ("IP", ip)):
         fail = 1
 
 if fail:
+    print("--- journalctl opensips (save/location errors) ---")
+    import subprocess
+    subprocess.run(["journalctl", "-u", "opensips", "--no-pager", "-n", "40"], check=False)
     raise SystemExit(1)
 print("SUCCESS: Domain + IP REGISTER require password and succeed with digest.")
 PY
