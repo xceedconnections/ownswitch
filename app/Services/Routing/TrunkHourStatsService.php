@@ -8,12 +8,13 @@ use Ownswitch\Services\Reports\AsrAcdService;
 use PDO;
 
 /**
- * Recent connected-call stats per carrier trunk (ASR / ACD / share).
+ * Recent connected-call stats per carrier trunk (ASR / ACD / share / long calls).
  * Windows: 15 / 30 / 60 minutes. Defensive: missing cdrs or SQL errors → empty stats.
  */
 final class TrunkHourStatsService
 {
     public const WINDOWS = [15, 30, 60];
+    public const LONG_CALL_SECONDS = 12;
 
     public function __construct(private PDO $pdo)
     {
@@ -21,7 +22,7 @@ final class TrunkHourStatsService
 
     /**
      * @param list<int|string>|null $trunkIds null = all trunks with traffic in window
-     * @return array<string,array{attempts:int,answered:int,seconds:int,asr:float,acd:float,share:float,label:string,window_minutes:int}>
+     * @return array<string,array{attempts:int,answered:int,failed:int,seconds:int,asr:float,acd:float,share:float,long_answered:int,long_seconds:int,long_acd:float,label:string,window_minutes:int}>
      */
     public function lastHour(?array $trunkIds = null): array
     {
@@ -30,11 +31,12 @@ final class TrunkHourStatsService
 
     /**
      * @param list<int|string>|null $trunkIds
-     * @return array<string,array{attempts:int,answered:int,seconds:int,asr:float,acd:float,share:float,label:string,window_minutes:int}>
+     * @return array<string,array{attempts:int,answered:int,failed:int,seconds:int,asr:float,acd:float,share:float,long_answered:int,long_seconds:int,long_acd:float,label:string,window_minutes:int}>
      */
     public function window(int $minutes, ?array $trunkIds = null): array
     {
         $minutes = self::normalizeMinutes($minutes);
+        $longMin = self::LONG_CALL_SECONDS;
         try {
             if (!$this->tableExists('cdrs')) {
                 return [];
@@ -43,7 +45,9 @@ final class TrunkHourStatsService
             $sql = "SELECT c.carrier_trunk_id AS trunk_id,
                         COUNT(*) AS attempts,
                         SUM(CASE WHEN c.disposition = 'ANSWERED' AND c.duration_actual > 0 THEN 1 ELSE 0 END) AS answered,
-                        COALESCE(SUM(CASE WHEN c.disposition = 'ANSWERED' AND c.duration_actual > 0 THEN c.duration_actual ELSE 0 END),0) AS seconds
+                        COALESCE(SUM(CASE WHEN c.disposition = 'ANSWERED' AND c.duration_actual > 0 THEN c.duration_actual ELSE 0 END),0) AS seconds,
+                        SUM(CASE WHEN c.disposition = 'ANSWERED' AND c.duration_actual >= {$longMin} THEN 1 ELSE 0 END) AS long_answered,
+                        COALESCE(SUM(CASE WHEN c.disposition = 'ANSWERED' AND c.duration_actual >= {$longMin} THEN c.duration_actual ELSE 0 END),0) AS long_seconds
                     FROM cdrs c
                     WHERE c.setup_at >= ? AND c.carrier_trunk_id IS NOT NULL";
             $params = [$from];
@@ -70,13 +74,21 @@ final class TrunkHourStatsService
                 $tid = (string) (int) $r['trunk_id'];
                 $computed = AsrAcdService::compute((int) $r['attempts'], (int) $r['answered'], (int) $r['seconds']);
                 $attempts = (int) $computed['attempts'];
+                $answered = (int) $computed['answered'];
+                $longAnswered = (int) ($r['long_answered'] ?? 0);
+                $longSeconds = (int) ($r['long_seconds'] ?? 0);
+                $longAcd = $longAnswered > 0 ? round($longSeconds / $longAnswered, 1) : 0.0;
                 $out[$tid] = [
                     'attempts' => $attempts,
-                    'answered' => (int) $computed['answered'],
+                    'answered' => $answered,
+                    'failed' => max(0, $attempts - $answered),
                     'seconds' => (int) $computed['seconds'],
                     'asr' => (float) $computed['asr'],
                     'acd' => (float) $computed['acd'],
                     'share' => $totalAttempts > 0 ? round(100 * $attempts / $totalAttempts, 1) : 0.0,
+                    'long_answered' => $longAnswered,
+                    'long_seconds' => $longSeconds,
+                    'long_acd' => $longAcd,
                     'label' => $label,
                     'window_minutes' => $minutes,
                 ];

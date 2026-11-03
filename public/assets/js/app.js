@@ -318,10 +318,13 @@
         root.querySelectorAll('[data-wf-sort]').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var key = btn.getAttribute('data-wf-sort');
+                var attr = 'data-asr';
+                if (key === 'acd') { attr = 'data-acd'; }
+                if (key === 'long') { attr = 'data-long-acd'; }
                 var rows = Array.prototype.slice.call(onList.querySelectorAll('[data-wf-row]'));
                 rows.sort(function (a, b) {
-                    var av = parseFloat(a.getAttribute(key === 'acd' ? 'data-acd' : 'data-asr') || '0');
-                    var bv = parseFloat(b.getAttribute(key === 'acd' ? 'data-acd' : 'data-asr') || '0');
+                    var av = parseFloat(a.getAttribute(attr) || '0');
+                    var bv = parseFloat(b.getAttribute(attr) || '0');
                     if (bv !== av) { return bv - av; }
                     return parseInt(b.getAttribute('data-attempts') || '0', 10) - parseInt(a.getAttribute('data-attempts') || '0', 10);
                 });
@@ -339,6 +342,7 @@
                 node.setAttribute('data-id', v);
                 node.setAttribute('data-asr', opt.getAttribute('data-asr') || '0');
                 node.setAttribute('data-acd', opt.getAttribute('data-acd') || '0');
+                node.setAttribute('data-long-acd', opt.getAttribute('data-long-acd') || '0');
                 node.setAttribute('data-attempts', opt.getAttribute('data-attempts') || '0');
                 var nameEl = node.querySelector('[data-wf-name]');
                 if (nameEl) { nameEl.textContent = opt.getAttribute('data-name') || opt.textContent; }
@@ -362,6 +366,10 @@
                 if (fill) { fill.style.width = Math.max(0, Math.min(100, asr)) + '%'; }
                 var asrEl = node.querySelector('[data-wf-asr]');
                 if (asrEl) { asrEl.textContent = String(Math.round(asr)); }
+                var ansEl = node.querySelector('[data-wf-answered]');
+                if (ansEl) { ansEl.textContent = opt.getAttribute('data-answered') || '0'; }
+                var failEl = node.querySelector('[data-wf-failed]');
+                if (failEl) { failEl.textContent = opt.getAttribute('data-failed') || '0'; }
                 var acdEl = node.querySelector('[data-wf-acd-label]');
                 if (acdEl) { acdEl.textContent = opt.getAttribute('data-acd-label') || '0s'; }
                 var attEl = node.querySelector('[data-wf-attempts]');

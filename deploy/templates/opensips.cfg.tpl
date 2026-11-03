@@ -259,9 +259,13 @@ route {
 
 	record_route();
 	create_dialog("B");
-	$dlg_val(os_src) = $fU;
+	# Prefer digest auth user ($au) — $fU may later become presented CallerID
+	$dlg_val(os_src) = $au;
+	if ($dlg_val(os_src) == NULL || $(dlg_val(os_src){s.len}) == 0) {
+		$dlg_val(os_src) = $fU;
+	}
 	$dlg_val(os_dst) = $rU;
-	$acc_extra(src) = $fU;
+	$acc_extra(src) = $dlg_val(os_src);
 	$acc_extra(dst) = $rU;
 	$acc_extra(ip) = $si;
 	# Persist DTMF policy for in-dialog INFO filtering

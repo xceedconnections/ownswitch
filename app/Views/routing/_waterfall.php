@@ -39,11 +39,15 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
     $asr = (float) ($m['asr'] ?? 0);
     $acdLabel = (string) ($m['acd_label'] ?? '0s');
     $attempts = (int) ($m['attempts'] ?? 0);
+    $answered = (int) ($m['answered'] ?? 0);
+    $failed = (int) ($m['failed'] ?? max(0, $attempts - $answered));
+    $longAnswered = (int) ($m['long_answered'] ?? 0);
+    $longAcdLabel = (string) ($m['long_acd_label'] ?? '0s');
     $share = (float) ($m['share'] ?? 0);
     $barCls = $asr >= 70 ? 'is-good' : ($asr >= 40 ? 'is-mid' : 'is-low');
     $isTop = $on && $bestId !== null && $bestId === $tid;
     ?>
-    <div class="os-wf-row<?= $on ? '' : ' is-off' ?>" data-wf-row draggable="<?= $readonly ? 'false' : 'true' ?>" data-id="<?= e($tid) ?>" data-asr="<?= e((string) $asr) ?>" data-acd="<?= e((string) ($m['acd'] ?? 0)) ?>" data-attempts="<?= e((string) $attempts) ?>">
+    <div class="os-wf-row<?= $on ? '' : ' is-off' ?>" data-wf-row draggable="<?= $readonly ? 'false' : 'true' ?>" data-id="<?= e($tid) ?>" data-asr="<?= e((string) $asr) ?>" data-acd="<?= e((string) ($m['acd'] ?? 0)) ?>" data-long-acd="<?= e((string) ($m['long_acd'] ?? 0)) ?>" data-attempts="<?= e((string) $attempts) ?>">
         <button type="button" class="os-wf-handle" data-wf-handle aria-label="Drag to reorder"<?= $readonly ? ' disabled' : '' ?>>
             <i class="bi bi-grip-vertical"></i>
         </button>
@@ -55,14 +59,20 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
                 <?php if ($isTop): ?><span class="os-wf-badge os-wf-badge-top">Top performer</span><?php endif; ?>
             </div>
             <div class="os-wf-stats">
-                <span class="os-wf-meter <?= e($barCls) ?>" title="<?= e(number_format($asr, 1)) ?>% answered">
+                <span class="os-wf-meter <?= e($barCls) ?>" title="<?= e(number_format($asr, 1)) ?>% ASR">
                     <span style="width:<?= e((string) max(0, min(100, $asr))) ?>%"></span>
                 </span>
-                <span class="os-wf-stat"><?= e(number_format($asr, 0)) ?>% answered</span>
+                <span class="os-wf-stat"><?= e(number_format($asr, 0)) ?>% ASR</span>
+                <span class="os-wf-dot">·</span>
+                <span class="os-wf-stat"><?= e(number_format($answered)) ?> connected</span>
+                <span class="os-wf-dot">·</span>
+                <span class="os-wf-stat"><?= e(number_format($failed)) ?> failed</span>
                 <span class="os-wf-dot">·</span>
                 <span class="os-wf-stat"><?= e($acdLabel) ?> avg talk</span>
                 <span class="os-wf-dot">·</span>
-                <span class="os-wf-stat"><?= e(number_format($attempts)) ?> calls · <?= e(number_format($share, 0)) ?>% of your traffic</span>
+                <span class="os-wf-stat"><?= e(number_format($longAnswered)) ?> &gt;12s (<?= e($longAcdLabel) ?>)</span>
+                <span class="os-wf-dot">·</span>
+                <span class="os-wf-stat"><?= e(number_format($attempts)) ?> attempts · <?= e(number_format($share, 0)) ?>%</span>
             </div>
         </div>
         <?php if (!$readonly): ?>
@@ -87,8 +97,9 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
         </div>
         <?php if (!$readonly): ?>
             <div class="os-wf-sorts">
-                <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="asr">Best answer rate first</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="asr">Best ASR first</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="acd">Longest talk time first</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="long">Long connected (&gt;12s) first</button>
             </div>
         <?php endif; ?>
     </div>
@@ -131,6 +142,9 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
                             data-asr="<?= e((string) $m['asr']) ?>"
                             data-acd="<?= e((string) $m['acd']) ?>"
                             data-acd-label="<?= e($m['acd_label']) ?>"
+                            data-long-acd="<?= e((string) ($m['long_acd'] ?? 0)) ?>"
+                            data-answered="<?= e((string) ($m['answered'] ?? 0)) ?>"
+                            data-failed="<?= e((string) ($m['failed'] ?? 0)) ?>"
                             data-attempts="<?= e((string) $m['attempts']) ?>"
                             data-share="<?= e((string) $m['share']) ?>"
                             <?= in_array((string) $tid, $wfUsed, true) ? ' disabled' : '' ?>>
@@ -138,12 +152,12 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
                     </option>
                 <?php endforeach; ?>
             </select>
-            <div class="form-text mt-2">Stats are from <?= e($wfWindowLabel) ?> of connected results. Change the window above, then use Best answer rate to reorder by ASR.</div>
+            <div class="form-text mt-2">Stats are from <?= e($wfWindowLabel) ?>: ASR, connected, failed, and long calls (&gt;12s). Use the sort buttons to reorder by connectivity.</div>
         </div>
     <?php endif; ?>
 
     <template data-wf-row-tpl>
-        <div class="os-wf-row" data-wf-row draggable="true" data-id="" data-asr="0" data-acd="0" data-attempts="0">
+        <div class="os-wf-row" data-wf-row draggable="true" data-id="" data-asr="0" data-acd="0" data-long-acd="0" data-attempts="0">
             <button type="button" class="os-wf-handle" data-wf-handle aria-label="Drag to reorder"><i class="bi bi-grip-vertical"></i></button>
             <div class="os-wf-rank" data-wf-rank>1st</div>
             <div class="os-wf-body">
@@ -154,11 +168,15 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
                 </div>
                 <div class="os-wf-stats">
                     <span class="os-wf-meter is-low" data-wf-meter><span data-wf-meter-fill style="width:0%"></span></span>
-                    <span class="os-wf-stat"><span data-wf-asr>0</span>% answered</span>
+                    <span class="os-wf-stat"><span data-wf-asr>0</span>% ASR</span>
+                    <span class="os-wf-dot">·</span>
+                    <span class="os-wf-stat"><span data-wf-answered>0</span> connected</span>
+                    <span class="os-wf-dot">·</span>
+                    <span class="os-wf-stat"><span data-wf-failed>0</span> failed</span>
                     <span class="os-wf-dot">·</span>
                     <span class="os-wf-stat"><span data-wf-acd-label>0s</span> avg talk</span>
                     <span class="os-wf-dot">·</span>
-                    <span class="os-wf-stat"><span data-wf-attempts>0</span> calls · <span data-wf-share>0</span>% of your traffic</span>
+                    <span class="os-wf-stat"><span data-wf-attempts>0</span> attempts · <span data-wf-share>0</span>%</span>
                 </div>
             </div>
             <label class="os-wf-switch" title="Switch off">

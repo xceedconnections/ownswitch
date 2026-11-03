@@ -140,6 +140,7 @@ final class RoutingController extends CrudController
             $id = (string) (int) $t['id'];
             $s = $stats[$id] ?? null;
             $acd = $s['acd'] ?? 0.0;
+            $longAcd = (float) ($s['long_acd'] ?? 0);
             $meta[$id] = [
                 'id' => $id,
                 'name' => (string) $t['name'],
@@ -149,8 +150,12 @@ final class RoutingController extends CrudController
                 'acd' => (float) $acd,
                 'attempts' => (int) ($s['attempts'] ?? 0),
                 'answered' => (int) ($s['answered'] ?? 0),
+                'failed' => (int) ($s['failed'] ?? 0),
                 'share' => (float) ($s['share'] ?? 0),
                 'acd_label' => self::formatTalk($acd),
+                'long_answered' => (int) ($s['long_answered'] ?? 0),
+                'long_acd' => $longAcd,
+                'long_acd_label' => self::formatTalk($longAcd),
                 'window_label' => $label,
             ];
         }

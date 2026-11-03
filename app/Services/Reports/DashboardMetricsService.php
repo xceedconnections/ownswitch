@@ -232,15 +232,46 @@ final class DashboardMetricsService
         } catch (\Throwable) {
             return [];
         }
+
+        $since60 = gmdate('Y-m-d H:i:s', time() - 3600);
+        $statsByPlan = [];
+        $totalAttempts = 0;
+        try {
+            if ($this->tableExists('cdrs') && $this->tableExists('routing_rules')) {
+                $st = $this->pdo->prepare(
+                    "SELECT r.routing_plan_id AS plan_id,
+                            COUNT(*) AS attempts,
+                            SUM(CASE WHEN c.disposition = 'ANSWERED' AND c.duration_actual > 0 THEN 1 ELSE 0 END) AS answered,
+                            COALESCE(SUM(CASE WHEN c.disposition = 'ANSWERED' THEN c.duration_actual ELSE 0 END),0) AS seconds
+                     FROM cdrs c
+                     JOIN routing_rules r ON r.carrier_trunk_id = c.carrier_trunk_id AND r.prefix = '*' AND r.status = 'active'
+                     WHERE c.setup_at >= ? AND c.carrier_trunk_id IS NOT NULL
+                     GROUP BY r.routing_plan_id"
+                );
+                $st->execute([$since60]);
+                foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+                    $pid = (int) $row['plan_id'];
+                    $statsByPlan[$pid] = AsrAcdService::compute((int) $row['attempts'], (int) $row['answered'], (int) $row['seconds']);
+                    $totalAttempts += (int) $statsByPlan[$pid]['attempts'];
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] routeHealth stats: ' . $e->getMessage());
+        }
+
         $out = [];
         $i = 0;
         foreach ($plans as $p) {
+            $pid = (int) $p['id'];
+            $s = $statsByPlan[$pid] ?? null;
+            $attempts = (int) ($s['attempts'] ?? 0);
+            $share = $totalAttempts > 0 ? round(100 * $attempts / $totalAttempts, 1) : ($i === 0 ? 100.0 : 0.0);
             $out[] = [
                 'name' => (string) $p['name'],
                 'role' => $i === 0 ? 'PRIMARY' : 'FALLBACK',
                 'status' => (($p['status'] ?? '') === 'active' || ($p['status'] ?? '') === '') ? 'Available' : 'Disabled',
-                'share' => $i === 0 ? 70.0 : max(5.0, 30.0 / max(1, count($plans) - 1)),
-                'asr' => '—',
+                'share' => $share,
+                'asr' => $s !== null && $attempts > 0 ? (string) $s['asr'] : '—',
             ];
             $i++;
         }

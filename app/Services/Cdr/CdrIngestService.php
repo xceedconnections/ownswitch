@@ -207,12 +207,44 @@ final class CdrIngestService
                 $out['sip_account_id'] = (int) $rows[0]['id'];
                 $customerId = (int) $rows[0]['customer_id'];
             }
+            // Case-insensitive fallback (Eyebeam / ACC casing)
+            if ($customerId === null) {
+                $st = $this->pdo->prepare('SELECT id, customer_id FROM sip_accounts WHERE LOWER(username) = LOWER(?) LIMIT 2');
+                $st->execute([$d['username']]);
+                $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+                if (count($rows) === 1) {
+                    $out['sip_account_id'] = (int) $rows[0]['id'];
+                    $customerId = (int) $rows[0]['customer_id'];
+                }
+            }
         }
         if ($customerId === null && $d['source_ip'] !== null && filter_var($d['source_ip'], FILTER_VALIDATE_IP)) {
             $ep = (new IpEndpointRepository($this->pdo))->findActiveByIp($d['source_ip']);
             if ($ep) {
                 $out['ip_endpoint_id'] = (int) $ep['id'];
                 $customerId = (int) $ep['customer_id'];
+            }
+            // Softphone: match OpenSIPS-registered contact IP → sip_accounts via portal username list later
+            if ($customerId === null) {
+                $st = $this->pdo->prepare(
+                    "SELECT id, customer_id FROM sip_accounts
+                     WHERE status = 'active' AND sip_host = ? LIMIT 2"
+                );
+                $st->execute([$d['source_ip']]);
+                $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+                if (count($rows) === 1) {
+                    $out['sip_account_id'] = (int) $rows[0]['id'];
+                    $customerId = (int) $rows[0]['customer_id'];
+                }
+            }
+        }
+        // Single-tenant failsafe: exactly one active SIP account on the platform
+        if ($customerId === null && in_array($source, ['worker', 'internal', 'seed', 'opensips', 'opensips_acc', 'opensips_missed_calls'], true)) {
+            $st = $this->pdo->query("SELECT id, customer_id FROM sip_accounts WHERE status = 'active' LIMIT 2");
+            $rows = $st ? ($st->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+            if (count($rows) === 1) {
+                $out['sip_account_id'] = (int) $rows[0]['id'];
+                $customerId = (int) $rows[0]['customer_id'];
             }
         }
         if ($customerId === null && $d['customer_id'] !== null && in_array($source, ['worker', 'internal', 'seed', 'opensips', 'opensips_acc', 'opensips_missed_calls'], true)) {

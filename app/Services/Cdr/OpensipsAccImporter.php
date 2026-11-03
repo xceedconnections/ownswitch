@@ -160,17 +160,26 @@ final class OpensipsAccImporter
             $username = $sipUser; // ACC extras: src=SIP user, cli=CallerID
         } elseif ($sipUser !== '' && !self::looksLikePhone($sipUser)) {
             $username = $sipUser;
+        } elseif ($sipUser !== '' && $this->sipUsernameExists($sipUser)) {
+            $username = $sipUser; // numeric SIP usernames are valid
+        } else {
+            $username = $this->soleActiveSipUsername();
         }
 
         $src = $cli !== '' ? $cli : ($sipUser !== '' ? self::cleanCallerId($sipUser) : '');
         if ($src === '') {
             $src = $sipUser !== '' ? $sipUser : 'unknown';
         }
+        // If username resolved and src was wrongly the SIP user, prefer CLI digits when present
+        if ($username !== null && $src === $username && $cli !== '') {
+            $src = $cli;
+        }
         if ($dst === '' || !preg_match('/\d/', $dst)) {
             $dst = '0000000000';
         }
 
         $trunkId = self::trunkIdFromGw((string) ($row['gw'] ?? ''));
+        $sourceIp = self::cleanToken((string) ($row['src_ip'] ?? $row['ip'] ?? ''));
 
         $setup = $row['time'] ?? $row['created'] ?? $row['setuptime'] ?? gmdate('Y-m-d H:i:s');
         $duration = (int) ($row['duration'] ?? $row['ms_duration'] ?? 0);
@@ -187,6 +196,9 @@ final class OpensipsAccImporter
             }
         } elseif ($code === 200 && $duration > 0) {
             $disposition = 'ANSWERED';
+        } elseif ($code === 200 && $duration === 0 && $table === 'acc') {
+            // Some ACC rows land with duration 0 briefly; still mark answered if sip 200
+            $disposition = 'ANSWERED';
         } elseif ($code === 486) {
             $disposition = 'BUSY';
         } elseif ($code === 487) {
@@ -201,9 +213,10 @@ final class OpensipsAccImporter
             'src' => $src,
             'dst' => $dst,
             'username' => $username,
+            'source_ip' => $sourceIp !== '' ? $sourceIp : null,
             'setup_at' => is_string($setup) ? $setup : gmdate('Y-m-d H:i:s'),
             'end_at' => gmdate('Y-m-d H:i:s'),
-            'duration' => $disposition === 'ANSWERED' ? $duration : 0,
+            'duration' => $disposition === 'ANSWERED' ? max(0, $duration) : 0,
             'disposition' => $disposition,
             'sip_response' => $code > 0 ? $code : null,
             'failure_reason' => $reason !== '' ? mb_substr($reason, 0, 190) : ($code > 0 ? ('SIP ' . $code) : 'opensips_acc'),
@@ -212,6 +225,28 @@ final class OpensipsAccImporter
             $payload['carrier_trunk_id'] = $trunkId;
         }
         return $payload;
+    }
+
+    private function sipUsernameExists(string $username): bool
+    {
+        try {
+            $st = $this->portalDb->prepare('SELECT 1 FROM sip_accounts WHERE username = ? LIMIT 1');
+            $st->execute([$username]);
+            return (bool) $st->fetchColumn();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function soleActiveSipUsername(): ?string
+    {
+        try {
+            $st = $this->portalDb->query("SELECT username FROM sip_accounts WHERE status = 'active' LIMIT 2");
+            $rows = $st ? ($st->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
+            return count($rows) === 1 ? (string) $rows[0] : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function userPart(string $uri): string
