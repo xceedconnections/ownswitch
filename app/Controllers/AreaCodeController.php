@@ -46,13 +46,6 @@ final class AreaCodeController extends CrudController
                 'help' => 'Shown on CDRs when the dialled number matches this code (longest match wins). Example: USA LA',
             ],
             [
-                'name' => 'country_code',
-                'label' => 'Country code',
-                'max' => 8,
-                'list' => true,
-                'help' => 'Optional, e.g. 1 for USA/Canada.',
-            ],
-            [
                 'name' => 'notes',
                 'label' => 'Notes',
                 'max' => 255,
@@ -72,8 +65,7 @@ final class AreaCodeController extends CrudController
                 throw new \DomainException('Area code must be digits only.');
             }
         }
-        $cc = preg_replace('/\D+/', '', (string) ($data['country_code'] ?? '')) ?? '';
-        $data['country_code'] = $cc !== '' ? $cc : null;
+        unset($data['country_code']);
         $notes = trim((string) ($data['notes'] ?? ''));
         $data['notes'] = $notes !== '' ? $notes : null;
         return $data;

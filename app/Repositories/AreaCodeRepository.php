@@ -14,10 +14,10 @@ final class AreaCodeRepository extends BaseRepository
         parent::__construct(
             $pdo,
             'area_codes',
-            ['code', 'name', 'country_code', 'notes'],
+            ['code', 'name', 'notes'],
             'none',
-            ['code', 'name', 'country_code'],
-            ['id', 'code', 'name', 'country_code']
+            ['code', 'name'],
+            ['id', 'code', 'name']
         );
     }
 
