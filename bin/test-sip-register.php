@@ -68,8 +68,9 @@ $tryRegister = static function (string $toHost) use ($user, $pass, $domain, $dst
     $code = (int) $m[1];
     if ($code === 200) {
         fwrite(STDERR, "\n**** FAIL: OpenSIPS accepts REGISTER with NO password (200). ****\n");
-        fwrite(STDERR, "**** The test cannot fix this. Run AS ROOT (not ownswitch): ****\n\n");
-        fwrite(STDERR, "  curl -fsSL https://raw.githubusercontent.com/xceedconnections/ownswitch/main/deploy/patch-opensips-register-auth-now.sh | sudo bash\n\n");
+        fwrite(STDERR, "**** Run AS ROOT (you are often already root — drop sudo -u ownswitch): ****\n\n");
+        fwrite(STDERR, "  cd /opt/ownswitch-src && git fetch origin main && git reset --hard origin/main \\\n");
+        fwrite(STDERR, "    && bash deploy/rebuild-sip-register-from-scratch.sh\n\n");
         fclose($sock);
         return false;
     }
