@@ -109,7 +109,7 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
                 <td class="os-mono"><?= e($c['sip_username'] ?? '—') ?></td>
                 <td class="os-mono"><?= e($c['src'] ?? '—') ?></td>
                 <td class="os-mono"><?= e($c['dst_normalized']) ?></td>
-                <td><?= e((string) ($c['area_description'] ?? '—')) ?></td>
+                <td><?php if (!empty($c['area_description'])): ?><span class="os-area-tag"><?= e((string) $c['area_description']) ?></span><?php else: ?><span class="text-muted">—</span><?php endif; ?></td>
                 <td><span class="badge text-bg-<?= e($dispCls) ?>"><?= e($disp !== '' ? $disp : '—') ?></span></td>
                 <td class="small" title="<?= e($c['sip_code_label'] ?? '') ?>"><?= e($c['sip_code_short'] ?? ($c['sip_response'] ?? '—')) ?></td>
                 <td class="os-num"><?= e($c['duration_actual']) ?></td>

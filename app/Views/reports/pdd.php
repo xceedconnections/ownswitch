@@ -14,13 +14,13 @@
         <div class="col-auto"><button class="btn btn-primary btn-sm" type="submit">Run</button></div>
     </div>
 </form>
-<div class="row g-3 mb-3">
-    <div class="col-md-3"><div class="os-kpi"><div class="lbl">Answered</div><div class="val"><?= e(number_format((int) $res['answered'])) ?></div></div></div>
-    <div class="col-md-3"><div class="os-kpi"><div class="lbl">Avg PDD</div><div class="val"><?= e($res['avg_pdd_ms']) ?><span class="sub"> ms</span></div></div></div>
-    <div class="col-md-3"><div class="os-kpi"><div class="lbl">P50</div><div class="val"><?= e($res['p50_ms']) ?><span class="sub"> ms</span></div></div></div>
-    <div class="col-md-3"><div class="os-kpi"><div class="lbl">P95</div><div class="val"><?= e($res['p95_ms']) ?><span class="sub"> ms</span></div></div></div>
+<div class="os-report-hero os-report-hero--summary mb-3">
+    <div class="os-report-hero-stat"><span class="lbl">Answered</span><span class="val"><?= e(number_format((int) $res['answered'])) ?></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">Avg PDD</span><span class="val"><?= e($res['avg_pdd_ms']) ?><span style="font-size:.85rem;opacity:.85"> ms</span></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">P50</span><span class="val"><?= e($res['p50_ms']) ?><span style="font-size:.85rem;opacity:.85"> ms</span></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">P95</span><span class="val"><?= e($res['p95_ms']) ?><span style="font-size:.85rem;opacity:.85"> ms</span></span></div>
 </div>
-<div class="os-table-wrap">
+<div class="os-table-wrap os-report-card">
 <?php if (!$res['rows']): ?>
     <div class="os-empty"><div class="os-empty-title">No answered calls</div><div>No PDD samples in this range.</div></div>
 <?php else: ?>

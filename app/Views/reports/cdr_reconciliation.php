@@ -22,7 +22,13 @@
         <div class="col-auto"><button class="btn btn-primary btn-sm" type="submit">Run</button></div>
     </div>
 </form>
-<div class="os-table-wrap">
+<div class="os-report-hero os-report-hero--finance mb-3">
+    <div class="os-report-hero-stat"><span class="lbl">Issues</span><span class="val"><?= e(number_format((int) $result['total'])) ?></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">Unrated</span><span class="val"><?= e(number_format((int) ($counts['unrated'] ?? 0))) ?></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">Unattributed</span><span class="val"><?= e(number_format((int) ($counts['unattributed'] ?? 0))) ?></span></div>
+    <div class="os-report-hero-stat"><span class="lbl">Discrepancy</span><span class="val"><?= e(number_format((int) ($counts['discrepancy'] ?? 0))) ?></span></div>
+</div>
+<div class="os-table-wrap os-report-card">
 <?php if ($result['total'] === 0): ?>
     <div class="os-empty"><div class="os-empty-title">Clean</div><div>No reconciliation issues in this range.</div></div>
 <?php else: ?>

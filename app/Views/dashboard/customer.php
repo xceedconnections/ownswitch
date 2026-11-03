@@ -31,7 +31,7 @@ $lowRunway = $runwayDays !== null && $runwayDays < 2;
     <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/calls-online')) ?>">Live calls</a>
         <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>">CDR</a>
-        <a class="btn btn-primary btn-sm" href="<?= e(url('/ledger')) ?>">Ledger</a>
+        <a class="btn btn-primary btn-sm" href="<?= e(url('/payments')) ?>">Payments</a>
     </div>
 </div>
 
@@ -51,7 +51,7 @@ $lowRunway = $runwayDays !== null && $runwayDays < 2;
             <div class="small text-muted mt-1">
                 <?= e(number_format($w['attempts'])) ?> attempts · <?= e($w['asr']) ?>% answered ·
                 balance <?= e(fmt_money($available, 2)) ?> <?= e($cur) ?>
-                <?php if ($lowRunway): ?> · <a href="<?= e(url('/ledger')) ?>">Low runway — add funds</a><?php endif; ?>
+                <?php if ($lowRunway): ?> · <a href="<?= e(url('/payments')) ?>">Low runway — add funds</a><?php endif; ?>
             </div>
         </div>
         <div class="d-flex flex-wrap gap-2 align-items-center">
@@ -64,32 +64,32 @@ $lowRunway = $runwayDays !== null && $runwayDays < 2;
     </div>
 
     <div class="os-dash-grid os-dash-kpis mb-3">
-        <div class="os-kpi">
+        <div class="os-kpi os-kpi--teal">
             <div class="lbl">Attempts (60 min)</div>
             <div class="val"><?= e(number_format($w['attempts'])) ?></div>
             <div class="sub"><?= e(number_format($w['last_min'])) ?> last minute</div>
         </div>
-        <div class="os-kpi">
+        <div class="os-kpi os-kpi--green">
             <div class="lbl">Answered (60 min)</div>
             <div class="val"><?= e(number_format($w['answered'])) ?></div>
             <div class="sub">Avg talk <?= e($acdFmt($w['acd'])) ?></div>
         </div>
-        <div class="os-kpi">
+        <div class="os-kpi os-kpi--blue">
             <div class="lbl">Answer rate</div>
             <div class="val"><?= e($w['asr']) ?>%</div>
             <div class="sub">Today <?= e($t['asr']) ?>%</div>
         </div>
-        <div class="os-kpi">
+        <div class="os-kpi os-kpi--amber">
             <div class="lbl">Spend (60 min)</div>
             <div class="val os-mono"><?= e(fmt_money($w['spend'], 2)) ?></div>
             <div class="sub"><?= e(fmt_money($t['spend'], 2)) ?> today</div>
         </div>
-        <div class="os-kpi">
+        <div class="os-kpi os-kpi--violet">
             <div class="lbl">Available balance</div>
             <div class="val os-mono"><?= e(fmt_money($available, 2)) ?></div>
-            <div class="sub">Ledger <?= e(fmt_money($balance, 2)) ?> · <?= e(ucfirst((string) $customer['billing_mode'])) ?></div>
+            <div class="sub">Balance <?= e(fmt_money($balance, 2)) ?> · <?= e(ucfirst((string) $customer['billing_mode'])) ?></div>
         </div>
-        <div class="os-kpi<?= $lowRunway ? ' is-warn' : '' ?>">
+        <div class="os-kpi os-kpi--slate<?= $lowRunway ? ' is-warn' : '' ?>">
             <div class="lbl">Runway</div>
             <div class="val"><?= $runwayDays === null ? '—' : ('≈ ' . e(number_format($runwayDays, 1)) . ' d') ?></div>
             <div class="sub"><?= e((string) $sipCount) ?> active SIP · today pace <?= e(fmt_money($t['spend'], 2)) ?></div>
@@ -151,7 +151,7 @@ $lowRunway = $runwayDays !== null && $runwayDays < 2;
             <?php if ($lowRunway): ?>
                 <div class="os-pill os-pill-warn mb-2">Warning · low runway</div>
             <?php endif; ?>
-            <a class="btn btn-primary btn-sm" href="<?= e(url('/ledger')) ?>">View ledger</a>
+            <a class="btn btn-primary btn-sm" href="<?= e(url('/payments')) ?>">View payments</a>
         </div>
     </div>
 
