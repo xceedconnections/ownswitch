@@ -279,10 +279,9 @@ fi
 if [[ -f "${mod_dir}/nathelper.so" ]]; then
   export OPENSIPS_NATHELPER_BLOCK='loadmodule "nathelper.so"
 modparam("nathelper", "received_avp", "$avp(received)")'
+  # OpenSIPS 3.x nat_uac_test uses named flags (not numeric 19)
   export OPENSIPS_NAT_REGISTER_BLOCK='force_rport();
-		if (nat_uac_test("19")) {
-			fix_nated_register();
-		}'
+		fix_nated_register();'
 else
   export OPENSIPS_NATHELPER_BLOCK='# nathelper.so not installed (opensips-nathelper-module)'
   export OPENSIPS_NAT_REGISTER_BLOCK='# no nathelper — install opensips-nathelper-module for NAT softphones'
