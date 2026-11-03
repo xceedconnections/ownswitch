@@ -82,20 +82,30 @@ if [[ ! -f /etc/apt/sources.list.d/opensips.list ]]; then
     >/etc/apt/sources.list.d/opensips.list || true
 fi
 apt-get update -qq || true
-apt-get install -y opensips opensips-auth-modules opensips-mysql-module \
-  opensips-nathelper-module opensips-cli || true
+apt-get install -y opensips opensips-auth-modules opensips-mysql-module opensips-cli || true
 apt-get install -y opensips-auth-modules || true
+# nathelper package name varies; .so is often already in the main opensips package
+apt-get install -y opensips-nathelper-module 2>/dev/null || true
 
 MOD_DIR="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -1)")"
 [[ -d "$MOD_DIR" ]] || { echo "FATAL: modules dir missing"; exit 1; }
 MPATH="${MOD_DIR}/"
 echo "MPATH=$MPATH"
+# uri.so removed in OpenSIPS 3.x — do not require it
 for so in auth.so auth_db.so usrloc.so registrar.so sipmsgops.so db_mysql.so \
-          signaling.so sl.so tm.so rr.so maxfwd.so uri.so mi_fifo.so \
-          proto_udp.so proto_tcp.so nathelper.so; do
+          signaling.so sl.so tm.so rr.so maxfwd.so mi_fifo.so \
+          proto_udp.so proto_tcp.so; do
   [[ -f "${MPATH}${so}" ]] || { echo "FATAL: missing ${so}"; ls "$MPATH" | head -n 100; exit 1; }
   echo "  OK ${so}"
 done
+if [[ -f "${MPATH}nathelper.so" ]]; then
+  echo "  OK nathelper.so"
+  USE_NATHELPER=1
+else
+  echo "  WARN nathelper.so missing — REGISTER still works; NAT softphones may need it"
+  USE_NATHELPER=0
+fi
+export USE_NATHELPER
 
 echo "======== C) Identity / DB ========"
 DOMAIN="$(grep -E '^OWNSWITCH_DOMAIN=' "$IC" 2>/dev/null | cut -d= -f2- || true)"
@@ -175,9 +185,20 @@ for ip in $LOCAL; do
 "
 done
 
-python3 - "$CFG" "$MPATH" "$DOMAIN" "$PUBLIC_IP" "$PORT" "$DB_URL" "$EXTRA" <<'PY'
+NAT_BLOCK=""
+NAT_REG=""
+if [[ "${USE_NATHELPER:-0}" == "1" ]]; then
+  NAT_BLOCK='loadmodule "nathelper.so"
+modparam("nathelper", "received_avp", "$avp(received)")'
+  NAT_REG='force_rport();
+		if (nat_uac_test("19")) {
+			fix_nated_register();
+		}'
+fi
+
+python3 - "$CFG" "$MPATH" "$DOMAIN" "$PUBLIC_IP" "$PORT" "$DB_URL" "$EXTRA" "$NAT_BLOCK" "$NAT_REG" <<'PY'
 import sys
-path, mpath, domain, public_ip, port, db_url, extra = sys.argv[1:8]
+path, mpath, domain, public_ip, port, db_url, extra, nat_block, nat_reg = sys.argv[1:10]
 open(path, "w", encoding="utf-8").write(f'''#
 # Ownswitch SIP REGISTER + local delivery (rebuilt from scratch)
 # Domain = public IP OR any FQDN pointed here. Outbound Proxy = blank.
@@ -208,7 +229,6 @@ modparam("tm", "fr_inv_timeout", 60)
 loadmodule "rr.so"
 loadmodule "maxfwd.so"
 loadmodule "sipmsgops.so"
-loadmodule "uri.so"
 loadmodule "mi_fifo.so"
 modparam("mi_fifo", "fifo_name", "/run/opensips/opensips_fifo")
 modparam("mi_fifo", "fifo_mode", 0660)
@@ -230,8 +250,7 @@ loadmodule "registrar.so"
 modparam("registrar", "max_contacts", 5)
 modparam("registrar", "default_expires", 3600)
 
-loadmodule "nathelper.so"
-modparam("nathelper", "received_avp", "$avp(received)")
+{nat_block}
 
 loadmodule "permissions.so"
 modparam("permissions", "db_url", "{db_url}")
@@ -245,10 +264,7 @@ route {{
 			www_challenge("$td", "auth");
 			exit;
 		}}
-		force_rport();
-		if (nat_uac_test("19")) {{
-			fix_nated_register();
-		}}
+		{nat_reg}
 		if (!save("location")) {{
 			sl_reply_error();
 			exit;
