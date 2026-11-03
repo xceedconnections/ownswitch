@@ -135,11 +135,14 @@ PW=""
 DB_URL="$(python3 -c "import urllib.parse,sys; print('mysql://opensips:%s@127.0.0.1/opensips'%urllib.parse.quote(sys.argv[1],safe=''))" "$PW")"
 
 bash "$SRC/deploy/fix-opensips-provision.sh" || true
-# location + subscriber.password
+# location + subscriber.password + address (permissions) schema
 mysql --protocol=socket -uroot <<'SQL' || true
 CREATE DATABASE IF NOT EXISTS opensips CHARACTER SET utf8mb4;
 USE opensips;
-CREATE TABLE IF NOT EXISTS version (table_name CHAR(32) NOT NULL PRIMARY KEY, table_version INT UNSIGNED NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS version (
+  table_name CHAR(32) NOT NULL PRIMARY KEY,
+  table_version INT UNSIGNED NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS location (
   contact_id BIGINT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
   username CHAR(64) DEFAULT '' NOT NULL,
@@ -161,12 +164,42 @@ CREATE TABLE IF NOT EXISTS location (
   kv_store TEXT(512) DEFAULT NULL,
   attr CHAR(255) DEFAULT NULL
 ) ENGINE=InnoDB;
+INSERT IGNORE INTO version (table_name, table_version) VALUES ('location', 1013);
 SQL
-# Apply packaged schemas if subscriber missing
-if ! mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='subscriber'" | grep -q 1; then
-  f=$(find /usr/share/opensips /usr/share/doc -name 'standard-create.sql' 2>/dev/null | head -1 || true)
-  [[ -n "${f:-}" ]] && mysql --protocol=socket -uroot opensips <"$f" || true
-fi
+# Apply packaged schemas if subscriber / address missing
+for want in standard permissions usrloc auth_db; do
+  if [[ "$want" == "permissions" ]]; then
+    mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='address'" | grep -q 1 && continue
+  elif [[ "$want" == "usrloc" ]]; then
+    mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='location'" | grep -q 1 && continue
+  elif [[ "$want" == "standard" || "$want" == "auth_db" ]]; then
+    mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='subscriber'" | grep -q 1 && [[ "$want" != "standard" ]] && continue
+    if [[ "$want" == "standard" ]]; then
+      mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='subscriber'" | grep -q 1 && continue
+    fi
+  fi
+  f=$(find /usr/share/opensips /usr/share/doc /usr/share/opensips-mysql-module \
+    \( -name "${want}-create.sql" -o -name "*${want}*create*.sql" \) 2>/dev/null | head -1 || true)
+  if [[ -n "${f:-}" ]]; then
+    echo "Applying schema $f"
+    mysql --protocol=socket -uroot opensips <"$f" || true
+  fi
+done
+# Fallback address table for permissions module (ver 5)
+mysql --protocol=socket -uroot opensips <<'SQL' || true
+CREATE TABLE IF NOT EXISTS address (
+  id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  grp SMALLINT(5) UNSIGNED DEFAULT 1 NOT NULL,
+  ip CHAR(50) NOT NULL,
+  mask TINYINT DEFAULT 32 NOT NULL,
+  port SMALLINT(5) UNSIGNED DEFAULT 0 NOT NULL,
+  proto CHAR(4) DEFAULT 'any' NOT NULL,
+  pattern CHAR(64) DEFAULT NULL,
+  context_info CHAR(32) DEFAULT NULL
+) ENGINE=InnoDB;
+DELETE FROM version WHERE table_name='address';
+INSERT INTO version (table_name, table_version) VALUES ('address', 5);
+SQL
 mysql --protocol=socket -uroot opensips -e \
   "ALTER TABLE subscriber ADD COLUMN password VARCHAR(64) NOT NULL DEFAULT ''" 2>/dev/null || true
 mysql --protocol=socket -uroot opensips -e \
@@ -255,8 +288,7 @@ modparam("registrar", "default_expires", 3600)
 
 {nat_block}
 
-loadmodule "permissions.so"
-modparam("permissions", "db_url", "{db_url}")
+# permissions/address table applied later by stage 50 — omit here so REGISTER works now
 
 route {{
 	# ---- REGISTER first (never DNS-loop → 483) ----
@@ -309,14 +341,12 @@ route {{
 		exit;
 	}}
 
-	# IP trunk ACL (permissions address group 1) OR digest
-	if (!check_source_address(1)) {{
-		if (!proxy_authorize("$fd", "subscriber")) {{
-			proxy_challenge("$fd", "auth");
-			exit;
-		}}
-		consume_credentials();
+	# Digest auth for INVITE (IP ACL needs permissions.address — stage 50)
+	if (!proxy_authorize("$fd", "subscriber")) {{
+		proxy_challenge("$fd", "auth");
+		exit;
 	}}
+	consume_credentials();
 
 	if (lookup("location")) {{
 		record_route();
