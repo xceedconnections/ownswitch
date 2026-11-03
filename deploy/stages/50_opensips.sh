@@ -349,8 +349,20 @@ if [[ -f /etc/default/opensips ]] && grep -qE '^RUN_OPENSIPS=no' /etc/default/op
   sed -i 's/^RUN_OPENSIPS=no/RUN_OPENSIPS=yes/' /etc/default/opensips
 fi
 
-# restart only when the config changed (or it was stopped above)
-svc_apply opensips "${cfg_changed}"
+# Always restart after stage 50 so digest REGISTER cfg is never left unloaded
+systemctl stop opensips >/dev/null 2>&1 || true
+fuser -k "${SIP_PORT}/udp" >/dev/null 2>&1 || true
+fuser -k "${SIP_PORT}/tcp" >/dev/null 2>&1 || true
+sleep 1
+svc_apply opensips 1
+
+# Digest REGISTER must be present in the live file
+grep -q 'www_authorize' /etc/opensips/opensips.cfg \
+  || die "opensips.cfg missing www_authorize after render — Ownswitch REGISTER auth not applied"
+grep -q 'loadmodule "auth.so"' /etc/opensips/opensips.cfg \
+  || die "opensips.cfg missing auth.so — install opensips-auth-modules"
+[[ -f "${mod_dir}/auth.so" ]] \
+  || die "auth.so missing under ${mod_dir} — apt install opensips-auth-modules"
 
 # ---------------------------------------------------------------------------
 # 5. Verify exposure
