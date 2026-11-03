@@ -160,6 +160,34 @@ cmd_ip_log() {
     | tail -n 40 || true
 }
 
+# Country / city / ISP for banned IP (used by portal Firewall page)
+cmd_geo() {
+  local ip="${1:-}"
+  [[ -n "$ip" ]] || die "usage: geo <ip>"
+  local raw country code city isp
+  country=""; code=""; city=""; isp=""
+  raw="$(curl -fsSL --max-time 3 "http://ip-api.com/json/${ip}?fields=status,country,countryCode,city,isp" 2>/dev/null || true)"
+  if [[ -n "$raw" ]] && echo "$raw" | grep -q '"status":"success"'; then
+    country="$(echo "$raw" | sed -n 's/.*"country":"\([^"]*\)".*/\1/p' | head -1)"
+    code="$(echo "$raw" | sed -n 's/.*"countryCode":"\([^"]*\)".*/\1/p' | head -1)"
+    city="$(echo "$raw" | sed -n 's/.*"city":"\([^"]*\)".*/\1/p' | head -1)"
+    isp="$(echo "$raw" | sed -n 's/.*"isp":"\([^"]*\)".*/\1/p' | head -1)"
+  fi
+  if [[ -z "$country" ]]; then
+    raw="$(curl -fsSL --max-time 3 "https://ipwho.is/${ip}" 2>/dev/null || true)"
+    if [[ -n "$raw" ]] && echo "$raw" | grep -q '"success":true'; then
+      country="$(echo "$raw" | sed -n 's/.*"country":"\([^"]*\)".*/\1/p' | head -1)"
+      code="$(echo "$raw" | sed -n 's/.*"country_code":"\([^"]*\)".*/\1/p' | head -1)"
+      city="$(echo "$raw" | sed -n 's/.*"city":"\([^"]*\)".*/\1/p' | head -1)"
+    fi
+  fi
+  echo "ip=${ip}"
+  echo "country=${country:-Unknown}"
+  echo "countryCode=${code:-}"
+  echo "city=${city:-}"
+  echo "isp=${isp:-}"
+}
+
 case "${1:-}" in
   status)     shift; cmd_status "$@" ;;
   banned)     shift; cmd_banned "$@" ;;
@@ -169,8 +197,9 @@ case "${1:-}" in
   set-config) shift; cmd_set_config "$@" ;;
   reload)     shift; cmd_reload "$@" ;;
   ip-log)     shift; cmd_ip_log "$@" ;;
+  geo)        shift; cmd_geo "$@" ;;
   *)
-    echo "usage: $0 {status|banned|unban|ban|config|set-config|reload|ip-log}" >&2
+    echo "usage: $0 {status|banned|unban|ban|config|set-config|reload|ip-log|geo}" >&2
     exit 2
     ;;
 esac

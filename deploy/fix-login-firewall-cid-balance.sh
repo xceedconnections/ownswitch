@@ -16,10 +16,17 @@ cd "$SRC"
 git fetch origin main
 git reset --hard origin/main
 
-# Portal code + assets
-if [[ -x "$SRC/deploy/refresh-ui.sh" ]]; then
-  bash "$SRC/deploy/refresh-ui.sh" || true
-fi
+# Portal code + assets (must land before OpenSIPS patch)
+bash "$SRC/deploy/refresh-ui.sh"
+# Prove new release is live
+LOGIN_VIEW="$(readlink -f /opt/ownswitch/current)/app/Views/auth/login.php"
+grep -q 'Username or email' "$LOGIN_VIEW" \
+  || { echo "FATAL: UI refresh did not deploy login.php with Username or email"; exit 1; }
+grep -q 'cid_min_len' "$(readlink -f /opt/ownswitch/current)/app/Controllers/SipUserController.php" \
+  || { echo "FATAL: SipUserController missing cid_min_len after refresh"; exit 1; }
+grep -q 'GeoIp' "$(readlink -f /opt/ownswitch/current)/app/Support/GeoIp.php" \
+  || { echo "FATAL: GeoIp.php missing after refresh"; exit 1; }
+echo "OK portal release has login/CID/GeoIp"
 
 # Fail2ban helper (ip-log for ban reason lines)
 if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sh" ]]; then

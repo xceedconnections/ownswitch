@@ -92,6 +92,21 @@ final class Fail2banService
     public function banDetail(string $ip): array
     {
         $geo = \Ownswitch\Support\GeoIp::lookup($ip);
+        // Fallback: privileged helper curl (php-fpm outbound may be blocked)
+        if (($geo['country'] ?? '') === '' || ($geo['country'] ?? '') === 'Unknown') {
+            [$gc, $gout] = $this->run(['geo', $ip]);
+            if ($gc === 0 && trim($gout) !== '') {
+                $gkv = $this->parseKv($gout);
+                if (($gkv['country'] ?? '') !== '' && ($gkv['country'] ?? '') !== 'Unknown') {
+                    $geo = [
+                        'country' => (string) $gkv['country'],
+                        'countryCode' => (string) ($gkv['countryCode'] ?? ''),
+                        'city' => (string) ($gkv['city'] ?? ''),
+                        'isp' => (string) ($gkv['isp'] ?? ''),
+                    ];
+                }
+            }
+        }
         $attempts = [];
         [$code, $out] = $this->run(['ip-log', $ip]);
         if ($code === 0 && trim($out) !== '') {
@@ -111,11 +126,16 @@ final class Fail2banService
         } elseif ($attempts === []) {
             $reason = 'Banned by opensips-auth jail (threshold reached) or manual ban';
         }
+        $country = (string) ($geo['country'] ?? 'Unknown');
+        $cc = (string) ($geo['countryCode'] ?? '');
+        if ($cc !== '' && $country !== 'Unknown' && !str_contains($country, '(')) {
+            $country .= ' (' . $cc . ')';
+        }
         return [
             'ip' => $ip,
-            'country' => $geo['country'],
-            'city' => $geo['city'],
-            'isp' => $geo['isp'],
+            'country' => $country !== '' ? $country : 'Unknown',
+            'city' => (string) ($geo['city'] ?? ''),
+            'isp' => (string) ($geo['isp'] ?? ''),
             'reason' => $reason,
             'attempts' => array_slice($attempts, -12),
         ];
