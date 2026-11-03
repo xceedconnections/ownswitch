@@ -37,10 +37,14 @@ else
     apt_update
   fi
   (( fresh_install )) && apt_update || true
-  # opensips-auth-modules provides auth.so (www_challenge) — required for digest REGISTER
-  apt_install opensips opensips-mysql-module opensips-cgrates-module opensips-auth-modules
+  # opensips-auth-modules provides auth.so; mysql-dbschema ships *-create.sql files
+  apt_install opensips opensips-mysql-module opensips-mysql-dbschema opensips-cgrates-module opensips-auth-modules
   # nice-to-have modules (names differ slightly between releases, so failures only warn)
   apt_install_optional opensips-http-modules opensips-restclient-module opensips-json-module opensips-cli opensips-nathelper-module
+fi
+# Even when apt was skipped, ensure dbschema package is present for CREATE scripts
+if (( ! skip_apt )); then
+  apt_install_optional opensips-mysql-dbschema || true
 fi
 
 installed="$(dpkg-query -W -f='${Version}' opensips 2>/dev/null || true)"
@@ -55,13 +59,20 @@ if (( fresh_install )); then systemctl stop opensips >/dev/null 2>&1 || true; fi
 # ---------------------------------------------------------------------------
 mysql_root -e 'SELECT 1' >/dev/null 2>&1 || die "MySQL not reachable - run stage 30 first"
 
-mapfile -t sql_files < <(dpkg -L opensips-mysql-module 2>/dev/null | grep -E '\.sql$' || true)
+mapfile -t sql_files < <(dpkg -L opensips-mysql-module opensips-mysql-dbschema 2>/dev/null | grep -E '\.sql$' || true)
 if ((${#sql_files[@]} == 0)); then
-  mapfile -t sql_files < <(find /usr/share/opensips /usr/share/opensips-mysql-module \
+  mapfile -t sql_files < <(find /usr/share/opensips /usr/share/opensips-mysql-module /usr/share/doc \
     -type f \( -name '*-create.sql' -o -name '*create*.sql' \) 2>/dev/null | sort || true)
 fi
-((${#sql_files[@]})) || die "OpenSIPS MySQL schema files not found (package opensips-mysql-module)"
-log_info "Found ${#sql_files[@]} OpenSIPS SQL schema file(s)"
+if ((${#sql_files[@]} == 0)); then
+  if mysql_table_exists "${DB_OPENSIPS}" subscriber && mysql_table_exists "${DB_OPENSIPS}" location; then
+    log_warn "No packaged SQL schema files found — core tables already exist; continuing (install opensips-mysql-dbschema if you need fresh schemas)"
+  else
+    die "OpenSIPS MySQL schema files not found — apt install opensips-mysql-dbschema"
+  fi
+else
+  log_info "Found ${#sql_files[@]} OpenSIPS SQL schema file(s)"
+fi
 
 schema_file() {
   local n=$1 f base
