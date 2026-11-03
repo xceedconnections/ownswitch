@@ -33,9 +33,8 @@ final class AreaCodeController extends CrudController
                 'label' => 'Area code',
                 'type' => 'prefix',
                 'required' => true,
-                'readonly_on_edit' => true,
                 'list' => true,
-                'help' => 'Digits only, including country code when needed. Example: 1213 for USA Los Angeles, 1203 for Connecticut.',
+                'help' => 'Digits only, including country code. Example: 1213 for USA Los Angeles, 1203 for Connecticut.',
             ],
             [
                 'name' => 'name',
@@ -59,11 +58,9 @@ final class AreaCodeController extends CrudController
         if ($data['name'] === '') {
             throw new \DomainException('Description / city is required.');
         }
-        if ($existing === null) {
-            $data['code'] = preg_replace('/\D+/', '', (string) ($data['code'] ?? '')) ?? '';
-            if ($data['code'] === '') {
-                throw new \DomainException('Area code must be digits only.');
-            }
+        $data['code'] = preg_replace('/\D+/', '', (string) ($data['code'] ?? ($existing['code'] ?? ''))) ?? '';
+        if ($data['code'] === '') {
+            throw new \DomainException('Area code must be digits only.');
         }
         unset($data['country_code']);
         $notes = trim((string) ($data['notes'] ?? ''));
