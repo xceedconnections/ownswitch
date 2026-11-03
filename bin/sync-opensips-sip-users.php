@@ -88,11 +88,11 @@ if ($proxy === '') {
 }
 
 echo "Provisioned {$ok} active SIP user(s); rehashed {$rehashed}; skipped {$skip}.\n";
-echo "Challenge realm (must match softphone digest) : {$domain}\n";
-echo "Eyebeam Domain  : {$domain}\n";
-echo "Eyebeam Proxy   : {$proxy}\n";
-echo "Port / Transport: 5060 UDP (try TCP if UDP blocked)\n";
+echo "Auth mode        : plaintext password (calculate_ha1=1) — Domain may be IP or any FQDN\n";
+echo "Softphone Domain : {$proxy}  OR  {$domain}  OR any FQDN pointing here\n";
+echo "Outbound Proxy   : leave BLANK\n";
+echo "Port / Transport : 5060 UDP\n";
 if ($rehashed === 0 && $ok > 0) {
-    echo "NOTE: No password_enc found — if REGISTER fails with 401, open each SIP user in the portal, set a new password, Save, then re-run this script.\n";
+    echo "NOTE: No password_enc — set a new SIP password in the portal once, Save, then re-run this script.\n";
 }
 exit(0);

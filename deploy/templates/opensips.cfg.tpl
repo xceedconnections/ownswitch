@@ -24,15 +24,16 @@ log_name="opensips"
 
 udp_workers=@@OPENSIPS_UDP_WORKERS@@
 tcp_workers=4
-# yes = also alias advertised socket IPs; explicit aliases below add the SIP FQDN
+# Advertise socket IPs + every host/IP we know (primary FQDN, public IP, extra local IPs)
 auto_aliases=yes
 mpath="@@OPENSIPS_MPATH@@"
 
 socket=@@SIP_SOCKET_UDP@@
 socket=@@SIP_SOCKET_TCP@@
-# CRITICAL: without these, REGISTER sip:FQDN returns 500 / loops while REGISTER sip:IP works
+# Primary portal domain + public IP (extra aliases injected by stage 50)
 alias="@@OWNSWITCH_DOMAIN@@"
 alias="@@PUBLIC_IP@@"
+@@OPENSIPS_EXTRA_ALIASES@@
 
 ####### Modules #########
 
@@ -63,20 +64,22 @@ modparam("mi_fifo", "fifo_mode", 0660)
 loadmodule "auth.so"
 loadmodule "auth_db.so"
 modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
-# Precomputed HA1 (portal syncs ha1). Softphones MUST use the WWW-Authenticate realm
-# (OWNSWITCH_DOMAIN), which Eyebeam/Asterisk/FS do after the 401 challenge — even when
-# Domain field is the public IP. calculate_ha1=1 with empty password breaks all REGISTERs.
-modparam("auth_db", "calculate_ha1", 0)
-modparam("auth_db", "password_column", "ha1")
+# Magnus-style: plaintext password + calculate HA1 using the softphone's realm.
+# Domain may be public IP OR any FQDN that resolves here — no Outbound Proxy required.
+# (calculate_ha1=0/ha1 forced one fixed realm and broke Domain=IP / alt-FQDN clients.)
+modparam("auth_db", "calculate_ha1", 1)
+modparam("auth_db", "password_column", "password")
 # Load SIP Directmedia / DTMF pass / CallerID mode from subscriber into AVPs
 modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid")
-# Username-only match (Domain field may be FQDN or IP)
+# Username-only match (ignore Domain in subscriber row)
 modparam("auth_db", "use_domain", 0)
 
 loadmodule "usrloc.so"
 # write-through so portal registration status reads opensips.location live
 modparam("usrloc", "working_mode_preset", "single-instance-sql-write-through")
 modparam("usrloc", "db_url", "@@OPENSIPS_DB_URL@@")
+# AOR = username only — Domain=IP and Domain=any-FQDN share the same binding
+modparam("usrloc", "use_domain", 0)
 
 loadmodule "registrar.so"
 modparam("registrar", "max_contacts", 5)
@@ -127,16 +130,18 @@ route {
 	# =====================================================================
 	# REGISTER FIRST — never proxy/relay (FQDN DNS to ourselves → 483/500).
 	# Must run before Max-Forwards / loose_route / is_myself checks.
+	# Accepts Domain = public IP OR any FQDN pointed at this server (no Proxy).
 	# =====================================================================
 	if (is_method("REGISTER")) {
-		# Normalize Domain=FQDN onto advertised IP so usrloc/aliases always match
-		if ($rd == "@@OWNSWITCH_DOMAIN@@") {
+		# Canonicalize non-IP Request-URI hosts → advertised IP (usrloc use_domain=0)
+		if (!($rd =~ "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$")) {
 			rewritehost("@@PUBLIC_IP@@");
 		}
 		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td ruri=$ru\n");
-		if (!www_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
-			xlog("L_WARN", "REGISTER auth failed for $tU@$td realm=@@OWNSWITCH_DOMAIN@@ src=$si\n");
-			www_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
+		# Empty realm → use Authorization realm; challenge with $td (phone Domain)
+		if (!www_authorize("", "subscriber")) {
+			xlog("L_WARN", "REGISTER auth failed for $tU@$td src=$si\n");
+			www_challenge("$td", "auth");
 			exit;
 		}
 		@@OPENSIPS_NAT_REGISTER_BLOCK@@
@@ -220,15 +225,19 @@ route {
 			}
 			xlog("L_WARN", "carrier ACL but no AOR for $rU — customer digest path\n");
 		}
-		if (!proxy_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
-			proxy_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
+		# Empty realm → match softphone Domain (IP or any FQDN); username-only DB lookup
+		if (!proxy_authorize("", "subscriber")) {
+			proxy_challenge("$fd", "auth");
 			exit;
 		}
 		consume_credentials();
 	}
 
-	# Local extension / SIP-user → registered AOR (only when R-URI host is us)
-	if (is_myself("$rd") && lookup("location")) {
+	# DID → SIP user (when alias_db is loaded)
+	@@OPENSIPS_ALIAS_LOOKUP@@
+
+	# Local extension / SIP-user → registered AOR (username-only; Domain may be IP/FQDN)
+	if (lookup("location")) {
 		xlog("L_INFO", "local AOR hit for $rU from $fU\n");
 		record_route();
 		create_dialog("B");

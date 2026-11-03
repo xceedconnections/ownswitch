@@ -437,9 +437,9 @@ final class SipUserController extends CrudController
             if ($port <= 0) {
                 $port = 5060;
             }
-            return "SIP user saved. Softphone/PBX: User={$row['username']}  Pass={$this->plainPassword}  "
-                . "Domain={$realm} OR {$proxy}  Registrar/Proxy={$proxy} (recommended)  Port={$port}  UDP. "
-                . "Works with Eyebeam, Asterisk, FreeSWITCH, VOS3000, OpenSIPS peers — Domain may be FQDN or IP.";
+            return "SIP user saved. Softphone (no Proxy): User={$row['username']}  Pass={$this->plainPassword}  "
+                . "Domain={$proxy} OR {$realm} OR any FQDN→{$proxy}  Port={$port} UDP. "
+                . "Magnus-style: username+password+IP/FQDN — leave Outbound Proxy blank.";
         }
         if ($row && empty($row['password_enc'])) {
             App::session()->flash(

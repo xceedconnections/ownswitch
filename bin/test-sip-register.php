@@ -131,9 +131,11 @@ foreach ($hosts as $h) {
 }
 
 if ($any) {
-    echo "\nOpenSIPS auth OK. If Eyebeam still fails: set Proxy={$publicIp} Port=5060 UDP, Domain={$domain}, and open Hetzner UDP/TCP 5060.\n";
+    $hint = $publicIp !== '' ? $publicIp : $domain;
+    echo "\nOpenSIPS auth OK. Softphone: Domain={$hint} (or any FQDN→{$hint}), Proxy=BLANK, Port=5060 UDP.\n";
     exit(0);
 }
 
-echo "\nFAILED all probes. Reset SIP password in portal (Save), run sync-opensips-sip-users.php, re-test.\n";
+echo "\nFAILED all probes. Portal → SIP Users → set password → Save, then:\n";
+echo "  sudo bash /opt/ownswitch-src/deploy/fix-softphone-register-magnus.sh {$user} {$pass}\n";
 exit(1);

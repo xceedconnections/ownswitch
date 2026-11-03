@@ -271,16 +271,34 @@ modparam(\"uac_registrant\", \"timer_interval\", 20)"
   fi
 fi
 
+# Softphones without Outbound Proxy need nathelper (rport + received)
+if (( ! skip_apt )); then
+  apt_install_optional opensips-nathelper-module || true
+fi
 if [[ -f "${mod_dir}/nathelper.so" ]]; then
   export OPENSIPS_NATHELPER_BLOCK='loadmodule "nathelper.so"
 modparam("nathelper", "received_avp", "$avp(received)")'
-  export OPENSIPS_NAT_REGISTER_BLOCK='if (nat_uac_test("19")) {
+  export OPENSIPS_NAT_REGISTER_BLOCK='force_rport();
+		if (nat_uac_test("19")) {
 			fix_nated_register();
 		}'
 else
   export OPENSIPS_NATHELPER_BLOCK='# nathelper.so not installed (opensips-nathelper-module)'
-  export OPENSIPS_NAT_REGISTER_BLOCK='# no nathelper'
+  export OPENSIPS_NAT_REGISTER_BLOCK='# no nathelper — install opensips-nathelper-module for NAT softphones'
 fi
+
+# Extra aliases: every local IPv4 so Domain=<any NIC IP> works like Magnus
+_extra_aliases=""
+for _ip in $(hostname -I 2>/dev/null || true); do
+  if valid_ipv4 "${_ip}" && [[ "${_ip}" != "${PUBLIC_IP}" ]]; then
+    _extra_aliases="${_extra_aliases}alias=\"${_ip}\"
+"
+  fi
+done
+# localhost useful for probes / local Asterisk
+_extra_aliases="${_extra_aliases}alias=\"127.0.0.1\"
+"
+export OPENSIPS_EXTRA_ALIASES="${_extra_aliases}"
 
 # DID aliases (alias_db) — package often ships with opensips-mysql-module / alias_db.so
 if (( ! skip_apt )); then

@@ -129,9 +129,7 @@ fi
 
 echo
 echo "################################################################"
-echo " SUCCESS criteria met: Domain + IP REGISTER → 401"
-echo " Next:"
-echo "  1) Portal → SIP Users → set password → Save"
-echo "  2) Eyebeam Domain=${DOMAIN}  Proxy=${PUBLIC_IP}  Port=5060 UDP"
-echo "  3) sudo -u ownswitch env OWNSWITCH_ENV_FILE=$ENV_FILE php $CUR/bin/diagnose-sip-portal.php"
+echo " Prefer the Magnus-style fixer (plaintext auth, no Proxy):"
+echo "   sudo bash $SRC/deploy/fix-softphone-register-magnus.sh"
+echo " Softphone: User+Pass  Domain=${PUBLIC_IP} OR ${DOMAIN}  Proxy=BLANK  Port=5060 UDP"
 echo "################################################################"
