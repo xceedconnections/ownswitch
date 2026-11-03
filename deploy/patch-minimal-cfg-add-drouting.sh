@@ -99,6 +99,7 @@ replacement = (
     '			send_reply(503, "No Route");\n'
     '			exit;\n'
     '		}\n'
+    '		route(apply_outbound_cid);\n'
     '		if (!t_relay()) {\n'
     '			send_reply(500, "Error");\n'
     '		}\n'
@@ -106,12 +107,47 @@ replacement = (
 )
 
 extra_routes = '''
+route[apply_outbound_cid] {
+	$var(user) = $fU;
+	$var(dom) = $fd;
+	$var(forced) = 0;
+	if ($avp(dr_gw_attrs) != NULL) {
+		$var(attrs) = $avp(dr_gw_attrs);
+		$var(fu) = $(var(attrs){param.value,fu});
+		$var(fd) = $(var(attrs){param.value,fd});
+		if ($var(fu) != NULL && $(var(fu){s.len}) > 0) {
+			$var(user) = $(var(fu){s.unescape.param});
+			$var(forced) = 1;
+		}
+		if ($var(fd) != NULL && $(var(fd){s.len}) > 0) {
+			$var(dom) = $(var(fd){s.unescape.param});
+			$var(forced) = 1;
+		}
+	}
+	if ($var(forced) == 0 && !($fU =~ "^[+0-9]{3,30}$")) {
+		if ($avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0 && $avp(os_cid) =~ "^[+0-9]{3,30}$") {
+			$var(user) = $avp(os_cid);
+			$var(forced) = 1;
+		}
+	}
+	if ($var(forced) == 0 && $avp(os_cid_mode) == "fixed" && $avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
+		$var(user) = $avp(os_cid);
+		$var(forced) = 1;
+	}
+	if ($var(forced) == 1) {
+		remove_hf("From");
+		append_hf("From: <$var(user)@$var(dom)>;tag=$ft\\r\\n");
+		xlog("L_WARN", "OWNSWITCH outbound From $fU → $var(user)@$var(dom)\\n");
+	}
+}
+
 failure_route[carrier_failover] {
 	if (t_was_cancelled()) {
 		exit;
 	}
 	if (use_next_gw()) {
 		t_on_failure("carrier_failover");
+		route(apply_outbound_cid);
 		t_relay();
 		exit;
 	}
