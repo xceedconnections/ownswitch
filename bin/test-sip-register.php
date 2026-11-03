@@ -5,10 +5,10 @@ declare(strict_types=1);
 /**
  * Local REGISTER probe against OpenSIPS (run ON the server).
  *
- *   sudo OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
+ *   sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
  *     php /opt/ownswitch/current/bin/test-sip-register.php USER PASS
  *
- * Sends REGISTER to 127.0.0.1:5060 with realm from OPENSIPS_SIP_DOMAIN.
+ * Unauthenticated 200 OK is a FAILURE (OpenSIPS must challenge with 401).
  */
 
 if (PHP_SAPI !== 'cli') {
@@ -67,9 +67,10 @@ $tryRegister = static function (string $toHost) use ($user, $pass, $domain, $dst
     }
     $code = (int) $m[1];
     if ($code === 200) {
-        echo "OK: accepted without challenge\n";
+        fwrite(STDERR, "FAIL: REGISTER accepted WITHOUT digest (200). Live opensips.cfg is NOT Ownswitch auth config.\n");
+        fwrite(STDERR, "Fix: sudo bash /opt/ownswitch-src/deploy/fix-softphone-register-magnus.sh\n");
         fclose($sock);
-        return true;
+        return false;
     }
     if ($code !== 401 && $code !== 407) {
         fwrite(STDERR, "Unexpected status {$code}\n");
@@ -87,7 +88,7 @@ $tryRegister = static function (string $toHost) use ($user, $pass, $domain, $dst
     $ha1 = md5("{$user}:{$realm}:{$pass}");
     $ha2 = md5("REGISTER:{$uri}");
     $response = md5("{$ha1}:{$nonce}:{$ha2}");
-    echo "    challenge realm={$realm} (portal HA1 must be md5(user:{$realm}:pass); config domain={$domain})\n";
+    echo "    challenge realm={$realm} (plaintext password auth; portal domain={$domain})\n";
 
     $branch2 = 'z9hG4bK' . bin2hex(random_bytes(4));
     $req2 = "REGISTER sip:{$toHost} SIP/2.0\r\n"
@@ -113,13 +114,19 @@ $tryRegister = static function (string $toHost) use ($user, $pass, $domain, $dst
         echo "SUCCESS for To-host={$toHost} (realm={$realm})\n";
         return true;
     }
-    echo "FAILED for To-host={$toHost}\n";
+    echo "FAILED for To-host={$toHost} (wrong password or empty subscriber.password)\n";
     return false;
 };
 
-$hosts = [$domain];
-if ($publicIp !== '' && $publicIp !== $domain) {
+$hosts = [];
+if ($publicIp !== '') {
     $hosts[] = $publicIp;
+}
+if ($domain !== '' && $domain !== $publicIp) {
+    $hosts[] = $domain;
+}
+if ($hosts === []) {
+    $hosts[] = '127.0.0.1';
 }
 
 $any = false;
@@ -132,10 +139,9 @@ foreach ($hosts as $h) {
 
 if ($any) {
     $hint = $publicIp !== '' ? $publicIp : $domain;
-    echo "\nOpenSIPS auth OK. Softphone: Domain={$hint} (or any FQDN→{$hint}), Proxy=BLANK, Port=5060 UDP.\n";
+    echo "\nOpenSIPS digest auth OK. Softphone: Domain={$hint}, Proxy=BLANK, Port=5060 UDP.\n";
     exit(0);
 }
 
-echo "\nFAILED all probes. Portal → SIP Users → set password → Save, then:\n";
-echo "  sudo bash /opt/ownswitch-src/deploy/fix-softphone-register-magnus.sh {$user} {$pass}\n";
+echo "\nFAILED all probes.\n";
 exit(1);

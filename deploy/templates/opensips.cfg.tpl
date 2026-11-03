@@ -138,8 +138,8 @@ route {
 			rewritehost("@@PUBLIC_IP@@");
 		}
 		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td ruri=$ru\n");
-		# Empty realm → use Authorization realm; challenge with $td (phone Domain)
-		if (!www_authorize("", "subscriber")) {
+		# Realm = softphone Domain ($td): IP or any FQDN. calculate_ha1=1 → plaintext password.
+		if (!www_authorize("$td", "subscriber")) {
 			xlog("L_WARN", "REGISTER auth failed for $tU@$td src=$si\n");
 			www_challenge("$td", "auth");
 			exit;
@@ -225,8 +225,8 @@ route {
 			}
 			xlog("L_WARN", "carrier ACL but no AOR for $rU — customer digest path\n");
 		}
-		# Empty realm → match softphone Domain (IP or any FQDN); username-only DB lookup
-		if (!proxy_authorize("", "subscriber")) {
+		# Realm = From domain ($fd): IP or any FQDN; username-only DB lookup
+		if (!proxy_authorize("$fd", "subscriber")) {
 			proxy_challenge("$fd", "auth");
 			exit;
 		}
