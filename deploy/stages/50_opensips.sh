@@ -92,6 +92,56 @@ ensure_subscriber_schema() {
     || die "Could not create opensips.subscriber from packaged SQL files: ${sql_files[*]}"
 }
 
+# usrloc write-through + portal registration status require opensips.location
+ensure_location_schema() {
+  mysql_table_exists "${DB_OPENSIPS}" location && return 0
+  local f
+  f="$(schema_file usrloc || true)"
+  if [[ -n "$f" ]]; then
+    log_info "Applying usrloc/location DDL from ${f}"
+    mysql_root "${DB_OPENSIPS}" <"$f" || true
+  fi
+  if ! mysql_table_exists "${DB_OPENSIPS}" location; then
+    for f in "${sql_files[@]}"; do
+      if grep -qiE 'create table.*\`?location\`?' "$f"; then
+        log_info "Applying location DDL from ${f}"
+        mysql_root "${DB_OPENSIPS}" <"$f" || true
+      fi
+    done
+  fi
+  if ! mysql_table_exists "${DB_OPENSIPS}" location; then
+    log_warn "Packaged usrloc SQL missing — creating opensips.location fallback (OpenSIPS 3.6)"
+    mysql_root "${DB_OPENSIPS}" <<'SQL'
+CREATE TABLE IF NOT EXISTS location (
+  contact_id BIGINT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  username CHAR(64) DEFAULT '' NOT NULL,
+  domain CHAR(64) DEFAULT NULL,
+  contact TEXT NOT NULL,
+  received CHAR(255) DEFAULT NULL,
+  path CHAR(255) DEFAULT NULL,
+  expires INT(10) UNSIGNED NOT NULL,
+  q FLOAT(10,2) DEFAULT 1.0 NOT NULL,
+  callid CHAR(255) DEFAULT 'Default-Call-ID' NOT NULL,
+  cseq INT(11) DEFAULT 13 NOT NULL,
+  last_modified DATETIME DEFAULT '1900-01-01 00:00:01' NOT NULL,
+  flags INT(11) DEFAULT 0 NOT NULL,
+  cflags CHAR(255) DEFAULT NULL,
+  user_agent CHAR(255) DEFAULT '' NOT NULL,
+  socket CHAR(64) DEFAULT NULL,
+  methods INT(11) DEFAULT NULL,
+  sip_instance CHAR(255) DEFAULT NULL,
+  kv_store TEXT(512) DEFAULT NULL,
+  attr CHAR(255) DEFAULT NULL
+) ENGINE=InnoDB;
+INSERT INTO version (table_name, table_version)
+  SELECT 'location', '1013' FROM DUAL
+  WHERE NOT EXISTS (SELECT 1 FROM version WHERE table_name='location');
+SQL
+  fi
+  mysql_table_exists "${DB_OPENSIPS}" location \
+    || die "Could not create opensips.location (usrloc schema)"
+}
+
 apply_schema_once() { # module [required_table]
   local mod=$1 want=${2:-} f first
   f="$(schema_file "$mod" || true)"
@@ -119,7 +169,8 @@ apply_schema_once() { # module [required_table]
 # standard first (creates `version`, acc, subscriber, address, ...)
 # Pass the canonical table so a partial apply (only `version`) cannot skip the rest.
 apply_schema_once standard subscriber
-for mod in auth_db usrloc dialog permissions drouting dispatcher rtpengine dialplan domain group; do
+apply_schema_once usrloc location
+for mod in auth_db dialog permissions drouting dispatcher rtpengine dialplan domain group; do
   apply_schema_once "$mod"
 done
 # Outbound REGISTER to providers (optional but needed for auth_mode=register trunks)
@@ -134,6 +185,7 @@ else
   log_warn "opensips-uac-module not installed — IP peer trunks still work; Register-mode trunks will not"
 fi
 ensure_subscriber_schema
+ensure_location_schema
 
 # SIP Directmedia / DTMF / CID mode — loaded via auth_db load_credentials
 mysql_root "${DB_OPENSIPS}" -e \

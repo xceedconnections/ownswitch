@@ -78,9 +78,11 @@ final class HealthService
             $db = \Ownswitch\Database\Connection::make((array) $os['db'] + ['charset' => 'utf8mb4']);
             $subs = (int) $db->query('SELECT COUNT(*) FROM subscriber')->fetchColumn();
             $loc = 0;
+            $hasLocation = true;
             try {
                 $loc = (int) $db->query('SELECT COUNT(*) FROM location')->fetchColumn();
             } catch (\Throwable) {
+                $hasLocation = false;
             }
             $gws = 0;
             try {
@@ -89,6 +91,9 @@ final class HealthService
             }
             $domain = (string) ($os['sip_domain'] ?? '');
             $detail = "realm={$domain}; subscribers={$subs}; registered_contacts={$loc}; trunks/gateways={$gws}";
+            if (!$hasLocation) {
+                return ['component' => 'OpenSIPS', 'status' => 'fail', 'detail' => $detail . ' — missing opensips.location (run: sudo bash /opt/ownswitch-src/deploy/fix-opensips-provision.sh)'];
+            }
             if ($subs === 0) {
                 return ['component' => 'OpenSIPS', 'status' => 'warn', 'detail' => $detail . ' — no SIP users in opensips.subscriber (reset SIP password in portal)'];
             }

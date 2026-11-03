@@ -42,12 +42,49 @@ GRANT ALL PRIVILEGES ON \`${DB_OPENSIPS}\`.* TO 'opensips'@'127.0.0.1';
 FLUSH PRIVILEGES;
 SQL
 
-echo "== Ensure subscriber table =="
+echo "== Ensure subscriber + location tables =="
 if ! mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='${DB_OPENSIPS}' AND table_name='subscriber'" | grep -q 1; then
-  f=$(find /usr/share/opensips /usr/share/doc -name 'standard-create.sql' 2>/dev/null | head -n1 || true)
+  f=$(find /usr/share/opensips /usr/share/doc /usr/share/opensips-mysql-module -name 'standard-create.sql' 2>/dev/null | head -n1 || true)
   [[ -n "${f:-}" ]] && mysql --protocol=socket -uroot "${DB_OPENSIPS}" <"$f" || true
 fi
-mysql --protocol=socket -uroot "${DB_OPENSIPS}" -e "SHOW TABLES LIKE 'subscriber'; DESCRIBE subscriber;" || true
+if ! mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='${DB_OPENSIPS}' AND table_name='location'" | grep -q 1; then
+  f=$(find /usr/share/opensips /usr/share/doc /usr/share/opensips-mysql-module \( -name 'usrloc-create.sql' -o -name '*usrloc*create*.sql' \) 2>/dev/null | head -n1 || true)
+  if [[ -n "${f:-}" ]]; then
+    echo "Applying ${f}"
+    mysql --protocol=socket -uroot "${DB_OPENSIPS}" <"$f" || true
+  fi
+fi
+if ! mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='${DB_OPENSIPS}' AND table_name='location'" | grep -q 1; then
+  echo "Creating opensips.location fallback (usrloc write-through)"
+  mysql --protocol=socket -uroot "${DB_OPENSIPS}" <<'SQL'
+CREATE TABLE IF NOT EXISTS location (
+  contact_id BIGINT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  username CHAR(64) DEFAULT '' NOT NULL,
+  domain CHAR(64) DEFAULT NULL,
+  contact TEXT NOT NULL,
+  received CHAR(255) DEFAULT NULL,
+  path CHAR(255) DEFAULT NULL,
+  expires INT(10) UNSIGNED NOT NULL,
+  q FLOAT(10,2) DEFAULT 1.0 NOT NULL,
+  callid CHAR(255) DEFAULT 'Default-Call-ID' NOT NULL,
+  cseq INT(11) DEFAULT 13 NOT NULL,
+  last_modified DATETIME DEFAULT '1900-01-01 00:00:01' NOT NULL,
+  flags INT(11) DEFAULT 0 NOT NULL,
+  cflags CHAR(255) DEFAULT NULL,
+  user_agent CHAR(255) DEFAULT '' NOT NULL,
+  socket CHAR(64) DEFAULT NULL,
+  methods INT(11) DEFAULT NULL,
+  sip_instance CHAR(255) DEFAULT NULL,
+  kv_store TEXT(512) DEFAULT NULL,
+  attr CHAR(255) DEFAULT NULL
+) ENGINE=InnoDB;
+INSERT INTO version (table_name, table_version)
+  SELECT 'location', '1013' FROM DUAL
+  WHERE NOT EXISTS (SELECT 1 FROM version WHERE table_name='location');
+SQL
+fi
+mysql --protocol=socket -uroot "${DB_OPENSIPS}" -e "SHOW TABLES LIKE 'subscriber'; SHOW TABLES LIKE 'location';" || true
+systemctl restart opensips 2>/dev/null || true
 
 echo "== PHP connect test as ownswitch =="
 CUR=$(readlink -f /opt/ownswitch/current)

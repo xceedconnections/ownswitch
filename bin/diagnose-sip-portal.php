@@ -42,6 +42,14 @@ foreach ($regs as $u => $info) {
 $pdo = $prov->pdo();
 if ($pdo) {
     try {
+        $tables = $pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        $tables = array_map('strval', $tables);
+        if (!in_array('location', $tables, true)) {
+            fwrite(STDERR, "\nMISSING table opensips.location (usrloc schema).\n");
+            fwrite(STDERR, "Fix: sudo bash /opt/ownswitch-src/deploy/fix-opensips-provision.sh\n");
+            fwrite(STDERR, "  or: sudo deploy/install.sh --only 50\n");
+            exit(1);
+        }
         $n = (int) $pdo->query('SELECT COUNT(*) FROM location')->fetchColumn();
         echo "\nopensips.location rows: {$n}\n";
         foreach ($pdo->query('SELECT username, domain, contact, received, expires FROM location LIMIT 20') as $row) {
@@ -51,6 +59,9 @@ if ($pdo) {
         echo "opensips.subscriber rows: {$ns}\n";
         foreach ($pdo->query('SELECT username, domain, LEFT(ha1,12) ha1 FROM subscriber LIMIT 20') as $row) {
             echo '  ' . json_encode($row, JSON_UNESCAPED_SLASHES) . "\n";
+        }
+        if (!$prov->hasMi()) {
+            echo "\nNote: MI not configured — portal uses SQL location only (write-through).\n";
         }
     } catch (Throwable $e) {
         fwrite(STDERR, 'SQL error: ' . $e->getMessage() . "\n");
