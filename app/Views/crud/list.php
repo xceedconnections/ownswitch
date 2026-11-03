@@ -28,6 +28,12 @@ $cell = static function (array $f, mixed $v): string {
     if (($f['type'] ?? '') === 'number') {
         return '<span class="os-mono">' . e($v) . '</span>';
     }
+    if (in_array(($f['name'] ?? ''), ['max_concurrent_calls', 'max_channels'], true)) {
+        if ((string) $v === '-1') {
+            return '<span class="badge text-bg-secondary">Unlimited</span>';
+        }
+        return '<span class="os-mono">' . e((string) $v) . '</span>';
+    }
     if (($f['name'] ?? '') === 'latency_ms') {
         if ($v === null || $v === '' || $v === '—') {
             return '<span class="text-muted">—</span>';
@@ -38,7 +44,7 @@ $cell = static function (array $f, mixed $v): string {
         $n = is_numeric($v) ? (int) $v : null;
         if ($n !== null) {
             $cls = $n < 80 ? 'success' : ($n < 200 ? 'warning' : 'danger');
-            return '<span class="badge text-bg-' . $cls . ' os-mono">' . e((string) $n) . ' ms</span>';
+            return '<span class="os-mono text-' . $cls . '">' . e((string) $n) . ' ms</span>';
         }
         return '<span class="os-mono">' . e((string) $v) . '</span>';
     }
@@ -59,7 +65,7 @@ foreach ($fields as $f) {
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title"><?= e($plural) ?> <span class="os-count"><?= e($result['total']) ?></span></h1>
-        <p class="os-page-sub"><?= e($emptyHint !== '' ? $emptyHint : ('Manage ' . strtolower($plural))) ?></p>
+        <p class="os-page-sub"><?= e((int) $result['total'] === 0 && $emptyHint !== '' ? $emptyHint : ('Manage ' . strtolower($plural))) ?></p>
     </div>
     <?php if ($canWrite): ?>
         <a class="btn btn-primary btn-sm" href="<?= e(url($base . '/create')) ?>"><i class="bi bi-plus-lg me-1"></i>New <?= e(strtolower($singular)) ?></a>
@@ -98,28 +104,30 @@ foreach ($fields as $f) {
             <?php endif; ?>
         </div>
     <?php else: ?>
-        <div class="table-responsive">
-            <table class="table table-hover table-sm mb-0 os-table">
+        <div class="table-responsive os-table-scroll">
+            <table class="table table-hover table-sm mb-0 os-table align-middle">
                 <thead><tr>
-                    <th>ID</th>
-                    <?php foreach ($cols as $c): ?><th><?= e($c['label']) ?></th><?php endforeach; ?>
-                    <th class="text-end">Actions</th>
+                    <th scope="col" class="os-col-id">ID</th>
+                    <?php foreach ($cols as $c): ?><th scope="col"><?= e($c['label']) ?></th><?php endforeach; ?>
+                    <th scope="col" class="text-end os-col-actions">Actions</th>
                 </tr></thead>
                 <tbody>
                 <?php foreach ($result['rows'] as $row): ?>
                     <tr>
-                        <td class="os-mono"><?= e($row['id']) ?></td>
+                        <td class="os-mono os-col-id"><?= e($row['id']) ?></td>
                         <?php foreach ($cols as $c): ?><td><?= $cell($c, $row[$c['name']] ?? null) ?></td><?php endforeach; ?>
-                        <td class="text-end os-actions">
-                            <a class="btn btn-outline-secondary btn-sm" href="<?= e(url($base . '/' . (int) $row['id'] . '/edit')) ?>">
-                                <i class="bi bi-<?= $canWrite ? 'pencil' : 'eye' ?> me-1"></i><?= $canWrite ? 'Edit' : 'View' ?>
-                            </a>
-                            <?php if ($canWrite): ?>
-                                <form method="post" action="<?= e(url($base . '/' . (int) $row['id'] . '/delete')) ?>" data-confirm="Delete this <?= e(strtolower($singular)) ?>? This cannot be undone.">
-                                    <?= csrf_field() ?>
-                                    <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
-                                </form>
-                            <?php endif; ?>
+                        <td class="text-end os-actions os-col-actions">
+                            <div class="os-actions-inner">
+                                <a class="btn btn-outline-secondary btn-sm" href="<?= e(url($base . '/' . (int) $row['id'] . '/edit')) ?>">
+                                    <i class="bi bi-<?= $canWrite ? 'pencil' : 'eye' ?> me-1"></i><?= $canWrite ? 'Edit' : 'View' ?>
+                                </a>
+                                <?php if ($canWrite): ?>
+                                    <form method="post" action="<?= e(url($base . '/' . (int) $row['id'] . '/delete')) ?>" data-confirm="Delete this <?= e(strtolower($singular)) ?>? This cannot be undone.">
+                                        <?= csrf_field() ?>
+                                        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                <?php endif; ?>
+                            </div>
                         </td>
                     </tr>
                 <?php endforeach; ?>

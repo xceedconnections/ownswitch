@@ -65,16 +65,29 @@ final class RouteSimulator
             $out['customer_rate'] = $rate + ['sample_seconds' => $sampleSeconds, 'sample_total' => $r['total'], 'sample_billable' => $r['billable_seconds']];
         }
 
-        // Magnus: tariff trunk group wins when set; else customer's trunk group.
+        // SIP user trunk group overrides Tariff; account-level TG is no longer used.
         $tgId = null;
-        if ($rate !== null && !empty($rate['routing_plan_id'])) {
+        $sipTg = null;
+        try {
+            $sipSt = $this->pdo->prepare(
+                "SELECT routing_plan_id FROM sip_accounts
+                 WHERE customer_id = ? AND status = 'active' AND routing_plan_id IS NOT NULL
+                 ORDER BY id ASC LIMIT 1"
+            );
+            $sipSt->execute([$customerId]);
+            $sipTg = $sipSt->fetchColumn();
+        } catch (\Throwable) {
+            $sipTg = null;
+        }
+        if ($sipTg !== false && $sipTg !== null && (int) $sipTg > 0) {
+            $tgId = (int) $sipTg;
+            $out['notes'][] = 'Using Trunk Group from SIP User (overrides Tariff).';
+        } elseif ($rate !== null && !empty($rate['routing_plan_id'])) {
             $tgId = (int) $rate['routing_plan_id'];
-            $out['notes'][] = 'Using Trunk Group from matched Tariff (Magnus tariff→trunk group).';
-        } elseif (!empty($cust['routing_plan_id'])) {
-            $tgId = (int) $cust['routing_plan_id'];
+            $out['notes'][] = 'Using Trunk Group from matched Tariff.';
         }
         if (!$tgId) {
-            $out['notes'][] = 'No Trunk Group on tariff or user — cannot route.';
+            $out['notes'][] = 'No Trunk Group on SIP user or tariff — cannot route.';
             return $out;
         }
         $plan = $this->pdo->prepare("SELECT id, name, strategy FROM routing_plans WHERE id = ? AND status = 'active'");
@@ -111,9 +124,20 @@ final class RouteSimulator
         }
         foreach ($rules as &$rr) {
             $dial = $dst;
-            $rem = preg_replace('/\D+/', '', (string) ($rr['remove_prefix'] ?? '')) ?? '';
-            if ($rem !== '' && str_starts_with($dial, $rem)) {
-                $dial = substr($dial, strlen($rem));
+            $rawRem = (string) ($rr['remove_prefix'] ?? '');
+            $remList = [];
+            foreach (preg_split('/[\s,;|]+/', $rawRem) ?: [] as $p) {
+                $p = preg_replace('/\D+/', '', $p) ?? '';
+                if ($p !== '') {
+                    $remList[] = $p;
+                }
+            }
+            usort($remList, static fn ($a, $b) => strlen($b) <=> strlen($a));
+            foreach ($remList as $rem) {
+                if ($rem !== '' && str_starts_with($dial, $rem)) {
+                    $dial = substr($dial, strlen($rem));
+                    break;
+                }
             }
             $add = (string) ($rr['add_prefix'] ?? '');
             if ($add !== '') {

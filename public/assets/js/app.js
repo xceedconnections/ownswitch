@@ -378,4 +378,57 @@
 
         sync();
     });
+
+    /* Live concurrent CC pill (allowed / using) — poll every 10s */
+    document.querySelectorAll('[data-os-cc]').forEach(function (el) {
+        var url = el.getAttribute('data-url');
+        var out = el.querySelector('[data-os-cc-value]');
+        if (!url || !out) { return; }
+        var tick = function () {
+            fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (data) {
+                    if (!data) { return; }
+                    var allowed = data.unlimited ? '∞' : String(data.allowed != null ? data.allowed : '—');
+                    out.textContent = allowed + ' / ' + String(data.using != null ? data.using : '—');
+                })
+                .catch(function () { /* keep last */ });
+        };
+        tick();
+        window.setInterval(tick, 10000);
+    });
+
+    /* Admin host resources — poll every 10s */
+    document.querySelectorAll('[data-os-host]').forEach(function (root) {
+        var url = root.getAttribute('data-url');
+        if (!url) { return; }
+        var setMeter = function (key, pct) {
+            var meter = root.querySelector('[data-h-meter="' + key + '"]');
+            if (!meter) { return; }
+            var fill = meter.querySelector('span');
+            var n = Math.max(0, Math.min(100, Number(pct) || 0));
+            if (fill) { fill.style.width = n + '%'; }
+            meter.classList.remove('is-warn', 'is-hot');
+            if (n >= 90) { meter.classList.add('is-hot'); }
+            else if (n >= 75) { meter.classList.add('is-warn'); }
+        };
+        var tick = function () {
+            fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (data) {
+                    if (!data) { return; }
+                    Object.keys(data).forEach(function (k) {
+                        root.querySelectorAll('[data-h="' + k + '"]').forEach(function (node) {
+                            node.textContent = String(data[k]);
+                        });
+                    });
+                    setMeter('cpu_pct', data.cpu_pct);
+                    setMeter('ram_pct', data.ram_pct);
+                    setMeter('disk_pct', data.disk_pct);
+                })
+                .catch(function () { /* keep last */ });
+        };
+        tick();
+        window.setInterval(tick, 10000);
+    });
 })();

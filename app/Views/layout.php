@@ -103,6 +103,12 @@ if ($user && in_array($user['role'] ?? '', ['customer_owner', 'customer_tech'], 
         </nav>
 
         <div class="os-header-actions">
+            <?php if ($user && in_array($user['role'] ?? '', ['customer_owner', 'customer_tech'], true) && !empty($user['customer_id'])): ?>
+                <div class="os-cc-pill" id="osCcPill" title="Concurrent calls: allowed / in use" data-os-cc data-url="<?= e(url('/api/live/concurrent')) ?>">
+                    <span class="os-cc-k">CC</span>
+                    <span class="os-cc-v" data-os-cc-value>— / —</span>
+                </div>
+            <?php endif; ?>
             <?php if ($headerBalance !== null): ?>
                 <div class="os-balance-chip" title="Available balance">
                     <span class="os-dot os-dot-ok"></span>

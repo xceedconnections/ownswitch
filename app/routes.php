@@ -15,6 +15,7 @@ use Ownswitch\Controllers\FraudController;
 use Ownswitch\Controllers\InvoiceController;
 use Ownswitch\Controllers\IpAuthController;
 use Ownswitch\Controllers\LedgerController;
+use Ownswitch\Controllers\LiveMetricsController;
 use Ownswitch\Controllers\ModuleScaffoldController;
 use Ownswitch\Controllers\PaymentController;
 use Ownswitch\Controllers\PrefixController;
@@ -63,6 +64,11 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/', [DashboardController::class, 'index']);
     $r->get('/account/password', [AuthController::class, 'passwordForm']);
     $r->post('/account/password', [AuthController::class, 'passwordChange']);
+
+    // Live metrics (10s poll) — host for staff, concurrent for customers
+    $live = new LiveMetricsController();
+    $r->get('/api/live/host', [$live, 'host'], [$STAFF]);
+    $r->get('/api/live/concurrent', [$live, 'concurrent'], [$role(Menu::SIP_USERS)]);
 
     // Clients — Magnus Users (+ legacy /customers redirects)
     $users = new CustomerController();

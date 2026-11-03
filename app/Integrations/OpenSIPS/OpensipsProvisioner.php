@@ -211,7 +211,8 @@ final class OpensipsProvisioner
             throw new \RuntimeException('opensips.dr_gateways missing — run: sudo bash /opt/ownswitch-src/deploy/fix-drouting-schema.sh');
         }
 
-        $strip = self::stripDigits((string) ($trunk['remove_prefix'] ?? ''));
+        // Multi remove-prefix is applied in OpenSIPS script via attrs rstrip=; keep gateway.strip=0.
+        $strip = 0;
         $pri = trim((string) ($trunk['add_prefix'] ?? ''));
         $probe = strtolower((string) ($trunk['qualify'] ?? 'yes')) === 'yes' ? 1 : 0;
         $attrs = self::trunkAttrs($trunk);
@@ -303,14 +304,15 @@ final class OpensipsProvisioner
         $db->prepare($sql)->execute(array_values($insert));
     }
 
-    /** Digits to strip from RURI = length of remove_prefix (Magnus). */
+    /** Digits to strip from RURI = length of a single remove_prefix (legacy). */
     public static function stripDigits(string $removePrefix): int
     {
-        $p = preg_replace('/\D+/', '', $removePrefix) ?? '';
+        $first = explode(',', $removePrefix)[0] ?? '';
+        $p = preg_replace('/\D+/', '', $first) ?? '';
         return min(32, strlen($p));
     }
 
-    /** @param array<string,mixed> $trunk OpenSIPS-applied attrs only (From / CID rewrite). */
+    /** @param array<string,mixed> $trunk OpenSIPS-applied attrs only (From / CID rewrite / multi-strip). */
     public static function trunkAttrs(array $trunk): string
     {
         $parts = [];
@@ -318,6 +320,20 @@ final class OpensipsProvisioner
             $v = trim((string) ($trunk[$col] ?? ''));
             if ($v !== '') {
                 $parts[] = $k . '=' . rawurlencode($v);
+            }
+        }
+        $rawRem = trim((string) ($trunk['remove_prefix'] ?? ''));
+        if ($rawRem !== '') {
+            $list = [];
+            foreach (preg_split('/[\s,;|]+/', $rawRem) ?: [] as $p) {
+                $p = preg_replace('/\D+/', '', $p) ?? '';
+                if ($p !== '' && !in_array($p, $list, true)) {
+                    $list[] = $p;
+                }
+            }
+            usort($list, static fn ($a, $b) => strlen($b) <=> strlen($a));
+            if ($list !== []) {
+                $parts[] = 'rstrip=' . rawurlencode(implode(',', $list));
             }
         }
         return implode(';', $parts);

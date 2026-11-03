@@ -54,6 +54,42 @@ $flowing = $w['attempts'] > 0;
     <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/system/status')) ?>">System status</a>
 </div>
 
+<div class="os-host-grid" data-os-host data-url="<?= e(url('/api/live/host')) ?>">
+    <div class="os-kpi">
+        <div class="lbl">CPU</div>
+        <div class="val"><span data-h="cpu_pct">—</span>%</div>
+        <div class="sub"><span data-h="cpu_cores">—</span> cores · load <span data-h="load1">—</span></div>
+        <div class="os-host-meter" data-h-meter="cpu_pct"><span style="width:0%"></span></div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">RAM</div>
+        <div class="val"><span data-h="ram_pct">—</span>%</div>
+        <div class="sub"><span data-h="ram_used_mb">—</span> / <span data-h="ram_total_mb">—</span> MB</div>
+        <div class="os-host-meter" data-h-meter="ram_pct"><span style="width:0%"></span></div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Disk</div>
+        <div class="val"><span data-h="disk_free_gb">—</span> GB</div>
+        <div class="sub">free of <span data-h="disk_total_gb">—</span> GB (<span data-h="disk_pct">—</span>% used)</div>
+        <div class="os-host-meter" data-h-meter="disk_pct"><span style="width:0%"></span></div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Network ↓</div>
+        <div class="val"><span data-h="net_rx_mbps">—</span></div>
+        <div class="sub">Mbps down · <span data-h="net_iface">—</span></div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Network ↑</div>
+        <div class="val"><span data-h="net_tx_mbps">—</span></div>
+        <div class="sub">Mbps up · live sample</div>
+    </div>
+    <div class="os-kpi">
+        <div class="lbl">Host</div>
+        <div class="val" style="font-size:1rem"><span data-h="hostname">—</span></div>
+        <div class="sub" data-h="sampled_at">—</div>
+    </div>
+</div>
+
 <div class="os-dash-grid os-dash-kpis mb-3">
     <div class="os-kpi">
         <div class="lbl">Attempts (60 min)</div>

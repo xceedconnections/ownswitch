@@ -106,7 +106,13 @@ final class Validator
                     }
                     break;
                 case 'int':
-                    if (!preg_match('/^\d{1,10}$/', $val)) {
+                    $allowNeg = !empty($f['allow_negative']) || (isset($f['min']) && (int) $f['min'] < 0);
+                    if ($allowNeg) {
+                        if (!preg_match('/^-?\d{1,10}$/', $val)) {
+                            $errors[$name] = "{$label} must be a whole number.";
+                            continue 2;
+                        }
+                    } elseif (!preg_match('/^\d{1,10}$/', $val)) {
                         $errors[$name] = "{$label} must be a whole number.";
                         continue 2;
                     }

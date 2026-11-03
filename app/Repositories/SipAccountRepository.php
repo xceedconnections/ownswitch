@@ -15,7 +15,7 @@ final class SipAccountRepository extends BaseRepository
             'sip_accounts',
             [
                 'reseller_id', 'customer_id', 'username', 'domain', 'ha1', 'ha1b', 'caller_id', 'sip_host',
-                'max_channels', 'media_policy', 'status', 'notes', 'password_changed_at',
+                'routing_plan_id', 'max_channels', 'media_policy', 'status', 'notes', 'password_changed_at',
             ],
             'owned',
             ['username', 'caller_id'],

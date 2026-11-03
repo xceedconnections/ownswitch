@@ -227,6 +227,7 @@ route {
 		exit;
 	}
 
+	route(apply_ruri_strip);
 	route(apply_trunk_attrs);
 	route(relay);
 }
@@ -256,7 +257,34 @@ route[apply_media] {
 	rtpengine_manage();
 }
 
+# Multi remove-prefix (attrs rstrip=22,011,00) — strip tech prefix from RURI before send
+route[apply_ruri_strip] {
+	if ($avp(dr_gw_attrs) == NULL) {
+		return;
+	}
+	$var(attrs) = $avp(dr_gw_attrs);
+	$var(rs) = $(var(attrs){param.value,rstrip});
+	if ($var(rs) == NULL || $(var(rs){s.len}) == 0) {
+		return;
+	}
+	$var(rs) = $(var(rs){s.unescape.param});
+	$var(i) = 0;
+	while ($var(i) < 8) {
+		$var(p) = $(var(rs){s.select,$var(i),,});
+		if ($var(p) == NULL || $(var(p){s.len}) == 0) {
+			break;
+		}
+		if ($(rU{s.substr,0,$(var(p){s.len})}) == $var(p)) {
+			$rU = $(rU{s.substr,$(var(p){s.len}),0});
+			xlog("L_INFO", "trunk remove-prefix $var(p) → RURI user=$rU\n");
+			break;
+		}
+		$var(i) = $var(i) + 1;
+	}
+}
+
 # Apply Magnus Fromuser / Fromdomain / CID prefixes from gateway attrs (fu=;fd=;cidadd=;cidrem=)
+# When fu= is set it ALWAYS overrides SIP-user CallerID and PBX-sent From (ViciDial etc.).
 route[apply_trunk_attrs] {
 	if ($avp(dr_gw_attrs) == NULL) {
 		return;
@@ -311,6 +339,7 @@ failure_route[carrier_failover] {
 	}
 	# try next gateway of the selected route
 	if (use_next_gw()) {
+		route(apply_ruri_strip);
 		route(apply_trunk_attrs);
 		t_on_failure("carrier_failover");
 		t_relay();

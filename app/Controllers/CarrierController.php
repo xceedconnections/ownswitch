@@ -10,7 +10,6 @@ use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
 use Ownswitch\Services\Routing\OpensipsRoutingSync;
-use Ownswitch\Services\Sip\SipOptionsProbe;
 use Ownswitch\Support\Crypto;
 use Ownswitch\Support\SipPeerOptions;
 
@@ -67,49 +66,20 @@ final class CarrierController extends CrudController
             ], 'help' => 'OpenSIPS: IP → address table; Register → uac_registrant'],
             ['name' => 'auth_username', 'label' => 'Username', 'max' => 120],
             ['name' => 'auth_secret', 'label' => 'Password', 'type' => 'password', 'max' => 190, 'help' => 'Leave blank on edit to keep current.'],
-            ['name' => 'add_prefix', 'label' => 'Add prefix', 'max' => 32, 'help' => 'OpenSIPS dr_gateways.pri_prefix'],
-            ['name' => 'remove_prefix', 'label' => 'Remove prefix', 'max' => 32, 'help' => 'OpenSIPS dr_gateways.strip (digit count)'],
-            ['name' => 'from_user', 'label' => 'From user', 'max' => 64, 'help' => 'Rewrite outbound From user'],
+            ['name' => 'add_prefix', 'label' => 'Add prefix', 'max' => 32, 'help' => 'Prepended to the dialled number toward the vendor (e.g. 9 → 912138007447)'],
+            ['name' => 'remove_prefix', 'label' => 'Remove prefixes', 'max' => 120, 'help' => 'Comma-separated tech prefixes to strip before send (e.g. 22,011,00). First match wins. Then Add prefix is applied.'],
+            ['name' => 'from_user', 'label' => 'From user', 'max' => 64, 'help' => 'Forces outbound CallerID / From user to vendors. Overrides SIP user CallerID and anything the PBX (e.g. ViciDial) sends.'],
             ['name' => 'from_domain', 'label' => 'From domain', 'max' => 128],
             ['name' => 'cid_add_prefix', 'label' => 'CID add prefix', 'max' => 32],
             ['name' => 'cid_remove_prefix', 'label' => 'CID remove prefix', 'max' => 32],
             ['name' => 'qualify', 'label' => 'Probe gateway', 'type' => 'select', 'options' => SipPeerOptions::YES_NO, 'default' => 'yes', 'help' => 'OpenSIPS probe_mode'],
             ['name' => 'max_channels', 'label' => 'Max channels', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Soft limit for portal/reporting'],
-            ['name' => 'reg_status', 'label' => 'Link', 'list' => true],
-            ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true],
             $status,
         ];
     }
 
     protected function enrichRows(Request $r, array $rows): array
     {
-        if ($this->kind !== 'trunk' || $rows === []) {
-            return $rows;
-        }
-        $prov = OpensipsProvisioner::fromConfig();
-        $gwStatus = $prov->enabled() ? $prov->gatewayStatuses() : [];
-        foreach ($rows as &$row) {
-            $host = (string) ($row['host'] ?? '');
-            $port = (int) ($row['port'] ?? 5060);
-            $active = ($row['status'] ?? '') === 'active';
-            $gwid = OpensipsProvisioner::gwid((int) ($row['id'] ?? 0));
-            $state = $gwStatus[$gwid] ?? null;
-            $ms = null;
-            if ($active && $host !== '') {
-                $ms = SipOptionsProbe::rttMs($host, $port);
-            }
-            if ($state !== null && $state !== '') {
-                $row['reg_status'] = $state;
-            } elseif (!$active) {
-                $row['reg_status'] = 'disabled';
-            } elseif ($ms !== null) {
-                $row['reg_status'] = 'reachable';
-            } else {
-                $row['reg_status'] = 'no reply';
-            }
-            $row['latency_ms'] = ($ms !== null) ? $ms : (($active && $host !== '') ? 'n/a' : '—');
-        }
-        unset($row);
         return $rows;
     }
 
@@ -132,10 +102,13 @@ final class CarrierController extends CrudController
                 $data['subsequent_increment'] = $data['subsequent_increment'] ?? 6;
                 $data['media_policy'] = null;
             }
-            foreach (['add_prefix', 'remove_prefix', 'from_user', 'from_domain', 'cid_add_prefix', 'cid_remove_prefix'] as $k) {
+            foreach (['add_prefix', 'from_user', 'from_domain', 'cid_add_prefix', 'cid_remove_prefix'] as $k) {
                 if (array_key_exists($k, $data) && ($data[$k] === null || $data[$k] === '')) {
                     $data[$k] = null;
                 }
+            }
+            if (array_key_exists('remove_prefix', $data)) {
+                $data['remove_prefix'] = self::normalizeRemovePrefixes((string) ($data['remove_prefix'] ?? ''));
             }
             $mode = (string) ($data['auth_mode'] ?? 'ip');
             if (in_array($mode, ['register', 'invite'], true)) {
@@ -192,5 +165,24 @@ final class CarrierController extends CrudController
                 App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
             }
         }
+    }
+
+    /** Comma/space/semicolon separated digit prefixes → "22,011,00" or null. */
+    public static function normalizeRemovePrefixes(string $raw): ?string
+    {
+        $parts = [];
+        foreach (preg_split('/[\s,;|]+/', $raw) ?: [] as $p) {
+            $p = preg_replace('/\D+/', '', $p) ?? '';
+            if ($p === '' || in_array($p, $parts, true)) {
+                continue;
+            }
+            $parts[] = $p;
+        }
+        if ($parts === []) {
+            return null;
+        }
+        // Longest first so "011" wins over "0" when both listed
+        usort($parts, static fn ($a, $b) => strlen($b) <=> strlen($a));
+        return implode(',', $parts);
     }
 }

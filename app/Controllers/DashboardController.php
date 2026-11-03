@@ -7,6 +7,7 @@ namespace Ownswitch\Controllers;
 use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
 use Ownswitch\Services\Billing\LedgerService;
+use Ownswitch\Services\Reports\ConcurrentCallsService;
 use Ownswitch\Services\Reports\DashboardMetricsService;
 
 /** Real, tenant-scoped dashboard KPIs (Xceed-style). */
@@ -99,11 +100,17 @@ final class DashboardController extends BaseController
                 $sipCount = (int) $sip->fetchColumn();
             } catch (\Throwable) {
             }
+            $cc = ['label' => '— / —'];
+            try {
+                $cc = (new ConcurrentCallsService($pdo))->forCustomer((int) $scope->customerId);
+            } catch (\Throwable) {
+            }
             $data['customer'] = $cust;
             $data['balance'] = $balance;
             $data['available'] = $available;
             $data['runwayDays'] = $runwayDays;
             $data['sipCount'] = $sipCount;
+            $data['ccLabel'] = $cc['label'] ?? '— / —';
             return $this->view('dashboard/customer', $data);
         }
 

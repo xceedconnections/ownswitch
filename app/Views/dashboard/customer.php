@@ -54,7 +54,13 @@ $lowRunway = $runwayDays !== null && $runwayDays < 2;
                 <?php if ($lowRunway): ?> · <a href="<?= e(url('/ledger')) ?>">Low runway — add funds</a><?php endif; ?>
             </div>
         </div>
-        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/sip-users')) ?>">SIP users</a>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <div class="os-cc-pill" data-os-cc data-url="<?= e(url('/api/live/concurrent')) ?>" title="Concurrent: allowed / in use">
+                <span class="os-cc-k">CC</span>
+                <span class="os-cc-v" data-os-cc-value><?= e((string) ($ccLabel ?? '— / —')) ?></span>
+            </div>
+            <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/sip-users')) ?>">SIP users</a>
+        </div>
     </div>
 
     <div class="os-dash-grid os-dash-kpis mb-3">

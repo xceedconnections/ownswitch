@@ -41,11 +41,26 @@ final class SipUserController extends CrudController
         if (!$this->scope($r)->isCustomerRole()) {
             $f[] = ['name' => 'customer_id', 'label' => 'User', 'type' => 'select', 'required' => true, 'options' => $this->customerOptions($r), 'readonly_on_edit' => true, 'list' => true];
         }
+        $routes = ['' => '— use Tariff trunk group —'];
+        try {
+            foreach ($this->db()->query('SELECT id, name FROM routing_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
+                $routes[$p['id']] = $p['name'];
+            }
+        } catch (\Throwable) {
+        }
         array_push($f,
             ['name' => 'username', 'label' => 'SIP user', 'required' => true, 'max' => 64, 'pattern' => '/^[A-Za-z0-9._-]{3,64}$/', 'readonly_on_edit' => true, 'list' => true],
             ['name' => 'password', 'label' => 'SIP password', 'type' => 'password', 'max' => 128, 'help' => 'Blank = auto-generate (create) or keep current (edit). Min 12 if typed.'],
-            ['name' => 'caller_id', 'label' => 'CallerID', 'max' => 32, 'pattern' => '/^\+?[0-9]{3,30}$/', 'list' => true, 'help' => 'Pushed to OpenSIPS subscriber RPID'],
+            ['name' => 'caller_id', 'label' => 'CallerID', 'max' => 32, 'pattern' => '/^\+?[0-9]{3,30}$/', 'list' => true, 'help' => 'Default CallerID. Overridden if the selected Trunk has From user set.'],
             ['name' => 'sip_host', 'label' => 'Host', 'max' => 190, 'default' => 'dynamic', 'list' => true, 'help' => 'dynamic = register from any IP; fixed IP enables IP auth in OpenSIPS address table'],
+            [
+                'name' => 'routing_plan_id',
+                'label' => 'Trunk group',
+                'type' => 'select',
+                'options' => $routes,
+                'list' => true,
+                'help' => 'Overrides the Tariff trunk group for this SIP user when set.',
+            ],
             [
                 'name' => 'media_policy',
                 'label' => 'Directmedia',
@@ -59,9 +74,9 @@ final class SipUserController extends CrudController
                 'list' => true,
                 'help' => 'Same as Default media policy: Default follows Settings; Direct skips media relay; Relay uses RTPengine',
             ],
-            ['name' => 'max_channels', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 10000, 'required' => true, 'default' => '2', 'list' => true],
-            ['name' => 'reg_status', 'label' => 'Registration', 'list' => true],
-            ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true],
+            ['name' => 'max_channels', 'label' => 'Call limit', 'type' => 'int', 'min' => -1, 'max' => 10000, 'required' => true, 'default' => '2', 'list' => true, 'help' => '-1 = unlimited'],
+            ['name' => 'reg_status', 'label' => 'Registration', 'list' => true, 'list_only' => true],
+            ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true, 'list_only' => true],
             ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'],
             ['name' => 'notes', 'label' => 'Description', 'max' => 255],
         );
@@ -136,6 +151,8 @@ final class SipUserController extends CrudController
             $host = trim((string) $data['sip_host']);
             $data['sip_host'] = $host === '' ? 'dynamic' : $host;
         }
+        $tg = $data['routing_plan_id'] ?? null;
+        $data['routing_plan_id'] = ($tg === null || $tg === '') ? null : (int) $tg;
         return $data;
     }
 

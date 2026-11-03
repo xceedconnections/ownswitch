@@ -55,20 +55,15 @@ final class CustomerController extends CrudController
             foreach ($this->db()->query('SELECT id, name FROM rate_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
                 $plans[$p['id']] = $p['name'];
             }
-            $routes = ['' => '— select —'];
-            foreach ($this->db()->query('SELECT id, name FROM routing_plans ORDER BY name LIMIT 500')->fetchAll() as $p) {
-                $routes[$p['id']] = $p['name'];
-            }
             array_push($f,
                 ['name' => 'rate_plan_id', 'label' => 'Plan', 'type' => 'select', 'options' => $plans, 'list' => true],
-                ['name' => 'routing_plan_id', 'label' => 'Trunk group', 'type' => 'select', 'options' => $routes, 'list' => true],
             );
         }
         array_push($f,
             ['name' => 'billing_mode', 'label' => 'Type paid', 'type' => 'select', 'required' => true, 'options' => ['prepaid' => 'Prepaid', 'postpaid' => 'Postpaid'], 'list' => true, 'default' => 'prepaid'],
             ['name' => 'status', 'label' => 'Active', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'suspended' => 'Inactive', 'closed' => 'Closed'], 'list' => true, 'default' => 'active'],
             ['name' => 'credit_limit', 'label' => 'Credit limit', 'type' => 'number', 'default' => '0', 'help' => 'Postpaid'],
-            ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => 1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true],
+            ['name' => 'max_concurrent_calls', 'label' => 'Call limit', 'type' => 'int', 'min' => -1, 'max' => 100000, 'required' => true, 'default' => '10', 'list' => true, 'help' => '-1 = unlimited concurrent calls'],
         );
         return $f;
     }
@@ -108,6 +103,12 @@ final class CustomerController extends CrudController
             $data['recording_enabled'] = $data['recording_enabled'] ?? 0;
         }
         $data['is_demo'] = $existing['is_demo'] ?? 0;
+        // Trunk groups belong on SIP users (override tariff), not on the account.
+        if ($existing === null) {
+            $data['routing_plan_id'] = null;
+        } else {
+            unset($data['routing_plan_id']);
+        }
         return $data;
     }
 
