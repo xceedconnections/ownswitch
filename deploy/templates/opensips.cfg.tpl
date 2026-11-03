@@ -224,8 +224,9 @@ route {
 			xlog("L_WARN", "carrier ACL but no AOR for $rU — customer digest path\n");
 		}
 		# Realm = From domain ($fd): IP or any FQDN; username-only DB lookup
-		if (!proxy_authorize("$fd", "subscriber")) {
-			proxy_challenge("$fd", "auth");
+		# Empty realm = accept Domain IP or FQDN (avoids $fd mismatch → 403 Forbidden)
+		if (!proxy_authorize("", "subscriber")) {
+			proxy_challenge("", "auth");
 			exit;
 		}
 		consume_credentials();

@@ -151,8 +151,8 @@ route {{
 	}}
 
 	if (is_method("INVITE")) {{
-		if (!proxy_authorize("$fd", "subscriber")) {{
-			proxy_challenge("$fd", "auth");
+		if (!proxy_authorize("", "subscriber")) {{
+			proxy_challenge("", "auth");
 			exit;
 		}}
 		consume_credentials();

@@ -69,16 +69,8 @@ elif 'loadmodule "cgrates.so"' in text and 'loadmodule "dialog.so"' not in text:
     text = re.sub(r'^[ \t]*loadmodule\s+"cgrates\.so"\s*\n?', "", text, flags=re.M)
     text = re.sub(r'^[ \t]*modparam\(\s*"cgrates"[^\n]*\n?', "", text, flags=re.M)
 
-cgrates_block = ""
-if 'loadmodule "cgrates.so"' in text:
-    # Fail-open: do not block PSTN while CGRateS is down
-    cgrates_block = (
-        '		if (!cgrates_auth()) {\n'
-        '			xlog("L_WARN", "cgrates_auth failed $fU -> $rU (allowing call)\\n");\n'
-        '		} else {\n'
-        '			cgrates_acc("cdr|missed");\n'
-        '		}\n'
-    )
+# Billing off until CGRateS accounts/rates exist (Eyebeam "Forbidden"/403 otherwise)
+cgrates_block = '		xlog("L_INFO", "OWNSWITCH: cgrates bypassed for $fU -> $rU\\n");\n'
 
 # Replacement stays INSIDE if (is_method("INVITE")) { ... }
 replacement = (
