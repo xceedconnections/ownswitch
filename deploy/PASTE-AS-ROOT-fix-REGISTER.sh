@@ -1,17 +1,40 @@
 #!/usr/bin/env bash
-# Run AS ROOT (prompt root@...), from anywhere:
-#   bash /opt/ownswitch-src/deploy/PASTE-AS-ROOT-fix-REGISTER.sh
-# Or after git pull:
+# Force Ownswitch OpenSIPS cfg (digest REGISTER). Run as root:
 #   cd /opt/ownswitch-src && git fetch origin main && git reset --hard origin/main && bash deploy/PASTE-AS-ROOT-fix-REGISTER.sh
-#
-# Do NOT use sudo -u ownswitch. Do NOT run test-sip-register.php first.
 set -euo pipefail
 [[ "$(id -u)" -eq 0 ]] || { echo "You must be root (not ownswitch)"; exit 1; }
 
+SRC="${OWNSWITCH_SRC_DIR:-/opt/ownswitch-src}"
 CFG=/etc/opensips/opensips.cfg
-[[ -f "$CFG" ]] || { echo "missing $CFG"; exit 1; }
+OWN_ETC=/etc/ownswitch
+IC="${OWN_ETC}/install.conf"
+ENV_FILE="${OWN_ETC}/ownswitch.env"
+BKDIR=/var/backups/ownswitch-config
+install -d -m 0755 "$BKDIR"
 
-DOMAIN="$(grep -E '^OWNSWITCH_DOMAIN=' /etc/ownswitch/install.conf 2>/dev/null | cut -d= -f2- || true)"
+restore_latest_backup() {
+  local b
+  b="$(ls -1t "$BKDIR"/opensips.cfg.* 2>/dev/null | head -1 || true)"
+  if [[ -n "$b" && -f "$b" ]]; then
+    echo "Restoring backup: $b"
+    cp -a "$b" "$CFG"
+    return 0
+  fi
+  return 1
+}
+
+# If previous paste left a broken cfg, restore before continuing
+if [[ -f "$CFG" ]] && ! opensips -c -f "$CFG" >/tmp/os_c_check.txt 2>&1; then
+  echo "Live cfg is broken (opensips -c failed). Restoring last backup..."
+  cat /tmp/os_c_check.txt | tail -n 20 || true
+  restore_latest_backup || true
+fi
+
+cd "$SRC"
+git fetch origin main
+git reset --hard origin/main
+
+DOMAIN="$(grep -E '^OWNSWITCH_DOMAIN=' "$IC" 2>/dev/null | cut -d= -f2- || true)"
 DOMAIN="${DOMAIN:-voip.xceedconnections.com}"
 PUBLIC_IP="$(curl -4 -s --max-time 5 ifconfig.me || true)"
 DNS_IP="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1; exit}' || true)"
@@ -19,92 +42,67 @@ LOCAL="$(hostname -I 2>/dev/null || true)"
 if [[ -n "$DNS_IP" && " $LOCAL " == *" $DNS_IP "* ]]; then PUBLIC_IP="$DNS_IP"; fi
 [[ -n "$PUBLIC_IP" ]] || PUBLIC_IP="$DNS_IP"
 [[ -n "$PUBLIC_IP" ]] || PUBLIC_IP="$(echo "$LOCAL" | awk '{print $1}')"
-echo "Patching $CFG  DOMAIN=$DOMAIN PUBLIC_IP=$PUBLIC_IP"
+PRIV="$(echo "$LOCAL" | awk '{print $1}')"
+echo "DOMAIN=$DOMAIN PUBLIC_IP=$PUBLIC_IP"
 
-install -d /var/backups/ownswitch-config
-cp -a "$CFG" "/var/backups/ownswitch-config/opensips.cfg.$(date -u +%Y%m%dT%H%M%SZ)"
+grep -vE '^(PRIVATE_IP|PUBLIC_IP|OWNSWITCH_DOMAIN)=' "$IC" > /tmp/ic.$$ 2>/dev/null || true
+{ echo "OWNSWITCH_DOMAIN=${DOMAIN}"; echo "PUBLIC_IP=${PUBLIC_IP}"; echo "PRIVATE_IP=${PRIV}"; cat /tmp/ic.$$; } > "$IC"
+rm -f /tmp/ic.$$
+touch "$ENV_FILE"
+grep -q '^OPENSIPS_SIP_DOMAIN=' "$ENV_FILE" && sed -i "s/^OPENSIPS_SIP_DOMAIN=.*/OPENSIPS_SIP_DOMAIN=${DOMAIN}/" "$ENV_FILE" || echo "OPENSIPS_SIP_DOMAIN=${DOMAIN}" >>"$ENV_FILE"
+grep -q '^SIP_PUBLIC_IP=' "$ENV_FILE" && sed -i "s/^SIP_PUBLIC_IP=.*/SIP_PUBLIC_IP=${PUBLIC_IP}/" "$ENV_FILE" || echo "SIP_PUBLIC_IP=${PUBLIC_IP}" >>"$ENV_FILE"
+grep -q '^OPENSIPS_ENABLED=' "$ENV_FILE" && sed -i 's/^OPENSIPS_ENABLED=.*/OPENSIPS_ENABLED=1/' "$ENV_FILE" || echo 'OPENSIPS_ENABLED=1' >>"$ENV_FILE"
 
-python3 - "$CFG" "$DOMAIN" "$PUBLIC_IP" <<'PY'
-import re, sys
-path, domain, public_ip = sys.argv[1:4]
-text = open(path, encoding="utf-8", errors="replace").read()
+export OWNSWITCH_DOMAIN="$DOMAIN" PUBLIC_IP="$PUBLIC_IP" PRIVATE_IP="$PRIV" SIP_PORT="${SIP_PORT:-5060}"
 
-def set_mp(src, module, param, value):
-    pat = re.compile(
-        r'(modparam\(\s*"' + re.escape(module) + r'"\s*,\s*"' + re.escape(param) + r'"\s*,\s*)([^)]+)(\))',
-        re.I,
-    )
-    if pat.search(src):
-        return pat.sub(r'\g<1>' + value + r'\g<3>', src, count=1)
-    if 'loadmodule "auth.so"' not in src:
-        src = 'loadmodule "auth.so"\nloadmodule "auth_db.so"\n' + src
-    elif 'loadmodule "auth_db.so"' not in src:
-        src = src.replace('loadmodule "auth.so"', 'loadmodule "auth.so"\nloadmodule "auth_db.so"', 1)
-    m = re.search(r'loadmodule\s+"auth_db\.so"', src)
-    if m:
-        src = src[: m.end()] + f'\nmodparam("auth_db", "{param}", {value})' + src[m.end() :]
-    return src
+echo "== Install OpenSIPS modules (auth / mysql / nathelper) =="
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq || true
+apt-get install -y opensips opensips-mysql-module opensips-http-modules opensips-nathelper-module opensips-cgrates-module 2>/dev/null \
+  || apt-get install -y opensips opensips-mysql-module || true
 
-text = set_mp(text, "auth_db", "calculate_ha1", "1")
-text = set_mp(text, "auth_db", "password_column", '"password"')
-text = set_mp(text, "auth_db", "use_domain", "0")
-if not re.search(r'modparam\(\s*"auth_db"\s*,\s*"db_url"', text):
-    m = re.search(r'modparam\(\s*"usrloc"\s*,\s*"db_url"\s*,\s*("[^"]+")\s*\)', text)
-    url = m.group(1) if m else '"mysql://opensips:opensips@127.0.0.1/opensips"'
-    text = set_mp(text, "auth_db", "db_url", url)
+MOD="$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -n1 || true)"
+[[ -n "$MOD" ]] || { echo "FATAL: OpenSIPS modules dir not found"; find /usr/lib -name 'opensips' -type d 2>/dev/null | head; exit 1; }
+MPATH="$(dirname "$MOD")/"
+echo "MPATH=$MPATH"
+ls -1 "${MPATH}auth.so" "${MPATH}auth_db.so" "${MPATH}usrloc.so" "${MPATH}registrar.so" 2>&1 || {
+  echo "FATAL: auth.so / auth_db.so missing under $MPATH"
+  ls -1 "$MPATH" | head -n 50
+  exit 1
+}
 
-def ensure_alias(src, host):
-    if re.search(r'(?m)^alias\s*=\s*"' + re.escape(host) + r'"', src):
-        return src
-    m = re.search(r'(?m)^auto_aliases\s*=.*$', src) or re.search(r'(?m)^socket\s*=.*$', src)
-    line = f'alias="{host}"'
-    if m:
-        return src[: m.end()] + "\n" + line + src[m.end() :]
-    return line + "\n" + src
-
-for h in (domain, public_ip, "127.0.0.1"):
-    text = ensure_alias(text, h)
-
-text = re.sub(
-    r'if\s*\(\s*is_method\(\s*"REGISTER"\s*\)\s*\)',
-    'if (0 && is_method("REGISTER"))',
-    text,
-)
-
-block = f'''
-\tif (is_method("REGISTER")) {{
-\t\trewritehost("{public_ip}");
-\t\txlog("L_INFO", "OWNREGISTER $si $tU@$td\\n");
-\t\tif (!www_authorize("$td", "subscriber")) {{
-\t\t\twww_challenge("$td", "auth");
-\t\t\texit;
-\t\t}}
-\t\tif (!save("location")) {{
-\t\t\tsl_reply_error();
-\t\t\texit;
-\t\t}}
-\t\texit;
-\t}}
-'''
-m = re.search(r'route\s*\{', text)
-if not m:
-    sys.exit("no route { in opensips.cfg")
-text = text[: m.end()] + block + text[m.end() :]
-open(path, "w", encoding="utf-8").write(text)
-print("wrote", path)
-PY
-
+echo "== Ensure opensips DB + subscriber.password =="
+bash "$SRC/deploy/fix-opensips-provision.sh" || true
 mysql --protocol=socket -uroot opensips -e \
   "ALTER TABLE subscriber ADD COLUMN password VARCHAR(64) NOT NULL DEFAULT ''" 2>/dev/null || true
-mysql --protocol=socket -uroot opensips -e \
-  "UPDATE subscriber SET password='Openaccount@12345.' WHERE username='owner'; SELECT username, IF(password='','EMPTY','set') pwd FROM subscriber WHERE username='owner';" \
-  || true
 
-echo "opensips -c ..."
-if ! opensips -c -f "$CFG"; then
-  echo "FATAL: syntax error after patch — restore newest backup in /var/backups/ownswitch-config/"
+echo "== Apply Ownswitch OpenSIPS config (stage 50) =="
+set +e
+bash "$SRC/deploy/install.sh" --only 50 --yes --non-interactive
+rc50=$?
+set -e
+if [[ "$rc50" -ne 0 ]]; then
+  echo "FATAL: stage 50 failed — Ownswitch cfg not applied"
+  tail -n 100 /var/log/ownswitch-install.log || true
   exit 1
 fi
+
+echo "== Verify live cfg =="
+grep -n 'mpath=' "$CFG" | head -3
+grep -nE 'loadmodule "auth|www_authorize|calculate_ha1|is_method\("REGISTER"\)|rewritehost' "$CFG" | head -n 30
+grep -q 'www_authorize' "$CFG" || { echo "FATAL: no www_authorize in live cfg"; exit 1; }
+grep -q 'mpath=' "$CFG" || { echo "FATAL: no mpath in live cfg"; exit 1; }
+
+# Force systemd to use this file
+install -d /etc/systemd/system/opensips.service.d
+cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/opensips -F -f ${CFG}
+EOF
+systemctl daemon-reload
+
+opensips -c -f "$CFG"
 
 systemctl stop opensips || true
 fuser -k 5060/udp 2>/dev/null || true
@@ -112,7 +110,15 @@ fuser -k 5060/tcp 2>/dev/null || true
 sleep 1
 systemctl start opensips
 sleep 2
-systemctl is-active opensips
+systemctl --no-pager -l status opensips | head -n 25 || true
+
+# Sync portal passwords into subscriber.password
+bash "$SRC/deploy/refresh-ui.sh" || true
+CUR="$(readlink -f /opt/ownswitch/current)"
+runuser -u ownswitch -- env OWNSWITCH_ENV_FILE="$ENV_FILE" php "$CUR/bin/sync-opensips-sip-users.php" || true
+mysql --protocol=socket -uroot opensips -e \
+  "UPDATE subscriber SET password='Openaccount@12345.' WHERE username='owner' AND (password IS NULL OR password=''); SELECT username, IF(password='','EMPTY','set') pwd FROM subscriber WHERE username='owner';" \
+  || true
 
 python3 - "$DOMAIN" "$PUBLIC_IP" <<'PY'
 import socket, sys
@@ -147,9 +153,9 @@ print(f"IP     {ip} → {i}")
 ok_d = d.startswith("SIP/2.0 401") or d.startswith("SIP/2.0 407")
 ok_i = i.startswith("SIP/2.0 401") or i.startswith("SIP/2.0 407")
 if not (ok_d and ok_i):
-    raise SystemExit("FAIL: still not challenging — run: journalctl -u opensips -n 80 --no-pager")
+    raise SystemExit("FAIL: still not 401 — journalctl -u opensips -n 80 --no-pager")
 print("SUCCESS: digest REGISTER is active.")
 PY
 
-echo "Softphone: Domain=$PUBLIC_IP Proxy=BLANK User=owner Pass=Openaccount@12345. Port=5060 UDP"
-echo "Then: sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/test-sip-register.php owner 'Openaccount@12345.'"
+echo "Softphone: Domain=$PUBLIC_IP Proxy=BLANK User=owner Pass=(portal password) Port=5060 UDP"
+echo "Test: sudo -u ownswitch env OWNSWITCH_ENV_FILE=$ENV_FILE php $CUR/bin/test-sip-register.php owner 'Openaccount@12345.'"
