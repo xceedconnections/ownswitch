@@ -84,7 +84,6 @@ final class SipUserController extends CrudController
                 'label' => 'CallerID number',
                 'max' => 32,
                 'pattern' => '/^\+?[0-9]{3,30}$/',
-                'list' => true,
                 'help' => 'Leave blank for passthrough (ViciDial / softphone From goes out). Used when mode = Fixed. Trunk From user still wins if set.',
                 'section' => 'Account',
             ],
@@ -222,7 +221,6 @@ final class SipUserController extends CrudController
                 'max' => 10000,
                 'required' => true,
                 'default' => '2',
-                'list' => true,
                 'help' => '-1 = unlimited concurrent calls',
                 'section' => 'Routing & media',
             ],
@@ -275,10 +273,15 @@ final class SipUserController extends CrudController
                 'section' => 'Routing & media',
             ],
 
-            ['name' => 'reg_status', 'label' => 'Registration', 'list' => true, 'list_only' => true, 'section' => 'Account'],
-            ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true, 'list_only' => true, 'section' => 'Account'],
+            // Single list column: green/red dot + latency ms
+            ['name' => 'presence', 'label' => 'Live', 'list' => true, 'list_only' => true, 'section' => 'Account'],
         );
         return $f;
+    }
+
+    protected function extra(Request $r): array
+    {
+        return ['hideIdColumn' => true];
     }
 
     protected function enrichRows(Request $r, array $rows): array
@@ -299,7 +302,6 @@ final class SipUserController extends CrudController
             $user = strtolower(trim((string) ($row['username'] ?? '')));
             $qualify = strtolower((string) ($row['qualify'] ?? 'yes')) === 'yes';
             $reg = $regs[$user] ?? null;
-            // usrloc may key contacts with domain suffix in some dumps
             if ($reg === null) {
                 foreach ($regs as $k => $info) {
                     if ($k === $user || str_starts_with((string) $k, $user . '@') || str_ends_with((string) $k, '@' . $user)) {
@@ -319,35 +321,46 @@ final class SipUserController extends CrudController
                 $port = 5060;
             }
 
+            $online = false;
+            $ms = null;
+
             if ($reg !== null) {
                 $exp = (int) ($reg['expires'] ?? 0);
-                // Stale usrloc (Eyebeam quit without UNREGISTER) → offline once expires passed
                 if ($exp > 0 && $exp <= time()) {
-                    $row['reg_status'] = 'offline';
-                    $row['latency_ms'] = '—';
-                    continue;
+                    $reg = null;
                 }
-                $row['reg_status'] = 'registered';
-                if (!$qualify) {
-                    $row['latency_ms'] = '—';
-                    continue;
-                }
-                $uri = trim((string) ($reg['received'] ?? '')) !== ''
-                    ? (string) $reg['received']
-                    : (string) ($reg['contact'] ?? '');
-                $ep = SipOptionsProbe::endpointFromUri($uri);
-                $ms = $ep ? SipOptionsProbe::rttMs($ep['host'], $ep['port']) : null;
-                $row['latency_ms'] = $ms ?? 'n/a';
-                continue;
             }
 
-            $row['reg_status'] = 'offline';
-            if ($qualify && $host !== '' && strtolower($host) !== 'dynamic' && filter_var($host, FILTER_VALIDATE_IP)) {
+            if ($reg !== null) {
+                if (!$qualify) {
+                    // No probe: trust usrloc expiry only
+                    $online = true;
+                    $ms = null;
+                } else {
+                    $uri = trim((string) ($reg['received'] ?? '')) !== ''
+                        ? (string) $reg['received']
+                        : (string) ($reg['contact'] ?? '');
+                    $ep = SipOptionsProbe::endpointFromUri($uri);
+                    $ms = $ep ? SipOptionsProbe::rttMs($ep['host'], $ep['port']) : null;
+                    if ($ms !== null) {
+                        $online = true;
+                    } else {
+                        // Softphone gone (Eyebeam closed) but stale usrloc — treat offline and purge
+                        $online = false;
+                        $prov->purgeRegistration((string) ($row['username'] ?? ''));
+                    }
+                }
+            } elseif ($qualify && $host !== '' && strtolower($host) !== 'dynamic' && filter_var($host, FILTER_VALIDATE_IP)) {
                 $ms = SipOptionsProbe::rttMs($host, $port);
-                $row['latency_ms'] = $ms ?? 'n/a';
-            } else {
-                $row['latency_ms'] = '—';
+                $online = $ms !== null;
             }
+
+            $row['presence'] = [
+                'online' => $online,
+                'ms' => $ms,
+            ];
+            $row['reg_status'] = $online ? 'registered' : 'offline';
+            $row['latency_ms'] = $ms !== null ? $ms : ($online ? '—' : 'n/a');
         }
         unset($row);
         return $rows;

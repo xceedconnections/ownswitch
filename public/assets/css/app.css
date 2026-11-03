@@ -327,6 +327,27 @@ a { text-decoration: none; color: inherit; }
 .os-table-scroll > .os-table tbody td { background: var(--os-card); }
 .os-table-scroll > .os-table tbody tr:hover td { background: #f8fafc; }
 .os-table-scroll > .os-table .os-col-id { width: 4rem; max-width: 4rem; }
+.os-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  white-space: nowrap;
+}
+.os-presence-dot {
+  display: inline-block;
+  width: .55rem;
+  height: .55rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.os-presence-dot--on {
+  background: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, .2);
+}
+.os-presence-dot--off {
+  background: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, .15);
+}
 .os-table-scroll > .os-table .os-col-actions {
   width: 9rem;
   min-width: 9rem;

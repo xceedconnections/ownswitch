@@ -37,6 +37,27 @@ $cell = static function (array $f, mixed $v): string {
         }
         return '<span class="os-mono">' . e((string) $v) . '</span>';
     }
+    if (($f['name'] ?? '') === 'presence') {
+        $online = false;
+        $ms = null;
+        if (is_array($v)) {
+            $online = !empty($v['online']);
+            $ms = isset($v['ms']) && is_numeric($v['ms']) ? (int) $v['ms'] : null;
+        } elseif (is_string($v)) {
+            $online = in_array($v, ['registered', 'online', 'Active', 'reachable'], true);
+        }
+        $dot = $online
+            ? '<span class="os-presence-dot os-presence-dot--on" title="Online" aria-label="Online"></span>'
+            : '<span class="os-presence-dot os-presence-dot--off" title="Offline" aria-label="Offline"></span>';
+        if ($online && $ms !== null) {
+            $cls = $ms < 80 ? 'success' : ($ms < 200 ? 'warning' : 'danger');
+            return '<span class="os-presence">' . $dot . ' <span class="os-mono text-' . $cls . '">' . e((string) $ms) . ' ms</span></span>';
+        }
+        if ($online) {
+            return '<span class="os-presence">' . $dot . ' <span class="small text-muted">ok</span></span>';
+        }
+        return '<span class="os-presence">' . $dot . ' <span class="small text-muted">offline</span></span>';
+    }
     if (($f['name'] ?? '') === 'latency_ms') {
         if ($v === null || $v === '' || $v === '—') {
             return '<span class="text-muted">—</span>';
@@ -53,8 +74,10 @@ $cell = static function (array $f, mixed $v): string {
     }
     if (($f['name'] ?? '') === 'reg_status') {
         $online = ($v === 'registered' || $v === 'online' || $v === 'Active' || $v === 'reachable');
-        $cls = $online ? 'success' : 'secondary';
-        return '<span class="badge text-bg-' . $cls . '">' . e((string) $v) . '</span>';
+        $dot = $online
+            ? '<span class="os-presence-dot os-presence-dot--on" title="Online"></span>'
+            : '<span class="os-presence-dot os-presence-dot--off" title="Offline"></span>';
+        return '<span class="os-presence">' . $dot . '</span>';
     }
     return e((string) $v);
 };
@@ -64,7 +87,8 @@ foreach ($fields as $f) {
         $statusField = $f;
     }
 }
-$colCount = 1 + count($cols) + 1;
+$hideIdColumn = !empty($hideIdColumn);
+$colCount = ($hideIdColumn ? 0 : 1) + count($cols) + 1;
 ?>
 <div class="os-page-head">
     <div>
@@ -144,7 +168,7 @@ $ownerFilter = $ownerFilter ?? null;
             <table class="os-table">
                 <colgroup>
                     <?php if ($bulkDelete && $canWrite): ?><col style="width:2.25rem"><?php endif; ?>
-                    <col class="os-col-id">
+                    <?php if (!$hideIdColumn): ?><col class="os-col-id"><?php endif; ?>
                     <?php foreach ($cols as $_): ?><col><?php endforeach; ?>
                     <col class="os-col-actions">
                 </colgroup>
@@ -153,7 +177,7 @@ $ownerFilter = $ownerFilter ?? null;
                         <?php if ($bulkDelete && $canWrite): ?>
                             <th scope="col"><input type="checkbox" class="form-check-input" id="os-bulk-all" aria-label="Select all"></th>
                         <?php endif; ?>
-                        <th scope="col" class="os-col-id">ID</th>
+                        <?php if (!$hideIdColumn): ?><th scope="col" class="os-col-id">ID</th><?php endif; ?>
                         <?php foreach ($cols as $c): ?><th scope="col"><?= e($c['label']) ?></th><?php endforeach; ?>
                         <th scope="col" class="os-col-actions">Actions</th>
                     </tr>
@@ -164,7 +188,7 @@ $ownerFilter = $ownerFilter ?? null;
                         <?php if ($bulkDelete && $canWrite): ?>
                             <td><input type="checkbox" class="form-check-input os-bulk-id" name="ids[]" value="<?= e((string) $row['id']) ?>" form="os-bulk-form" aria-label="Select <?= e((string) $row['id']) ?>"></td>
                         <?php endif; ?>
-                        <td class="os-mono os-col-id"><?= e($row['id']) ?></td>
+                        <?php if (!$hideIdColumn): ?><td class="os-mono os-col-id"><?= e($row['id']) ?></td><?php endif; ?>
                         <?php foreach ($cols as $c): ?><td><?= $cell($c, $row[$c['name']] ?? null) ?></td><?php endforeach; ?>
                         <td class="os-col-actions">
                             <div class="os-actions-inner">

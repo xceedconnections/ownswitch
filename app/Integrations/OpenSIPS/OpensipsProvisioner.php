@@ -974,13 +974,32 @@ final class OpensipsProvisioner
     {
         $fromMi = $this->registeredContactsFromMi();
         $fromSql = $this->registeredContactsFromSql();
-        // Merge — MI is authoritative when present; SQL fills gaps (write-through / no MI)
-        foreach ($fromSql as $u => $info) {
-            if (!isset($fromMi[$u])) {
-                $fromMi[$u] = $info;
+        // SQL write-through is authoritative; MI only fills gaps (avoids stale MI-only ghosts)
+        foreach ($fromMi as $u => $info) {
+            if (!isset($fromSql[$u])) {
+                $fromSql[$u] = $info;
             }
         }
-        return $fromMi;
+        return $fromSql;
+    }
+
+    /** Drop a dead/stale registration so the portal stops showing green. */
+    public function purgeRegistration(string $username): void
+    {
+        $username = trim($username);
+        if ($username === '' || !$this->enabled()) {
+            return;
+        }
+        try {
+            if ($this->tableExists('location')) {
+                $this->db()->prepare('DELETE FROM location WHERE username = ?')->execute([$username]);
+            }
+        } catch (\Throwable) {
+        }
+        if ($this->hasMi()) {
+            $this->miCall('ul_rm', ['AOR' => $username]);
+            $this->miCall('ul_rm', [$username]);
+        }
     }
 
     /**
