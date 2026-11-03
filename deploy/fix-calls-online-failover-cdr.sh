@@ -31,7 +31,7 @@ block = f'''failure_route[carrier_failover] {{
 \t\trtpengine_delete();
 \t\texit;
 \t}}
-\txlog("L_WARN", "failover after $T_reply_code — trying next trunk\\n");
+\txlog("L_WARN", "failover after code=$T_reply_code trying next trunk\\n");
 \tif (use_next_gw()) {{
 \t\troute(apply_ruri_strip);
 \t\troute(apply_sip_cid);

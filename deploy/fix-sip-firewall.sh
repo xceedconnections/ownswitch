@@ -53,48 +53,8 @@ enabled = true
 EOF
 fi
 
-# Patch live opensips.cfg: INVITE auth failed log (if missing)
-chattr -i "$CFG" 2>/dev/null || true
-python3 - "$CFG" <<'PY'
-import sys
-path = sys.argv[1]
-text = open(path, encoding="utf-8", errors="replace").read()
-needle = 'INVITE auth failed for'
-if needle in text:
-    print("OK invite auth log already present")
-else:
-    old = 'if (!proxy_authorize("", "subscriber")) {\n\t\t\tproxy_challenge("", "auth");'
-    new = 'if (!proxy_authorize("", "subscriber")) {\n\t\t\txlog("L_WARN", "INVITE auth failed for $fU src=$si\\n");\n\t\t\tproxy_challenge("", "auth");'
-    if old in text:
-        text = text.replace(old, new, 1)
-        open(path, "w", encoding="utf-8").write(text)
-        print("OK patched INVITE auth fail xlog")
-    else:
-        # looser match
-        import re
-        pat = re.compile(
-            r'(if\s*\(\s*!proxy_authorize\(\s*""\s*,\s*"subscriber"\s*\)\s*\)\s*\{\s*)\n(\s*)(proxy_challenge)',
-            re.M,
-        )
-        m = pat.search(text)
-        if not m:
-            print("WARN: could not patch INVITE auth log — edit opensips.cfg manually")
-        else:
-            text = pat.sub(
-                r'\1\n\2xlog("L_WARN", "INVITE auth failed for $fU src=$si\\n");\n\2\3',
-                text,
-                count=1,
-            )
-            open(path, "w", encoding="utf-8").write(text)
-            print("OK patched INVITE auth fail xlog (regex)")
-PY
-
-if opensips -c -f "$CFG" >/dev/null 2>&1; then
-  systemctl restart opensips
-else
-  echo "WARN: opensips -c failed; not restarting opensips — fix cfg first"
-  opensips -c -f "$CFG" || true
-fi
+# Do NOT patch opensips.cfg here — use deploy/fix-opensips-start-now.sh for SIP cfg/start.
+# Firewall install must not risk breaking REGISTER.
 
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban

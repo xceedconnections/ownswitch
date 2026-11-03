@@ -139,10 +139,10 @@ route {
 		# Always local: never DNS-relay REGISTER (fixes Domain FQDN → 483 Too Many Hops)
 		# OpenSIPS 3.3+: rewritehost() removed → sethost()
 		sethost("@@PUBLIC_IP@@");
-		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td ruri=$ru\n");
+		xlog("L_INFO", "REGISTER from=$si port=$sp user=$tU realm=$td ruri=$ru\n");
 		# Realm = softphone Domain ($td): IP or any FQDN. calculate_ha1=1 → plaintext password.
 		if (!www_authorize("$td", "subscriber")) {
-			xlog("L_WARN", "REGISTER auth failed for $tU@$td src=$si\n");
+			xlog("L_WARN", "REGISTER auth failed user=$tU realm=$td from=$si\n");
 			www_challenge("$td", "auth");
 			exit;
 		}
@@ -225,12 +225,13 @@ route {
 				route(inbound_from_carrier_deliver);
 				exit;
 			}
-			xlog("L_WARN", "carrier ACL but no AOR for $rU — customer digest path\n");
+			xlog("L_WARN", "carrier ACL but no AOR for $rU - customer digest path\n");
 		}
 		# Realm = From domain ($fd): IP or any FQDN; username-only DB lookup
 		# Empty realm = accept Domain IP or FQDN (avoids $fd mismatch → 403 Forbidden)
 		if (!proxy_authorize("", "subscriber")) {
-			xlog("L_WARN", "INVITE auth failed for $fU src=$si\n");
+			# Avoid punctuation immediately after $si / $fU (OpenSIPS xlog parse bug)
+			xlog("L_WARN", "INVITE auth failed user=$fU from=$si\n");
 			proxy_challenge("", "auth");
 			exit;
 		}
@@ -298,7 +299,7 @@ route {
 	# Group "1" is filled by Ownswitch (php bin/sync-opensips-trunks.php / trunk+route save)
 	# 5th arg = gw attrs pvar (fu=/fd=/rstrip= from trunk sync). strip/pri_prefix via DR.
 	if (!do_routing(1, , , , $avp(dr_gw_attrs))) {
-		xlog("L_WARN", "no route for $rU (from $fU) — sync trunks/routes to OpenSIPS\n");
+		xlog("L_WARN", "no route for $rU from $fU - sync trunks/routes\n");
 		acc_db_request("503 No Route", "acc");
 		send_reply(503, "No Route");
 		exit;
@@ -375,7 +376,7 @@ route[apply_sip_cid] {
 	append_hf("P-Asserted-Identity: <sip:$var(user)@$var(dom)>\r\n");
 	remove_hf("Remote-Party-ID");
 	append_hf("Remote-Party-ID: <sip:$var(user)@$var(dom)>;party=calling;privacy=off;screen=yes\r\n");
-	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) → sip:$var(user)@$var(dom)\n");
+	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) to sip:$var(user)@$var(dom)\n");
 }
 
 # ACC extras after CID/trunk rewrite: keep SIP user in src, presented CLI in cli, trunk gwid in gw
@@ -418,7 +419,7 @@ route[apply_ruri_strip] {
 		}
 		if ($(rU{s.substr,0,$(var(p){s.len})}) == $var(p)) {
 			$rU = $(rU{s.substr,$(var(p){s.len}),0});
-			xlog("L_INFO", "trunk remove-prefix $var(p) → RURI user=$rU\n");
+			xlog("L_INFO", "trunk remove-prefix $var(p) RURI user=$rU\n");
 			break;
 		}
 		$var(i) = $var(i) + 1;
@@ -462,7 +463,7 @@ route[apply_trunk_attrs] {
 		append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
 		remove_hf("P-Asserted-Identity");
 		append_hf("P-Asserted-Identity: <sip:$var(user)@$var(dom)>\r\n");
-		xlog("L_INFO", "trunk From rewrite → sip:$var(user)@$var(dom)\n");
+		xlog("L_INFO", "trunk From rewrite to sip:$var(user)@$var(dom)\n");
 	}
 }
 
@@ -490,7 +491,7 @@ failure_route[carrier_failover] {
 		rtpengine_delete();
 		exit;
 	}
-	xlog("L_WARN", "failover after $T_reply_code — trying next trunk\n");
+	xlog("L_WARN", "failover after code=$T_reply_code trying next trunk\n");
 	# try next gateway of the selected route
 	if (use_next_gw()) {
 		route(apply_ruri_strip);
