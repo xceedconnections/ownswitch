@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ownswitch\Controllers;
 
 use Ownswitch\Http\Request;
+use Ownswitch\Http\Response;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\PrefixRepository;
 use Ownswitch\Repositories\RatePlanRepository;
@@ -153,5 +154,105 @@ final class TariffController extends CrudController
         if ($this->kind === 'customer') {
             (new RatePlanRepository($this->db()))->createVersion((int) $row['rate_plan_id'], (int) ($this->user($r)['id'] ?? 0) ?: null);
         }
+    }
+
+    protected function extra(Request $r): array
+    {
+        $ownerKey = $this->kind === 'carrier' ? 'carrier_id' : 'rate_plan_id';
+        $ownerLabel = $this->kind === 'carrier' ? 'Provider' : 'Plan';
+        $opts = ['' => 'All'];
+        $sql = $this->kind === 'carrier'
+            ? 'SELECT id, name FROM carriers ORDER BY name LIMIT 500'
+            : 'SELECT id, name FROM rate_plans ORDER BY name LIMIT 500';
+        foreach ($this->db()->query($sql)->fetchAll() as $x) {
+            $opts[(string) $x['id']] = (string) $x['name'];
+        }
+        return [
+            'bulkDelete' => true,
+            'ownerFilter' => ['name' => $ownerKey, 'label' => $ownerLabel, 'options' => $opts],
+        ];
+    }
+
+    /** Delete selected rows or all rows matching current search/filters. */
+    public function bulkDestroy(Request $r, array $p = []): Response
+    {
+        if (!$this->canWrite($r)) {
+            return $this->forbidden();
+        }
+        /** @var TariffRepository $repo */
+        $repo = $this->repo();
+        $scope = $this->scope($r);
+        $mode = (string) $r->input('mode', 'selected');
+        $filters = [];
+        foreach ($this->filterColumns() as $c) {
+            $v = $r->input($c);
+            if (!is_string($v) || $v === '') {
+                $v = $r->query($c);
+            }
+            if (is_string($v) && $v !== '') {
+                $filters[$c] = $v;
+            }
+        }
+        $qRaw = $r->input('q');
+        if (!is_string($qRaw) || $qRaw === '') {
+            $qRaw = $r->query('q');
+        }
+        $q = is_string($qRaw) ? trim($qRaw) : '';
+        $n = 0;
+        $planIds = [];
+
+        if ($mode === 'selected') {
+            $raw = $r->input('ids', []);
+            $ids = [];
+            if (is_array($raw)) {
+                $ids = $raw;
+            } elseif (is_string($raw)) {
+                $ids = preg_split('/[\s,]+/', $raw) ?: [];
+            }
+            $idList = array_values(array_unique(array_filter(array_map('intval', $ids), static fn ($i) => $i > 0)));
+            if ($this->kind === 'customer' && $idList !== []) {
+                $planIds = $this->planIdsForTariffIds($idList);
+            }
+            $n = $repo->deleteByIds($scope, $idList);
+        } elseif ($mode === 'filtered') {
+            if ($this->kind === 'customer') {
+                $rows = $repo->findIdsFiltered($scope, $filters, $q !== '' ? $q : null);
+                $idList = array_map(static fn ($row) => (int) $row['id'], $rows);
+                $planIds = $this->planIdsForTariffIds($idList);
+            }
+            $n = $repo->deleteFiltered($scope, $filters, $q !== '' ? $q : null);
+        }
+
+        if ($this->kind === 'customer' && $planIds !== []) {
+            $ver = new RatePlanRepository($this->db());
+            $uid = (int) ($this->user($r)['id'] ?? 0) ?: null;
+            foreach (array_unique($planIds) as $pid) {
+                if ($pid > 0) {
+                    $ver->createVersion($pid, $uid);
+                }
+            }
+        }
+        $this->audit($r, 'tariff_bulk_delete', $this->kind === 'carrier' ? 'carrier_tariffs' : 'rate_plan_tariffs', null, null, [
+            'mode' => $mode, 'count' => $n, 'filters' => $filters, 'q' => $q,
+        ]);
+        $qs = http_build_query(array_filter($filters + ($q !== '' ? ['q' => $q] : []), static fn ($v) => $v !== null && $v !== ''));
+        return $this->redirect(
+            $r,
+            $this->base . ($qs !== '' ? '?' . $qs : ''),
+            "Deleted {$n} " . strtolower($this->plural) . '.',
+            $n > 0 ? 'success' : 'warning'
+        );
+    }
+
+    /** @param list<int> $ids @return list<int> */
+    private function planIdsForTariffIds(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $st = $this->db()->prepare("SELECT DISTINCT rate_plan_id FROM rate_plan_tariffs WHERE id IN ({$ph})");
+        $st->execute($ids);
+        return array_map('intval', $st->fetchAll(\PDO::FETCH_COLUMN) ?: []);
     }
 }

@@ -227,6 +227,16 @@ final class SipUserController extends CrudController
                 'section' => 'Routing & media',
             ],
             [
+                'name' => 'rate_cap',
+                'label' => 'CAP (max buy $/min)',
+                'type' => 'number',
+                'min' => 0,
+                'placeholder' => '0.005',
+                'list' => true,
+                'help' => 'Max provider (buy) rate allowed for this user. If the selected trunk costs more than CAP for the dialled prefix, the call is rejected (403 Rate Cap Exceeded). Blank = no CAP. Example: CAP 0.005 blocks vendor 1401@0.009 but allows 1213@0.004.',
+                'section' => 'Routing & media',
+            ],
+            [
                 'name' => 'dtmfmode',
                 'label' => 'DTMF mode',
                 'type' => 'select',
@@ -310,6 +320,13 @@ final class SipUserController extends CrudController
             }
 
             if ($reg !== null) {
+                $exp = (int) ($reg['expires'] ?? 0);
+                // Stale usrloc (Eyebeam quit without UNREGISTER) → offline once expires passed
+                if ($exp > 0 && $exp <= time()) {
+                    $row['reg_status'] = 'offline';
+                    $row['latency_ms'] = '—';
+                    continue;
+                }
                 $row['reg_status'] = 'registered';
                 if (!$qualify) {
                     $row['latency_ms'] = '—';
@@ -410,6 +427,12 @@ final class SipUserController extends CrudController
                     $data[$k] = null;
                 }
             }
+        }
+        if (!array_key_exists('rate_cap', $data) || $data['rate_cap'] === '' || $data['rate_cap'] === null) {
+            $data['rate_cap'] = null;
+        } else {
+            $cap = (float) $data['rate_cap'];
+            $data['rate_cap'] = $cap > 0 ? number_format($cap, 8, '.', '') : null;
         }
         return $data;
     }

@@ -120,6 +120,9 @@ modparam("drouting", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("drouting", "gw_id_avp", "$avp(dr_gw_id)")
 # OpenSIPS 3.x: no gw_attrs_avp modparam — pass $avp(dr_gw_attrs) as do_routing() 5th arg
 
+# Rate CAP check via portal PHP (opensips-module-exec). Optional — stage/deploy installs when available.
+@@OPENSIPS_EXEC_BLOCK@@
+
 # DID → SIP user aliases (Ownswitch DID assignments)
 @@OPENSIPS_ALIAS_DB_BLOCK@@
 
@@ -317,6 +320,7 @@ route {
 	route(check_cid_len);
 	route(apply_trunk_attrs);
 	route(check_trunk_cid_len);
+	route(check_rate_cap);
 	route(acc_cli_gw);
 	route(relay);
 }
@@ -492,6 +496,10 @@ route[check_cid_len] {
 	}
 }
 
+# Rate CAP: portal compares buy rate vs SIP-user CAP and trunk CAP (bin/dial-cap-check.php)
+# Stub when exec module is absent — deploy injects real body via @@OPENSIPS_RATE_CAP_ROUTE@@
+@@OPENSIPS_RATE_CAP_ROUTE@@
+
 # Trunk attrs cidmin=/cidmax= after From rewrite
 route[check_trunk_cid_len] {
 	if ($avp(dr_gw_attrs) == NULL) {
@@ -546,6 +554,7 @@ failure_route[carrier_failover] {
 		route(check_cid_len);
 		route(apply_trunk_attrs);
 		route(check_trunk_cid_len);
+		route(check_rate_cap);
 		route(acc_cli_gw);
 		t_on_failure("carrier_failover");
 		t_relay();

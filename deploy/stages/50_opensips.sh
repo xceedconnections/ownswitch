@@ -334,6 +334,53 @@ else
   export OPENSIPS_ALIAS_LOOKUP='# no alias_db'
 fi
 
+# Rate CAP via exec → portal PHP (dial-cap-check.php)
+if (( ! skip_apt )); then
+  apt_install_optional opensips-module-exec 2>/dev/null || apt_install_optional opensips-exec-module 2>/dev/null || true
+fi
+PHP_BIN="$(command -v php || true)"
+[[ -n "$PHP_BIN" ]] || PHP_BIN=/usr/bin/php
+CAP_SCRIPT=/opt/ownswitch/current/bin/dial-cap-check.php
+if [[ -f "${mod_dir}/exec.so" && -x "$PHP_BIN" ]]; then
+  export OPENSIPS_EXEC_BLOCK='loadmodule "exec.so"'
+  export OPENSIPS_RATE_CAP_ROUTE="route[check_rate_cap] {
+	if (\$avp(dr_gw_attrs) == NULL) {
+		return;
+	}
+	\$var(tid) = \$(avp(dr_gw_attrs){param.value,tid});
+	if (\$var(tid) == NULL || \$(var(tid){s.len}) == 0) {
+		return;
+	}
+	\$var(cap_user) = \$au;
+	if (\$var(cap_user) == NULL || \$(var(cap_user){s.len}) == 0) {
+		\$var(cap_user) = \$fU;
+	}
+	if (!exec(\"${PHP_BIN} ${CAP_SCRIPT} \$var(cap_user) \$rU \$var(tid)\")) {
+		xlog(\"L_WARN\", \"Rate Cap Exceeded user=\$var(cap_user) dst=\$rU trunk=\$var(tid)\\n\");
+		if (\$var(cap_tries) == NULL) {
+			\$var(cap_tries) = 0;
+		}
+		\$var(cap_tries) = \$(var(cap_tries){s.int}) + 1;
+		if (\$(var(cap_tries){s.int}) < 8 && use_next_gw()) {
+			route(apply_ruri_strip);
+			route(apply_sip_cid);
+			route(check_cid_len);
+			route(apply_trunk_attrs);
+			route(check_trunk_cid_len);
+			route(check_rate_cap);
+			return;
+		}
+		send_reply(403, \"Rate Cap Exceeded\");
+		exit;
+	}
+}"
+else
+  export OPENSIPS_EXEC_BLOCK='# exec.so not installed — Rate CAP dial check disabled (apt install opensips-module-exec)'
+  export OPENSIPS_RATE_CAP_ROUTE='route[check_rate_cap] {
+	return;
+}'
+fi
+
 # Render to a temp file first and validate BEFORE touching the live config.
 tmp_cfg="$(mktemp /tmp/opensips.cfg.XXXXXX)"
 trap 'rm -f "$tmp_cfg"' EXIT

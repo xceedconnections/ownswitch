@@ -1015,10 +1015,11 @@ final class OpensipsProvisioner
                         $expires = $contact['Expires'] ?? $contact['expires'] ?? $expires;
                         $contact = (string) ($contact['Contact'] ?? $contact['contact'] ?? $contact['address'] ?? '');
                     }
-                    $expTs = time() + 60;
+                    // Require a parseable future expiry — never treat missing/ambiguous as registered
+                    $expTs = null;
                     if (is_numeric($expires)) {
                         $expTs = (int) $expires;
-                        // OpenSIPS sometimes returns remaining seconds
+                        // Remaining TTL (seconds) vs absolute unix timestamp
                         if ($expTs > 0 && $expTs < 86400 * 10) {
                             $expTs = time() + $expTs;
                         }
@@ -1028,8 +1029,9 @@ final class OpensipsProvisioner
                             $expTs = $ts;
                         }
                     }
-                    // Accept contacts even when expires parsing is ambiguous (portal status)
-                    if (!isset($out[$u]) && (string) $contact !== '') {
+                    if ($expTs === null || $expTs <= time()) {
+                        // expired / unknown — do not mark registered
+                    } elseif (!isset($out[$u]) && (string) $contact !== '') {
                         $out[$u] = [
                             'contact' => (string) $contact,
                             'received' => is_string($received) ? $received : '',
@@ -1069,26 +1071,24 @@ final class OpensipsProvisioner
         $hasRecv = in_array('received', $cols, true);
         $hasExp = in_array('expires', $cols, true);
         // OpenSIPS 3.6 location.expires is INT unix timestamp (not DATETIME).
-        // Comparing INT to UTC_TIMESTAMP() filtered out every contact → portal always "offline".
+        // Only live contacts: expires must be in the future. Never fall back to unfiltered SELECT.
         $sql = 'SELECT username, contact'
             . ($hasRecv ? ', received' : '')
             . ($hasExp ? ', expires' : '')
             . ' FROM location';
         if ($hasExp) {
-            $sql .= ' WHERE expires IS NULL OR expires > UNIX_TIMESTAMP() - 60'
-                . ' OR expires > UTC_TIMESTAMP()'; // DATETIME schema fallback
+            $sql .= ' WHERE expires IS NOT NULL AND expires > UNIX_TIMESTAMP()';
+        } else {
+            // No expires column → cannot prove registration is live
+            return [];
         }
         $out = [];
         try {
             $rows = $this->db()->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable) {
-            $rows = $this->db()->query(
-                'SELECT username, contact'
-                . ($hasRecv ? ', received' : '')
-                . ($hasExp ? ', expires' : '')
-                . ' FROM location'
-            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            return [];
         }
+        $now = time();
         foreach ($rows as $row) {
             $u = strtolower((string) ($row['username'] ?? ''));
             if ($u === '' || isset($out[$u])) {
@@ -1098,18 +1098,13 @@ final class OpensipsProvisioner
             if ($contact === '') {
                 continue;
             }
-            $expires = time() + 3600;
-            if ($hasExp) {
-                $raw = $row['expires'] ?? null;
-                if (is_numeric($raw)) {
-                    $expires = (int) $raw;
-                } elseif (is_string($raw) && $raw !== '') {
-                    $ts = strtotime($raw . ' UTC');
-                    if ($ts === false) {
-                        $ts = strtotime($raw);
-                    }
-                    $expires = $ts !== false ? $ts : time() + 3600;
-                }
+            $raw = $row['expires'] ?? null;
+            if (!is_numeric($raw)) {
+                continue;
+            }
+            $expires = (int) $raw;
+            if ($expires <= $now) {
+                continue;
             }
             $out[$u] = [
                 'contact' => $contact,

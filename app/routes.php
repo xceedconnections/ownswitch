@@ -94,7 +94,9 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     // Rates
     $crud($r, '/rate-plans', new RatePlanController(), $STAFF);
     $crud($r, '/prefixes', new PrefixController(), $STAFF);
-    $crud($r, '/tariffs', new TariffController('customer'), $STAFF);
+    $tariffs = new TariffController('customer');
+    $r->post('/tariffs/bulk-delete', [$tariffs, 'bulkDestroy'], [$STAFF]);
+    $crud($r, '/tariffs', $tariffs, $STAFF);
     $crud($r, '/custom-rates', new CustomRateController(), $STAFF);
     $ti = new TariffImportController();
     $r->get('/tariffs/import', [$ti, 'form'], [$STAFF]);
@@ -119,6 +121,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     });
     $crud($r, '/trunks', new CarrierController('trunk'), $STAFF);
     $providerRates = new TariffController('carrier');
+    $r->post('/provider-rates/bulk-delete', [$providerRates, 'bulkDestroy'], [$STAFF]);
     $crud($r, '/provider-rates', $providerRates, $STAFF);
     $r->get('/carrier-tariffs', static fn () => Response::redirect(url('/provider-rates')));
     $r->get('/carrier-tariffs/create', static fn () => Response::redirect(url('/provider-rates/create')));

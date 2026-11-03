@@ -81,6 +81,7 @@ final class CarrierController extends CrudController
             ['name' => 'cid_max_len', 'label' => 'Max CallerID length (digits)', 'type' => 'number', 'min' => 0, 'max' => 32, 'placeholder' => '11', 'help' => 'After trunk CID rewrite. USA = 11. Blank/0 = off. Too long → 484 Wrong CallerID Length.'],
             ['name' => 'qualify', 'label' => 'Probe gateway', 'type' => 'select', 'options' => SipPeerOptions::YES_NO, 'default' => 'yes', 'help' => 'OpenSIPS probe_mode'],
             ['name' => 'max_channels', 'label' => 'Channels', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Soft limit for portal/reporting'],
+            ['name' => 'rate_cap', 'label' => 'CAP (max buy $/min)', 'type' => 'number', 'min' => 0, 'placeholder' => '0.005', 'list' => true, 'help' => 'Max buy rate this trunk may send. Destinations whose provider rate exceeds CAP are blocked (try next trunk / 403). Blank = no CAP.'],
             ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true, 'list_only' => true],
             $status,
         ];
@@ -145,6 +146,12 @@ final class CarrierController extends CrudController
                         $data[$k] = null;
                     }
                 }
+            }
+            if (!array_key_exists('rate_cap', $data) || $data['rate_cap'] === '' || $data['rate_cap'] === null) {
+                $data['rate_cap'] = null;
+            } else {
+                $cap = (float) $data['rate_cap'];
+                $data['rate_cap'] = $cap > 0 ? number_format($cap, 8, '.', '') : null;
             }
             if (array_key_exists('remove_prefix', $data)) {
                 $data['remove_prefix'] = self::normalizeRemovePrefixes((string) ($data['remove_prefix'] ?? ''));

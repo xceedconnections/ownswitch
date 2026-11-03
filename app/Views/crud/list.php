@@ -76,6 +76,10 @@ $colCount = 1 + count($cols) + 1;
     <?php endif; ?>
 </div>
 
+<?php
+$bulkDelete = !empty($bulkDelete);
+$ownerFilter = $ownerFilter ?? null;
+?>
 <form method="get" class="os-toolbar row g-2 align-items-end" action="<?= e(url($base)) ?>">
     <div class="col-12 col-md-4">
         <label class="form-label small mb-1" for="q">Search</label>
@@ -84,6 +88,16 @@ $colCount = 1 + count($cols) + 1;
             <input type="search" class="form-control" id="q" name="q" value="<?= e($q) ?>" placeholder="Search…" maxlength="100" aria-label="Search">
         </div>
     </div>
+    <?php if (is_array($ownerFilter) && !empty($ownerFilter['options'])): ?>
+        <div class="col-6 col-md-3 col-lg-2">
+            <label class="form-label small mb-1" for="<?= e($ownerFilter['name']) ?>"><?= e($ownerFilter['label']) ?></label>
+            <select name="<?= e($ownerFilter['name']) ?>" id="<?= e($ownerFilter['name']) ?>" class="form-select form-select-sm" data-autosubmit aria-label="<?= e($ownerFilter['label']) ?>">
+                <?php foreach ($ownerFilter['options'] as $k => $label): ?>
+                    <option value="<?= e((string) $k) ?>"<?= (($filters[$ownerFilter['name']] ?? '') === (string) $k) ? ' selected' : '' ?>><?= e($label) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+    <?php endif; ?>
     <?php if ($statusField): ?>
         <div class="col-6 col-md-3 col-lg-2">
             <label class="form-label small mb-1" for="status">Status</label>
@@ -108,15 +122,37 @@ $colCount = 1 + count($cols) + 1;
             <?php endif; ?>
         </div>
     <?php else: ?>
+        <?php if ($bulkDelete && $canWrite): ?>
+            <form method="post" action="<?= e(url($base . '/bulk-delete')) ?>" id="os-bulk-form">
+                <?= csrf_field() ?>
+                <input type="hidden" name="mode" id="os-bulk-mode" value="selected">
+                <input type="hidden" name="q" value="<?= e($q) ?>">
+                <?php foreach ($filters as $fk => $fv): ?>
+                    <input type="hidden" name="<?= e((string) $fk) ?>" value="<?= e((string) $fv) ?>">
+                <?php endforeach; ?>
+                <div class="d-flex flex-wrap gap-2 align-items-center px-2 py-2 border-bottom bg-light">
+                    <button type="submit" class="btn btn-outline-danger btn-sm" data-confirm="Delete selected <?= e(strtolower($plural)) ?>? This cannot be undone." onclick="document.getElementById('os-bulk-mode').value='selected'">
+                        <i class="bi bi-trash me-1"></i>Delete selected
+                    </button>
+                    <button type="submit" class="btn btn-outline-danger btn-sm" data-confirm="Delete ALL <?= e((string) $result['total']) ?> <?= e(strtolower($plural)) ?> matching this search/filter (not only this page)? This cannot be undone." onclick="document.getElementById('os-bulk-mode').value='filtered'">
+                        <i class="bi bi-funnel me-1"></i>Delete matching filter (<?= e((string) $result['total']) ?>)
+                    </button>
+                    <span class="small text-muted">Select rows below, or delete everything that matches the current filter.</span>
+                </div>
+        <?php endif; ?>
         <div class="os-table-scroll">
             <table class="os-table">
                 <colgroup>
+                    <?php if ($bulkDelete && $canWrite): ?><col style="width:2.25rem"><?php endif; ?>
                     <col class="os-col-id">
                     <?php foreach ($cols as $_): ?><col><?php endforeach; ?>
                     <col class="os-col-actions">
                 </colgroup>
                 <thead>
                     <tr>
+                        <?php if ($bulkDelete && $canWrite): ?>
+                            <th scope="col"><input type="checkbox" class="form-check-input" id="os-bulk-all" aria-label="Select all"></th>
+                        <?php endif; ?>
                         <th scope="col" class="os-col-id">ID</th>
                         <?php foreach ($cols as $c): ?><th scope="col"><?= e($c['label']) ?></th><?php endforeach; ?>
                         <th scope="col" class="os-col-actions">Actions</th>
@@ -125,6 +161,9 @@ $colCount = 1 + count($cols) + 1;
                 <tbody>
                 <?php foreach ($result['rows'] as $row): ?>
                     <tr>
+                        <?php if ($bulkDelete && $canWrite): ?>
+                            <td><input type="checkbox" class="form-check-input os-bulk-id" name="ids[]" value="<?= e((string) $row['id']) ?>" form="os-bulk-form" aria-label="Select <?= e((string) $row['id']) ?>"></td>
+                        <?php endif; ?>
                         <td class="os-mono os-col-id"><?= e($row['id']) ?></td>
                         <?php foreach ($cols as $c): ?><td><?= $cell($c, $row[$c['name']] ?? null) ?></td><?php endforeach; ?>
                         <td class="os-col-actions">
@@ -145,6 +184,17 @@ $colCount = 1 + count($cols) + 1;
                 </tbody>
             </table>
         </div>
+        <?php if ($bulkDelete && $canWrite): ?></form>
+            <script>
+            (function () {
+                var all = document.getElementById('os-bulk-all');
+                if (!all) return;
+                all.addEventListener('change', function () {
+                    document.querySelectorAll('.os-bulk-id').forEach(function (cb) { cb.checked = all.checked; });
+                });
+            })();
+            </script>
+        <?php endif; ?>
         <?php include __DIR__ . '/../partials/pagination.php'; ?>
     <?php endif; ?>
 </div>
