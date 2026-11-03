@@ -55,21 +55,38 @@ grep -q '^OPENSIPS_ENABLED=' "$ENV_FILE" && sed -i 's/^OPENSIPS_ENABLED=.*/OPENS
 
 export OWNSWITCH_DOMAIN="$DOMAIN" PUBLIC_IP="$PUBLIC_IP" PRIVATE_IP="$PRIV" SIP_PORT="${SIP_PORT:-5060}"
 
-echo "== Install OpenSIPS modules (auth / mysql / nathelper) =="
+echo "== Install OpenSIPS modules (MUST include opensips-auth-modules for auth.so) =="
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq || true
-apt-get install -y opensips opensips-mysql-module opensips-http-modules opensips-nathelper-module opensips-cgrates-module 2>/dev/null \
-  || apt-get install -y opensips opensips-mysql-module || true
+# auth.so lives in opensips-auth-modules (NOT in the base opensips package)
+apt-get install -y opensips opensips-auth-modules opensips-mysql-module \
+  opensips-http-modules opensips-nathelper-module opensips-cgrates-module \
+  opensips-cli || true
+# Retry auth package alone if the big install partially failed
+apt-get install -y opensips-auth-modules || {
+  echo "FATAL: cannot install opensips-auth-modules — check apt.opensips.org is configured"
+  apt-cache search opensips-auth || true
+  exit 1
+}
 
 MOD="$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -n1 || true)"
 [[ -n "$MOD" ]] || { echo "FATAL: OpenSIPS modules dir not found"; find /usr/lib -name 'opensips' -type d 2>/dev/null | head; exit 1; }
 MPATH="$(dirname "$MOD")/"
 echo "MPATH=$MPATH"
-ls -1 "${MPATH}auth.so" "${MPATH}auth_db.so" "${MPATH}usrloc.so" "${MPATH}registrar.so" 2>&1 || {
-  echo "FATAL: auth.so / auth_db.so missing under $MPATH"
-  ls -1 "$MPATH" | head -n 50
+missing=0
+for so in auth.so auth_db.so usrloc.so registrar.so sipmsgops.so; do
+  if [[ -f "${MPATH}${so}" ]]; then
+    echo "  OK ${so}"
+  else
+    echo "  MISSING ${so}"
+    missing=1
+  fi
+done
+if [[ "$missing" -ne 0 ]]; then
+  echo "FATAL: required .so missing under $MPATH"
+  dpkg -L opensips-auth-modules 2>/dev/null | head -n 40 || true
   exit 1
-}
+fi
 
 echo "== Ensure opensips DB + subscriber.password =="
 bash "$SRC/deploy/fix-opensips-provision.sh" || true
