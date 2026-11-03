@@ -103,45 +103,34 @@ def replace_named_block(src: str, header: str, new_block: str) -> str:
         i += 1
     return src
 
-# Inject empty stubs for any route() call whose route[name] is missing
-# (common after failover patch on a minimal live cfg).
-needed = [
-    "apply_ruri_strip",
-    "apply_sip_cid",
-    "apply_trunk_attrs",
-    "acc_cli_gw",
-    "apply_media",
-    "relay",
-]
-defined = defined_routes(text)
-called = called_routes(text)
-missing = sorted(r for r in needed if r in called and r not in defined)
-stubs = []
-for name in missing:
-    stubs.append(f"route[{name}] {{\n\t# stub added by fix-opensips-start-now (was referenced but missing)\n}}")
-    print(f"stub route[{name}]")
-if stubs:
-    # Insert stubs just before failure_route if present, else append
-    stub_txt = "\n\n" + "\n\n".join(stubs) + "\n"
-    idx = text.find("failure_route[carrier_failover]")
-    if idx >= 0:
-        text = text[:idx] + stub_txt + text[idx:]
-    else:
-        text += stub_txt
-    defined = defined_routes(text)
+# --- Emergency: live cfg often lacks apply_* routes that failover patches call.
+# 1) Delete broken mid-file stubs from earlier fix attempts
+text = re.sub(
+    r'\n*route\[(?:apply_ruri_strip|apply_sip_cid|apply_trunk_attrs|acc_cli_gw|apply_media)\]\s*\{[^}]*stub[^}]*\}\n*',
+    "\n",
+    text,
+    flags=re.I,
+)
 
-# Rewrite carrier_failover to only call routes that exist; keep t_check_status
+# 2) Drop route() calls to names that are not defined (anywhere in cfg)
+defined = defined_routes(text)
+for name in ("apply_ruri_strip", "apply_sip_cid", "apply_trunk_attrs", "acc_cli_gw", "apply_media"):
+    if name not in defined:
+        text2, n = re.subn(rf'(?m)^\s*route\(\s*{name}\s*\)\s*;\s*\n', "", text)
+        if n:
+            text = text2
+            print(f"removed {n}x route({name}) — not defined")
+
+# 3) Pull failure_route out if present, then append a clean top-level copy at EOF
 pat_codes = "408|480|486|503|500|502|504"
 m = re.search(r't_check_status\("([^"]+)"\)', text)
-if m and "|" in m.group(1):
+if m and "|" in m.group(1) and "@@" not in m.group(1):
     pat_codes = m.group(1)
-# Prefer settings placeholder if still present
-if "@@FAILOVER_SIP_STATUS@@" in text:
-    pat_codes = "408|480|486|503|500|502|504"
 
+defined = defined_routes(text)
 calls = []
 for name in ("apply_ruri_strip", "apply_sip_cid", "apply_trunk_attrs", "acc_cli_gw"):
-    if name in defined_routes(text):
+    if name in defined:
         calls.append(f"\t\troute({name});")
 call_block = ("\n".join(calls) + "\n") if calls else ""
 failover = f'''failure_route[carrier_failover] {{
@@ -162,9 +151,32 @@ failover = f'''failure_route[carrier_failover] {{
 	rtpengine_delete();
 }}
 '''
-if "failure_route[carrier_failover]" in text or "use_next_gw()" in text:
-    text = replace_named_block(text, "failure_route[carrier_failover]", failover)
-    print("rewrote failure_route[carrier_failover]")
+
+# Remove every existing carrier_failover block (may sit illegally inside route{})
+while "failure_route[carrier_failover]" in text:
+    start = text.find("failure_route[carrier_failover]")
+    brace = text.find("{", start)
+    if brace < 0:
+        break
+    depth = 0
+    i = brace
+    end = -1
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+        i += 1
+    if end < 0:
+        break
+    text = text[:start] + text[end:]
+    print("removed embedded failure_route[carrier_failover]")
+
+text = text.rstrip() + "\n\n" + failover + "\n"
+print("appended clean failure_route[carrier_failover] at EOF calls=", calls or ["(t_relay only)"])
 
 if text != orig:
     open(path, "w", encoding="utf-8").write(text)
