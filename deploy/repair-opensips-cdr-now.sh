@@ -184,7 +184,7 @@ if "OWNSWITCH force media relay" not in text:
 if "onreply_route[handle_reply]" not in text:
     text += '''
 onreply_route[handle_reply] {
-	if (status =~ "[12][0-9][0-9]" && has_body("application/sdp")) {
+	if ($rs =~ "[12][0-9][0-9]" && has_body("application/sdp")) {
 		rtpengine_manage();
 	}
 }

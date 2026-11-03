@@ -364,6 +364,10 @@ route[apply_sip_cid] {
 	}
 	remove_hf("From");
 	append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
+	remove_hf("P-Asserted-Identity");
+	append_hf("P-Asserted-Identity: <sip:$var(user)@$var(dom)>\r\n");
+	remove_hf("Remote-Party-ID");
+	append_hf("Remote-Party-ID: <sip:$var(user)@$var(dom)>;party=calling;privacy=off;screen=yes\r\n");
 	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) → sip:$var(user)@$var(dom)\n");
 }
 

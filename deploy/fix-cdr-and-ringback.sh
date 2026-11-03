@@ -166,7 +166,7 @@ text = text.replace(
 # --- Ringback: onreply for 18x/200 SDP + prefer media relay ---
 onreply = r'''
 onreply_route[handle_reply] {
-	if (status =~ "[12][0-9][0-9]" && has_body("application/sdp")) {
+	if ($rs =~ "[12][0-9][0-9]" && has_body("application/sdp")) {
 		rtpengine_manage();
 	}
 }
