@@ -13,9 +13,15 @@ final class SettingsService
     /** key => [label, type, help]. Only these keys are editable. */
     public const SCHEMA = [
         'default_currency'            => ['Default currency', 'text', '3-letter ISO code'],
+        'tax_rate_percent'            => ['Tax rate (%)', 'decimal', 'Applied on new invoices (0 = no tax)'],
         'charge_connect_on_zero'      => ['Charge connection fee on zero-duration calls', 'bool', 'Default off'],
         'rating_tolerance'            => ['Rating discrepancy tolerance', 'decimal', 'Flag when |CGRateS − portal| exceeds this'],
         'prepaid_hard_cap_seconds'    => ['Prepaid hard max call duration (s)', 'int', ''],
+        'system_max_concurrent'       => ['System max concurrent calls', 'int0', '0 = unlimited. Soft cap for capacity planning and health alerts.'],
+        'system_max_cps'              => ['System max calls per second', 'int0', '0 = unlimited. Soft CPS guidance for the switch.'],
+        'failover_max_retries'        => ['Failover max trunk attempts', 'int', 'How many trunks to try before giving up (1–20)'],
+        'failover_sip_codes'          => ['Failover SIP codes', 'text', 'Comma-separated SIP codes that trigger next trunk (e.g. 408,480,486,503)'],
+        'kill_switch'                 => ['Emergency kill switch', 'bool', 'When on, new outbound calls should be rejected (portal flag + OpenSIPS sync)'],
         'default_media_policy'        => [
             'Default media policy',
             'media',
@@ -99,7 +105,14 @@ final class SettingsService
             case 'bool':
                 return [!empty($raw) ? '1' : '0', null];
             case 'int':
+                if ($key === 'failover_max_retries') {
+                    return preg_match('/^\d{1,2}$/', $v) && (int) $v >= 1 && (int) $v <= 20
+                        ? [(string) (int) $v, null]
+                        : [null, "{$label} must be between 1 and 20."];
+                }
                 return preg_match('/^\d{1,7}$/', $v) && (int) $v >= 1 ? [(string) (int) $v, null] : [null, "{$label} must be a positive whole number."];
+            case 'int0':
+                return preg_match('/^\d{1,7}$/', $v) ? [(string) (int) $v, null] : [null, "{$label} must be a whole number (0 allowed)."];
             case 'decimal':
                 return preg_match('/^\d+(\.\d{1,8})?$/', $v) ? [$v, null] : [null, "{$label} must be a non-negative decimal."];
             case 'media':
@@ -110,6 +123,13 @@ final class SettingsService
             case 'text':
                 if ($key === 'default_currency') {
                     return preg_match('/^[A-Z]{3}$/', strtoupper($v)) ? [strtoupper($v), null] : [null, "{$label} must be a 3-letter code."];
+                }
+                if ($key === 'failover_sip_codes') {
+                    $norm = preg_replace('/\s+/', '', strtoupper($v)) ?? '';
+                    if ($norm === '' || !preg_match('/^\d{3}(,\d{3})*$/', $norm)) {
+                        return [null, "{$label} must be comma-separated 3-digit SIP codes."];
+                    }
+                    return [$norm, null];
                 }
                 if (mb_strlen($v) > 80) {
                     return [null, "{$label} must be at most 80 characters."];

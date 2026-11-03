@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Ownswitch\Controllers\AuditLogController;
 use Ownswitch\Controllers\AuthController;
 use Ownswitch\Controllers\BillingController;
 use Ownswitch\Controllers\CarrierController;
@@ -9,11 +10,13 @@ use Ownswitch\Controllers\CdrController;
 use Ownswitch\Controllers\CustomRateController;
 use Ownswitch\Controllers\CustomerController;
 use Ownswitch\Controllers\DashboardController;
+use Ownswitch\Controllers\DestinationPolicyController;
 use Ownswitch\Controllers\FraudController;
 use Ownswitch\Controllers\InvoiceController;
 use Ownswitch\Controllers\IpAuthController;
 use Ownswitch\Controllers\LedgerController;
 use Ownswitch\Controllers\ModuleScaffoldController;
+use Ownswitch\Controllers\PaymentController;
 use Ownswitch\Controllers\PrefixController;
 use Ownswitch\Controllers\RatePlanController;
 use Ownswitch\Controllers\RecordingController;
@@ -22,6 +25,7 @@ use Ownswitch\Controllers\ResellerController;
 use Ownswitch\Controllers\RoutingController;
 use Ownswitch\Controllers\SettingsController;
 use Ownswitch\Controllers\SipUserController;
+use Ownswitch\Controllers\StatementController;
 use Ownswitch\Controllers\SystemController;
 use Ownswitch\Controllers\TariffController;
 use Ownswitch\Controllers\CallsOnlineController;
@@ -119,6 +123,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->post('/routing/simulate', [$sim, 'simulate'], [$STAFF]);
     $trunkGroups = new RoutingController('plans');
     $crud($r, '/trunk-groups', $trunkGroups, $STAFF);
+    $crud($r, '/destination-policies', new DestinationPolicyController(), $STAFF);
     $r->get('/routing/plans', static fn () => Response::redirect(url('/trunk-groups')));
     $r->get('/routing/plans/create', static fn () => Response::redirect(url('/trunk-groups/create')));
     $r->get('/routing/plans/{id}/edit', static function ($req, array $p) {
@@ -140,6 +145,8 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $rep = new ReportController();
     $r->get('/reports/cdr-failed', [$rep, 'cdrFailed'], [$all]);
     $r->get('/reports/asr-acd', static fn () => Response::redirect(url('/reports/summary-day')));
+    $r->get('/reports/pdd', [$rep, 'pdd'], [$all]);
+    $r->get('/reports/cdr-reconciliation', [$rep, 'cdrReconciliation'], [$role(Menu::FINANCE)]);
     $r->get('/reports/financial', [$rep, 'financial'], [$role(Menu::FINANCE)]);
     // Slugs kept inline so a missing CallSummaryService class cannot 500 the whole app (incl. /login).
     $summaryReports = [
@@ -168,9 +175,14 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/billing/refill', [$bill, 'topupForm'], [$STAFF]);
     $r->post('/billing/refill', [$bill, 'topup'], [$STAFF]);
     $r->get('/billing/topup', static fn () => Response::redirect(url('/billing/refill')));
+    $pay = new PaymentController();
+    $r->get('/payments', [$pay, 'index'], [$role(Menu::FINANCE)]);
+    $r->get('/payments/create', [$pay, 'create'], [$role(Menu::RESELLER_UP)]);
+    $r->post('/payments', [$pay, 'store'], [$role(Menu::RESELLER_UP)]);
     $led = new LedgerController();
     $r->get('/ledger', [$led, 'index'], [$role(Menu::LEDGER_READ)]);
     $r->post('/ledger/{id}/reverse', [$led, 'reverse'], [$STAFF]);
+    $r->get('/statements', [new StatementController(), 'index'], [$role(Menu::LEDGER_READ)]);
     $inv = new InvoiceController();
     $invRoles = $role(['super_admin', 'admin', 'reseller', 'customer_owner']);
     $r->get('/invoices', [$inv, 'index'], [$invRoles]);
@@ -186,8 +198,10 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/fraud', [$fraud, 'index'], [$role(Menu::RESELLER_UP)]);
     $r->post('/fraud/scan', [$fraud, 'scan'], [$STAFF]);
     $r->post('/fraud/{id}/ack', [$fraud, 'acknowledge'], [$role(Menu::RESELLER_UP)]);
+    $r->post('/fraud/rules/{id}', [$fraud, 'updateRule'], [$STAFF]);
+    $r->get('/audit-logs', [new AuditLogController(), 'index'], [$STAFF]);
 
-    // Settings
+    // Settings (includes kill switch, CPS/concurrent caps, failover SIP codes, tax)
     $r->get('/system/status', [new SystemController(), 'status'], [$STAFF]);
     $settings = new SettingsController();
     $r->get('/settings', [$settings, 'edit'], [$STAFF]);

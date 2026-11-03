@@ -6,8 +6,8 @@ namespace Ownswitch\Support;
 
 /**
  * Field-spec driven validation used by generic CRUD controllers.
- * Spec keys: name,label,type(text|email|number|int|select|checkbox|textarea|password|prefix|ip|hidden|multiselect),
- * required,max,min,options(array value=>label),pattern,default,help,list(bool),readonly_on_edit
+ * Spec keys: name,label,type(text|email|number|int|select|checkbox|textarea|password|prefix|ip|hidden|multiselect|datetime|trunk_waterfall),
+ * required,max,min,options(array value=>label),pattern,default,help,list(bool),readonly_on_edit,list_only
  */
 final class Validator
 {
@@ -132,6 +132,24 @@ final class Validator
                         $errors[$name] = "{$label} must be a valid IPv4/IPv6 address.";
                         continue 2;
                     }
+                    break;
+                case 'datetime':
+                    if (!preg_match('/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$/', $val)) {
+                        $errors[$name] = "{$label} must be YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.";
+                        continue 2;
+                    }
+                    $norm = str_replace('T', ' ', $val);
+                    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $norm)) {
+                        $norm .= ' 00:00:00';
+                    } elseif (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $norm)) {
+                        $norm .= ':00';
+                    }
+                    $dt = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $norm);
+                    if ($dt === false || $dt->format('Y-m-d H:i:s') !== $norm) {
+                        $errors[$name] = "{$label} is not a valid date/time.";
+                        continue 2;
+                    }
+                    $val = $norm;
                     break;
                 case 'password':
                     break;

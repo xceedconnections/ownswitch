@@ -14,9 +14,20 @@ final class SettingsController extends BaseController
     public function edit(Request $r, array $p = []): Response
     {
         $s = new SettingsService($this->db());
+        $defaults = [
+            'tax_rate_percent' => '0',
+            'system_max_concurrent' => '0',
+            'system_max_cps' => '0',
+            'failover_max_retries' => '3',
+            'failover_sip_codes' => '408,480,486,503',
+            'kill_switch' => '0',
+        ];
         $values = [];
         foreach (SettingsService::SCHEMA as $k => $_) {
-            $values[$k] = $s->get($k, '');
+            $values[$k] = $s->get($k, $defaults[$k] ?? '');
+            if (($values[$k] === null || $values[$k] === '') && isset($defaults[$k])) {
+                $values[$k] = $defaults[$k];
+            }
         }
         return $this->view('settings/edit', [
             'title' => 'Settings',

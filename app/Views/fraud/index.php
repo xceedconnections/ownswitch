@@ -26,11 +26,38 @@
 <?php endif; ?>
 </div>
 <?php if ($rules): ?>
-    <p class="os-section-label">Active rules</p>
+    <p class="os-section-label">Fraud rules</p>
     <div class="os-table-wrap"><div class="table-responsive"><table class="table table-sm mb-0 os-table">
-        <thead><tr><th>Code</th><th>Type</th><th class="os-num">Threshold</th><th class="os-num">Window (s)</th><th>Action</th><th>Status</th></tr></thead>
-        <tbody><?php foreach ($rules as $r): ?>
-            <tr><td class="os-mono"><?= e($r['code']) ?></td><td><?= e($r['rule_type']) ?></td><td class="os-num"><?= e($r['threshold']) ?></td><td class="os-num"><?= e($r['window_seconds']) ?></td><td><?= e($r['action']) ?></td><td><?= e($r['status']) ?></td></tr>
+        <thead><tr><th>Code</th><th>Type</th><th class="os-num">Threshold</th><th class="os-num">Window (s)</th><th>Action</th><th>Status</th><?php if ($canManage): ?><th></th><?php endif; ?></tr></thead>
+        <tbody><?php foreach ($rules as $rule): ?>
+            <?php if ($canManage): ?>
+            <tr>
+                <td class="os-mono"><?= e($rule['code']) ?><div class="small text-muted"><?= e($rule['name']) ?></div></td>
+                <td><?= e($rule['rule_type']) ?></td>
+                <td colspan="4">
+                    <form method="post" action="<?= e(url('/fraud/rules/' . (int) $rule['id'])) ?>" class="row g-1 align-items-center">
+                        <?= csrf_field() ?>
+                        <div class="col-auto"><input class="form-control form-control-sm os-mono" style="width:5.5rem" name="threshold" value="<?= e((string) $rule['threshold']) ?>" aria-label="Threshold"></div>
+                        <div class="col-auto"><input class="form-control form-control-sm os-mono" style="width:5rem" name="window_seconds" value="<?= e((string) $rule['window_seconds']) ?>" aria-label="Window seconds"></div>
+                        <div class="col-auto">
+                            <select class="form-select form-select-sm" name="action" aria-label="Action">
+                                <option value="alert"<?= $rule['action'] === 'alert' ? ' selected' : '' ?>>alert</option>
+                                <option value="suspend"<?= $rule['action'] === 'suspend' ? ' selected' : '' ?>>suspend</option>
+                            </select>
+                        </div>
+                        <div class="col-auto">
+                            <select class="form-select form-select-sm" name="status" aria-label="Status">
+                                <option value="active"<?= $rule['status'] === 'active' ? ' selected' : '' ?>>active</option>
+                                <option value="disabled"<?= $rule['status'] === 'disabled' ? ' selected' : '' ?>>disabled</option>
+                            </select>
+                        </div>
+                        <div class="col-auto"><button class="btn btn-outline-secondary btn-sm" type="submit" data-once>Save</button></div>
+                    </form>
+                </td>
+            </tr>
+            <?php else: ?>
+            <tr><td class="os-mono"><?= e($rule['code']) ?></td><td><?= e($rule['rule_type']) ?></td><td class="os-num"><?= e($rule['threshold']) ?></td><td class="os-num"><?= e($rule['window_seconds']) ?></td><td><?= e($rule['action']) ?></td><td><?= e($rule['status']) ?></td></tr>
+            <?php endif; ?>
         <?php endforeach; ?></tbody>
     </table></div></div>
 <?php endif; ?>

@@ -71,4 +71,140 @@ final class ReportController extends BaseController
         $qs = http_build_query($q);
         return Response::redirect(url('/cdrs' . ($qs !== '' ? '?' . $qs : '?disposition=FAILED')));
     }
+
+    /** Post-dial delay (setup → answer) for answered calls. */
+    public function pdd(Request $r, array $p = []): Response
+    {
+        [$from, $to] = $this->dateRange($r, 7);
+        $scope = $this->scope($r);
+        [$tw, $tp] = $scope->where('owned', 'c');
+        $fromTs = $from . ' 00:00:00';
+        $toTs = (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00');
+        $res = [
+            'answered' => 0,
+            'avg_pdd_ms' => '0',
+            'p50_ms' => '0',
+            'p95_ms' => '0',
+            'rows' => [],
+        ];
+        try {
+            $st = $this->db()->prepare(
+                "SELECT COUNT(*) AS answered,
+                        ROUND(AVG(TIMESTAMPDIFF(MICROSECOND, c.setup_at, c.answer_at) / 1000), 1) AS avg_pdd_ms
+                 FROM cdrs c
+                 WHERE ({$tw}) AND c.setup_at >= ? AND c.setup_at < ?
+                   AND c.answer_at IS NOT NULL AND c.disposition = 'ANSWERED'"
+            );
+            $st->execute([...$tp, $fromTs, $toTs]);
+            $agg = $st->fetch(\PDO::FETCH_ASSOC) ?: [];
+            $res['answered'] = (int) ($agg['answered'] ?? 0);
+            $res['avg_pdd_ms'] = (string) ($agg['avg_pdd_ms'] ?? '0');
+
+            $samples = $this->db()->prepare(
+                "SELECT TIMESTAMPDIFF(MICROSECOND, c.setup_at, c.answer_at) / 1000 AS pdd_ms
+                 FROM cdrs c
+                 WHERE ({$tw}) AND c.setup_at >= ? AND c.setup_at < ?
+                   AND c.answer_at IS NOT NULL AND c.disposition = 'ANSWERED'
+                 ORDER BY pdd_ms ASC
+                 LIMIT 5000"
+            );
+            $samples->execute([...$tp, $fromTs, $toTs]);
+            $vals = array_map(static fn ($row) => (float) $row['pdd_ms'], $samples->fetchAll(\PDO::FETCH_ASSOC) ?: []);
+            $n = count($vals);
+            if ($n > 0) {
+                $res['p50_ms'] = (string) round($vals[(int) floor(($n - 1) * 0.50)], 1);
+                $res['p95_ms'] = (string) round($vals[(int) floor(($n - 1) * 0.95)], 1);
+            }
+
+            $byTrunk = $this->db()->prepare(
+                "SELECT COALESCE(NULLIF(t.name, ''), CONCAT('Trunk #', c.carrier_trunk_id), '(none)') AS label,
+                        COUNT(*) AS answered,
+                        ROUND(AVG(TIMESTAMPDIFF(MICROSECOND, c.setup_at, c.answer_at) / 1000), 1) AS avg_pdd_ms
+                 FROM cdrs c
+                 LEFT JOIN carrier_trunks t ON t.id = c.carrier_trunk_id
+                 WHERE ({$tw}) AND c.setup_at >= ? AND c.setup_at < ?
+                   AND c.answer_at IS NOT NULL AND c.disposition = 'ANSWERED'
+                 GROUP BY label
+                 ORDER BY answered DESC
+                 LIMIT 50"
+            );
+            $byTrunk->execute([...$tp, $fromTs, $toTs]);
+            $res['rows'] = $byTrunk->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] pdd report: ' . $e->getMessage());
+        }
+        return $this->view('reports/pdd', ['title' => 'PDD Report', 'res' => $res, 'from' => $from, 'to' => $to]);
+    }
+
+    /** Unrated / unattributed / rating-discrepancy CDRs. */
+    public function cdrReconciliation(Request $r, array $p = []): Response
+    {
+        [$from, $to] = $this->dateRange($r, 7);
+        $focus = is_string($r->query('focus')) ? (string) $r->query('focus') : 'all';
+        if (!in_array($focus, ['all', 'unrated', 'unattributed', 'discrepancy'], true)) {
+            $focus = 'all';
+        }
+        $scope = $this->scope($r);
+        [$tw, $tp] = $scope->where('owned', 'c');
+        $fromTs = $from . ' 00:00:00';
+        $toTs = (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00');
+        $page = max(1, (int) $r->query('page', 1));
+        $per = 50;
+        $issue = "(c.settlement_status IN ('unrated','unattributed') OR c.rating_discrepancy = 1)";
+        $focusSql = match ($focus) {
+            'unrated' => "c.settlement_status = 'unrated'",
+            'unattributed' => "c.settlement_status = 'unattributed'",
+            'discrepancy' => 'c.rating_discrepancy = 1',
+            default => $issue,
+        };
+        $counts = ['unrated' => 0, 'unattributed' => 0, 'discrepancy' => 0];
+        $total = 0;
+        $rows = [];
+        try {
+            $cst = $this->db()->prepare(
+                "SELECT
+                    SUM(CASE WHEN c.settlement_status = 'unrated' THEN 1 ELSE 0 END) AS unrated,
+                    SUM(CASE WHEN c.settlement_status = 'unattributed' THEN 1 ELSE 0 END) AS unattributed,
+                    SUM(CASE WHEN c.rating_discrepancy = 1 THEN 1 ELSE 0 END) AS discrepancy
+                 FROM cdrs c WHERE ({$tw}) AND c.setup_at >= ? AND c.setup_at < ? AND {$issue}"
+            );
+            $cst->execute([...$tp, $fromTs, $toTs]);
+            $c = $cst->fetch(\PDO::FETCH_ASSOC) ?: [];
+            $counts = [
+                'unrated' => (int) ($c['unrated'] ?? 0),
+                'unattributed' => (int) ($c['unattributed'] ?? 0),
+                'discrepancy' => (int) ($c['discrepancy'] ?? 0),
+            ];
+            $stc = $this->db()->prepare(
+                "SELECT COUNT(*) FROM cdrs c WHERE ({$tw}) AND c.setup_at >= ? AND c.setup_at < ? AND {$focusSql}"
+            );
+            $stc->execute([...$tp, $fromTs, $toTs]);
+            $total = (int) $stc->fetchColumn();
+            $st = $this->db()->prepare(
+                "SELECT c.id, c.setup_at, c.disposition, c.settlement_status, c.rating_discrepancy,
+                        c.customer_charge, c.carrier_cost
+                 FROM cdrs c
+                 WHERE ({$tw}) AND c.setup_at >= ? AND c.setup_at < ? AND {$focusSql}
+                 ORDER BY c.setup_at DESC
+                 LIMIT {$per} OFFSET " . (($page - 1) * $per)
+            );
+            $st->execute([...$tp, $fromTs, $toTs]);
+            $rows = $st->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] cdr reconciliation: ' . $e->getMessage());
+        }
+        $query = $r->query;
+        $query['from'] = $from;
+        $query['to'] = $to;
+        $query['focus'] = $focus;
+        return $this->view('reports/cdr_reconciliation', [
+            'title' => 'CDR Reconciliation',
+            'result' => ['rows' => $rows, 'total' => $total, 'page' => $page, 'per_page' => $per, 'pages' => max(1, (int) ceil(max(1, $total) / $per))],
+            'from' => $from,
+            'to' => $to,
+            'focus' => $focus,
+            'counts' => $counts,
+            'query' => $query,
+        ]);
+    }
 }

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Ownswitch\Support;
 
 /**
- * Navigation — OpenSIPS-backed features only.
+ * Navigation — OpenSIPS-backed Phase 1 features (no duplicate paths).
  */
 final class Menu
 {
@@ -36,7 +36,9 @@ final class Menu
             ]],
             ['Billing', [
                 ['Refills', '/billing/refill', self::STAFF],
+                ['Payments', '/payments', self::FINANCE],
                 ['Ledger', '/ledger', self::LEDGER_READ],
+                ['Statements', '/statements', self::LEDGER_READ],
                 ['Invoices', '/invoices', ['super_admin', 'admin', 'reseller', 'customer_owner']],
                 ['Billing Preview', '/billing/preview', self::STAFF],
             ]],
@@ -51,6 +53,7 @@ final class Menu
             ['Reports', [
                 ['CDR', '/cdrs', self::ALL],
                 ['CDR Failed', '/reports/cdr-failed', self::ALL],
+                ['CDR Reconciliation', '/reports/cdr-reconciliation', self::FINANCE],
                 ['Summary per Day', '/reports/summary-day', self::ALL],
                 ['Summary Day User', '/reports/summary-day-user', self::ALL],
                 ['Summary Day Trunk', '/reports/summary-day-trunk', self::STAFF],
@@ -61,15 +64,18 @@ final class Menu
                 ['Summary per Trunk', '/reports/summary-trunk', self::STAFF],
                 ['Summary per Destination', '/reports/summary-destination', self::ALL],
                 ['Summary Month Destination', '/reports/summary-month-destination', self::ALL],
+                ['PDD', '/reports/pdd', self::ALL],
                 ['Financial', '/reports/financial', self::FINANCE],
                 ['Recordings', '/recordings', ['super_admin', 'admin', 'reseller', 'customer_owner']],
                 ['Fraud Alerts', '/fraud', self::RESELLER_UP],
+                ['Audit Log', '/audit-logs', self::STAFF],
             ]],
             ['Routes', [
                 ['Providers', '/providers', self::STAFF],
                 ['Trunks', '/trunks', self::STAFF],
                 ['Trunk Groups', '/trunk-groups', self::STAFF],
                 ['Provider Rates', '/provider-rates', self::STAFF],
+                ['Destination Policies', '/destination-policies', self::STAFF],
                 ['Simulator', '/routing/simulate', self::STAFF],
             ]],
             ['Settings', [

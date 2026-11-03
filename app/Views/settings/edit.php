@@ -4,7 +4,7 @@
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title">Settings</h1>
-        <p class="os-page-sub">Branding, media defaults, retention</p>
+        <p class="os-page-sub">Branding, billing, capacity limits, failover and emergency kill switch</p>
     </div>
 </div>
 <form method="post" action="<?= e(url('/settings')) ?>" enctype="multipart/form-data" class="os-panel col-xl-8">
@@ -49,7 +49,7 @@
                     </select>
                 <?php else: ?>
                     <label class="form-label" for="<?= e($key) ?>"><?= e($label) ?></label>
-                    <input class="form-control<?= $err ? ' is-invalid' : '' ?>" id="<?= e($key) ?>" name="<?= e($key) ?>" value="<?= e($val) ?>" maxlength="<?= $key === 'switch_name' ? '80' : '20' ?>">
+                    <input class="form-control<?= $err ? ' is-invalid' : '' ?>" id="<?= e($key) ?>" name="<?= e($key) ?>" value="<?= e($val) ?>" maxlength="<?= in_array($key, ['switch_name', 'failover_sip_codes'], true) ? '80' : '32' ?>">
                 <?php endif; ?>
                 <?php if ($err): ?><div class="invalid-feedback d-block"><?= e($err) ?></div><?php endif; ?>
                 <?php if ($help): ?><div class="form-text"><?= e($help) ?></div><?php endif; ?>

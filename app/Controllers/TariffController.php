@@ -97,6 +97,8 @@ final class TariffController extends CrudController
             ['name' => 'initial_increment', 'label' => 'Initial block', 'type' => 'int', 'min' => 1, 'max' => 86400, 'default' => '6', 'list' => true, 'help' => 'Seconds'],
             ['name' => 'subsequent_increment', 'label' => 'Billing block', 'type' => 'int', 'min' => 1, 'max' => 86400, 'default' => '6', 'list' => true, 'help' => 'Seconds'],
             ['name' => 'connect_fee', 'label' => 'Connection charge', 'type' => 'number', 'default' => '0'],
+            ['name' => 'effective_from', 'label' => 'Effective from', 'type' => 'datetime', 'help' => 'Optional. Format YYYY-MM-DD or YYYY-MM-DD HH:MM:SS (UTC). Blank = immediate.'],
+            ['name' => 'effective_to', 'label' => 'Effective to', 'type' => 'datetime', 'help' => 'Optional end of window. Blank = no end. Use for scheduled rate changes.'],
             ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Inactive'], 'list' => true, 'default' => 'active'],
         ]);
     }
@@ -122,6 +124,15 @@ final class TariffController extends CrudController
         }
         if (($data['connect_fee'] ?? null) === null || $data['connect_fee'] === '') {
             $data['connect_fee'] = '0';
+        }
+        foreach (['effective_from', 'effective_to'] as $col) {
+            if (($data[$col] ?? null) === '' || ($data[$col] ?? null) === null) {
+                $data[$col] = null;
+            }
+        }
+        if ($data['effective_from'] !== null && $data['effective_to'] !== null
+            && (string) $data['effective_to'] < (string) $data['effective_from']) {
+            throw new \DomainException('Effective to must be on or after effective from.');
         }
         return $data;
     }

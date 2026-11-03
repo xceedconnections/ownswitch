@@ -135,6 +135,16 @@ if ($user && in_array($user['role'] ?? '', ['customer_owner', 'customer_tech'], 
 </header>
 
 <main class="os-main-top">
+    <?php if (!empty($killSwitch)): ?>
+        <div class="alert alert-danger mb-3" role="alert">
+            <strong>Emergency kill switch is ON.</strong> New outbound calls should be rejected. Turn it off in Settings when safe.
+            <?php
+            $cu = function_exists('current_user') ? current_user() : null;
+            if (is_array($cu) && in_array((string) ($cu['role'] ?? ''), ['super_admin', 'admin'], true)): ?>
+                <a class="alert-link ms-1" href="<?= e(url('/settings')) ?>">Open Settings</a>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
     <?php foreach ($flashes as $f): ?>
         <div class="alert alert-<?= e(in_array($f['type'], ['success', 'danger', 'warning', 'info'], true) ? $f['type'] : 'info') ?> alert-dismissible fade show" role="alert">
             <?= e($f['message']) ?>

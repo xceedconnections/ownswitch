@@ -18,10 +18,17 @@ final class View
         $session = App::session();
         $user = current_user();
         $role = is_array($user) ? (string) ($user['role'] ?? '') : '';
+        $killSwitch = false;
+        try {
+            $killSwitch = (new \Ownswitch\Services\Settings\SettingsService(App::db()))->bool('kill_switch');
+        } catch (\Throwable) {
+            $killSwitch = false;
+        }
         return self::capture($layout, $data + [
             'content' => $content,
             'flashes' => $session->pullFlash(),
             'menu'    => Menu::for($role),
+            'killSwitch' => $killSwitch,
         ] + ['title' => 'Ownswitch']);
     }
 

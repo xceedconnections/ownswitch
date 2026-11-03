@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ownswitch\Services\Billing;
 
+use Ownswitch\Services\Settings\SettingsService;
 use PDO;
 
 /** Postpaid invoices generated from POSTED ledger entries only (never from editable CDR fields). */
@@ -70,11 +71,17 @@ final class InvoiceService
             }
 
             $number = sprintf('INV-%d-%s-%s', $customerId, $s->format('Ymd'), $e->format('Ymd'));
-            $total = RatingService::round($subtotal, 4);
+            $sub = RatingService::round($subtotal, 4);
+            $taxPct = (new SettingsService($this->pdo))->get('tax_rate_percent', '0') ?? '0';
+            if (!preg_match('/^\d+(\.\d{1,8})?$/', $taxPct)) {
+                $taxPct = '0';
+            }
+            $tax = RatingService::round(bcmul($sub, bcdiv($taxPct, '100', 10), 10), 4);
+            $total = RatingService::round(bcadd($sub, $tax, 10), 4);
             $this->pdo->prepare(
                 "INSERT INTO invoices (number, reseller_id, customer_id, period_start, period_end, currency, subtotal, tax, total, status, issued_at, created_by)
-                 VALUES (?,?,?,?,?,?,?,0,?, 'issued', UTC_TIMESTAMP(), ?)"
-            )->execute([$number, $cust['reseller_id'], $customerId, $s->format('Y-m-d'), $e->format('Y-m-d'), $cust['currency'], $total, $total, $userId]);
+                 VALUES (?,?,?,?,?,?,?,?,?, 'issued', UTC_TIMESTAMP(), ?)"
+            )->execute([$number, $cust['reseller_id'], $customerId, $s->format('Y-m-d'), $e->format('Y-m-d'), $cust['currency'], $sub, $tax, $total, $userId]);
             $invId = (int) $this->pdo->lastInsertId();
             $ins = $this->pdo->prepare('INSERT INTO invoice_lines (invoice_id, line_no, description, quantity, seconds, amount) VALUES (?,?,?,?,?,?)');
             foreach ($lines as $i => [$desc, $qty, $secs, $amt]) {
