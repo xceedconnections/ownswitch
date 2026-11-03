@@ -109,7 +109,8 @@ loadmodule "acc.so"
 modparam("acc", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("acc", "early_media", 0)
 modparam("acc", "report_cancels", 1)
-modparam("acc", "db_extra", "src_user=$fU;dst_user=$rU;src_ip=$si")
+# OpenSIPS 3.x: extra_fields + $acc_extra(...) — db_extra was removed
+modparam("acc", "extra_fields", "db: src->src_user; dst->dst_user; ip->src_ip")
 
 # dynamic routing (carrier selection / failover) - data loaded from the opensips DB
 loadmodule "drouting.so"
@@ -257,6 +258,11 @@ route {
 
 	record_route();
 	create_dialog("B");
+	$dlg_val(os_src) = $fU;
+	$dlg_val(os_dst) = $rU;
+	$acc_extra(src) = $fU;
+	$acc_extra(dst) = $rU;
+	$acc_extra(ip) = $si;
 	# Persist DTMF policy for in-dialog INFO filtering
 	if ($avp(os_dtmf) != NULL) {
 		$dlg_val(os_dtmf) = $avp(os_dtmf);

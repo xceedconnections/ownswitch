@@ -99,46 +99,38 @@ def ensure_mod(src, name, block=""):
         return src[: m.end()] + insert + src[m.end() :]
     return src + insert
 
+# OpenSIPS 3.6: db_extra removed → extra_fields + $acc_extra
+text = re.sub(r'^[ \t]*modparam\(\s*"acc"\s*,\s*"db_extra"[^)]*\)\s*\n?', "", text, flags=re.M)
 text = ensure_mod(
     text,
     "acc.so",
     f'modparam("acc", "db_url", "{db_url}")\n'
     f'modparam("acc", "early_media", 0)\n'
     f'modparam("acc", "report_cancels", 1)\n'
-    f'modparam("acc", "db_extra", '
-    f'"src_user=$dlg_val(os_src);dst_user=$dlg_val(os_dst);src_ip=$si")\n',
+    f'modparam("acc", "extra_fields", "db: src->src_user; dst->dst_user; ip->src_ip")\n',
 )
-
-# Force db_extra to use dialog vals (stable across do_routing RURI rewrite)
-if 'modparam("acc", "db_extra"' in text:
-    text = re.sub(
-        r'modparam\(\s*"acc"\s*,\s*"db_extra"\s*,\s*"[^"]*"\s*\)',
-        'modparam("acc", "db_extra", '
-        '"src_user=$dlg_val(os_src);dst_user=$dlg_val(os_dst);src_ip=$si")',
-        text,
-        count=1,
-    )
-else:
+if 'modparam("acc", "extra_fields"' not in text:
     text = re.sub(
         r'(loadmodule "acc\.so"\s*\n)',
         r'\1modparam("acc", "db_url", "' + db_url + '")\n'
-        r'modparam("acc", "db_extra", '
-        r'"src_user=$dlg_val(os_src);dst_user=$dlg_val(os_dst);src_ip=$si")\n',
+        r'modparam("acc", "extra_fields", "db: src->src_user; dst->dst_user; ip->src_ip")\n',
         text,
         count=1,
     )
 
-# After create_dialog("B"); stash src/dst for CDR
 stamp = (
     'create_dialog("B");\n'
     '\t\t$dlg_val(os_src) = $fU;\n'
-    '\t\t$dlg_val(os_dst) = $rU;'
+    '\t\t$dlg_val(os_dst) = $rU;\n'
+    '\t\t$acc_extra(src) = $fU;\n'
+    '\t\t$acc_extra(dst) = $rU;\n'
+    '\t\t$acc_extra(ip) = $si;'
 )
-if "$dlg_val(os_dst)" not in text:
+if "$acc_extra(src)" not in text:
     text = text.replace('create_dialog("B");', stamp)
-    print("stamped dlg_val os_src/os_dst after create_dialog")
+    print("stamped acc_extra after create_dialog")
 else:
-    print("dlg_val os_dst already present")
+    print("acc_extra already present")
 
 # Ensure do_accounting on INVITE outbound path
 if 'do_accounting("db"' not in text and "do_accounting('db'" not in text:
