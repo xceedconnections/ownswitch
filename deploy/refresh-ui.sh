@@ -97,6 +97,15 @@ if [[ -f "$OWN_ETC/install.conf" ]]; then
   mv /tmp/ownswitch-ic.$$ "$OWN_ETC/install.conf"
 fi
 
+# Keep fail2ban portal helper in sync (ban duration / auto-unban)
+if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sh" ]]; then
+  install -m 0755 "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sh" /usr/local/sbin/ownswitch-fail2ban
+  if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sudoers" ]]; then
+    install -m 0440 "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sudoers" /etc/sudoers.d/ownswitch-fail2ban
+    visudo -cf /etc/sudoers.d/ownswitch-fail2ban >/dev/null 2>&1 || true
+  fi
+fi
+
 echo
 echo "== Verify =="
 echo "layout markers: $(grep -c 'os-auth-page\|os-topbar\|os-brand-mark' "$OWN_OPT/current/app/Views/layout.php" || true)"

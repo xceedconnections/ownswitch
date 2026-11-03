@@ -174,8 +174,16 @@ final class Fail2banService
                     continue;
                 }
                 $v = $cfg[$k];
-                if (!preg_match('/^[0-9a-zA-Z.]+$/', $v)) {
-                    return ['ok' => false, 'detail' => "Invalid {$k}"];
+                if ($k === 'enabled') {
+                    if (!preg_match('/^(true|false|1|0|yes|no)$/i', $v)) {
+                        return ['ok' => false, 'detail' => "Invalid {$k}"];
+                    }
+                } elseif ($k === 'maxretry') {
+                    if (!preg_match('/^\d{1,3}$/', $v) || (int) $v < 1 || (int) $v > 100) {
+                        return ['ok' => false, 'detail' => "Invalid {$k}"];
+                    }
+                } elseif (!preg_match('/^\d+[smhd]?$/', $v)) {
+                    return ['ok' => false, 'detail' => "Invalid {$k} (use e.g. 30m, 1h, 24h)"];
                 }
                 $args[] = "{$k}={$v}";
             }

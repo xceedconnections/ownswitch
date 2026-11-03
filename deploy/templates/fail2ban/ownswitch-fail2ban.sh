@@ -97,6 +97,23 @@ cmd_config() {
   echo "jail_file_present=$([ -f "$SIP_JAIL_FILE" ] && echo 1 || echo 0)"
 }
 
+# Convert 30s / 10m / 1h / 2d / bare seconds → integer seconds for fail2ban-client set
+to_seconds() {
+  local v="$1" n u
+  if [[ "$v" =~ ^([0-9]+)([smhd])?$ ]]; then
+    n="${BASH_REMATCH[1]}"
+    u="${BASH_REMATCH[2]:-s}"
+    case "$u" in
+      s) echo "$n" ;;
+      m) echo $((n * 60)) ;;
+      h) echo $((n * 3600)) ;;
+      d) echo $((n * 86400)) ;;
+    esac
+    return 0
+  fi
+  return 1
+}
+
 write_sip_jail() {
   local maxretry="$1" findtime="$2" bantime="$3" enabled="$4"
   cat >"$SIP_JAIL_FILE" <<EOF
@@ -111,16 +128,43 @@ journalmatch = _SYSTEMD_UNIT=opensips.service
 maxretry = ${maxretry}
 findtime = ${findtime}
 bantime  = ${bantime}
+# Timed ban (not permanent): fail2ban auto-unbans after bantime
 action   = %(action_)s
 EOF
   chmod 0644 "$SIP_JAIL_FILE"
 }
 
+# Push live jail params so new bans expire; optionally refresh timers on currently banned IPs.
+apply_live_jail() {
+  local maxretry="$1" findtime="$2" bantime="$3" refresh_bans="${4:-0}"
+  need_f2b
+  local ft_sec bt_sec
+  ft_sec="$(to_seconds "$findtime")" || return 0
+  bt_sec="$(to_seconds "$bantime")" || return 0
+  (( bt_sec >= 60 )) || bt_sec=60
+  if fail2ban-client status "$JAIL" >/dev/null 2>&1; then
+    fail2ban-client set "$JAIL" maxretry "$maxretry" >/dev/null 2>&1 || true
+    fail2ban-client set "$JAIL" findtime "$ft_sec" >/dev/null 2>&1 || true
+    fail2ban-client set "$JAIL" bantime "$bt_sec" >/dev/null 2>&1 || true
+    if [[ "$refresh_bans" == "1" ]]; then
+      local ip
+      local -a ips=()
+      mapfile -t ips < <(cmd_banned || true)
+      for ip in "${ips[@]}"; do
+        [[ -n "$ip" ]] || continue
+        fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
+        fail2ban-client set "$JAIL" banip "$ip" >/dev/null 2>&1 || true
+      done
+    fi
+  fi
+}
+
 cmd_set_config() {
-  local maxretry findtime bantime enabled
+  local maxretry findtime bantime enabled old_bantime
   maxretry="$(read_kv maxretry "$SIP_JAIL_FILE" 5)"
   findtime="$(read_kv findtime "$SIP_JAIL_FILE" 10m)"
   bantime="$(read_kv bantime "$SIP_JAIL_FILE" 1h)"
+  old_bantime="$bantime"
   enabled="$(read_kv enabled "$SIP_JAIL_FILE" true)"
   local arg
   for arg in "$@"; do
@@ -134,12 +178,19 @@ cmd_set_config() {
   done
   [[ "$maxretry" =~ ^[0-9]+$ ]] && (( maxretry >= 1 && maxretry <= 100 )) || die "maxretry must be 1-100"
   [[ "$findtime" =~ ^[0-9]+[smhd]?$ ]] || die "invalid findtime"
-  [[ "$bantime" =~ ^[0-9]+[smhd]?$ ]] || die "invalid bantime"
+  [[ "$bantime" =~ ^[0-9]+[smhd]?$ ]] || die "invalid bantime (use e.g. 30m, 1h, 24h — not permanent)"
+  local bt_sec
+  bt_sec="$(to_seconds "$bantime")" || die "invalid bantime"
+  (( bt_sec >= 60 && bt_sec <= 2592000 )) || die "bantime must be between 60s and 30d"
   case "$enabled" in true|false|1|0|yes|no) ;; *) die "enabled must be true/false" ;; esac
   [[ -f "$FILTER_FILE" ]] || die "filter missing: $FILTER_FILE (run deploy/fix-sip-firewall.sh)"
   write_sip_jail "$maxretry" "$findtime" "$bantime" "$enabled"
   fail2ban-client reload >/dev/null 2>&1 || systemctl reload fail2ban >/dev/null 2>&1 || systemctl restart fail2ban
-  echo "OK config saved"
+  sleep 1
+  local refresh=0
+  [[ "$bantime" != "$old_bantime" ]] && refresh=1
+  apply_live_jail "$maxretry" "$findtime" "$bantime" "$refresh"
+  echo "OK config saved (bantime=${bantime}, auto-unban enabled)"
   cmd_config
 }
 
