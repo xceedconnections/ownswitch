@@ -190,10 +190,9 @@ NAT_REG=""
 if [[ "${USE_NATHELPER:-0}" == "1" ]]; then
   NAT_BLOCK='loadmodule "nathelper.so"
 modparam("nathelper", "received_avp", "$avp(received)")'
+  # Always — Eyebeam behind NAT gets 408 without this
   NAT_REG='force_rport();
-		if (nat_uac_test("19")) {
-			fix_nated_register();
-		}'
+		fix_nated_register();'
 fi
 
 python3 - "$CFG" "$MPATH" "$DOMAIN" "$PUBLIC_IP" "$PORT" "$DB_URL" "$EXTRA" "$NAT_BLOCK" "$NAT_REG" <<'PY'
