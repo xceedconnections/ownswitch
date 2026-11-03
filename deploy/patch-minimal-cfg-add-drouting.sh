@@ -102,7 +102,7 @@ replacement = (
     '		do_accounting("db", "cdr|missed|failed");\n'
     '		rtpengine_manage();\n'
     '		t_on_failure("carrier_failover");\n'
-    '		if (!do_routing("1", , , , $avp(dr_gw_attrs))) {\n'
+    '		if (!do_routing(1, , , , $avp(dr_gw_attrs))) {\n'
     '			xlog("L_WARN", "no route for $rU from $fU — sync trunks/routes\\n");\n'
     '			send_reply(503, "No Route");\n'
     '			exit;\n'

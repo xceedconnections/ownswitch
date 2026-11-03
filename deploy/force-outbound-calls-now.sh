@@ -52,13 +52,20 @@ text = re.sub(
 text = re.sub(r"""^[ \t]*'\)\s*\n""", "", text, flags=re.M)
 text = re.sub(r'''^[ \t]*"\)\s*\n''', "", text, flags=re.M)
 
-# 3) do_routing attrs via 5th arg (OpenSIPS 3.x)
-if "do_routing(\"1\", , , , $avp(dr_gw_attrs))" not in text:
-    text = re.sub(
-        r'do_routing\(\s*"1"\s*\)',
-        'do_routing("1", , , , $avp(dr_gw_attrs))',
-        text,
-    )
+# 3) do_routing: group id must be INT (OpenSIPS 3.6 rejects "1" string)
+#    5th arg = gw attrs pvar
+text = re.sub(
+    r'do_routing\(\s*"1"\s*(?:,\s*,\s*,\s*,\s*\$avp\(dr_gw_attrs\))?\s*\)',
+    'do_routing(1, , , , $avp(dr_gw_attrs))',
+    text,
+)
+text = re.sub(
+    r"do_routing\(\s*'1'\s*(?:,\s*,\s*,\s*,\s*\$avp\(dr_gw_attrs\))?\s*\)",
+    'do_routing(1, , , , $avp(dr_gw_attrs))',
+    text,
+)
+if 'do_routing(1)' in text and 'do_routing(1, , , , $avp(dr_gw_attrs))' not in text:
+    text = text.replace('do_routing(1)', 'do_routing(1, , , , $avp(dr_gw_attrs))')
 
 def ensure_mod(src, name, block_after=""):
     if f'loadmodule "{name}"' in src:

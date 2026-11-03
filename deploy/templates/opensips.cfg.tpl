@@ -284,7 +284,7 @@ route {
 
 	# Group "1" is filled by Ownswitch (php bin/sync-opensips-trunks.php / trunk+route save)
 	# 5th arg = gw attrs pvar (fu=/fd=/rstrip= from trunk sync). strip/pri_prefix via DR.
-	if (!do_routing("1", , , , $avp(dr_gw_attrs))) {
+	if (!do_routing(1, , , , $avp(dr_gw_attrs))) {
 		xlog("L_WARN", "no route for $rU (from $fU) — sync trunks/routes to OpenSIPS\n");
 		acc_db_request("503 No Route", "acc");
 		send_reply(503, "No Route");
