@@ -129,6 +129,91 @@ apt-get install -y opensips-mysql-dbschema opensips-mysql-module \
   opensips-auth-modules opensips-nathelper-module opensips-dialog-module 2>/dev/null || true
 apt-get install -y opensips-cgrates-module 2>/dev/null || true
 
+echo "======== Apply OpenSIPS MySQL schemas (dialog/drouting/acc/…) ========"
+mysql --protocol=socket -uroot opensips -e "
+CREATE TABLE IF NOT EXISTS version (
+  table_name CHAR(32) NOT NULL,
+  table_version INT UNSIGNED DEFAULT 0 NOT NULL,
+  CONSTRAINT t_name_idx UNIQUE (table_name)
+) ENGINE=InnoDB;
+" 2>/dev/null || true
+
+apply_schema() {
+  local name="$1" tbl="$2" ver="$3"
+  local f
+  f=$(find /usr/share/opensips /usr/share/opensips-mysql-module /usr/share/doc \
+    -type f \( -name "${name}-create.sql" -o -name "*${name}*create*.sql" \) 2>/dev/null | head -1 || true)
+  local has_tbl=0 has_ver=0
+  mysql --protocol=socket -uroot -N opensips -e \
+    "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='${tbl}'" 2>/dev/null | grep -q 1 && has_tbl=1
+  mysql --protocol=socket -uroot -N opensips -e \
+    "SELECT 1 FROM version WHERE table_name='${tbl}'" 2>/dev/null | grep -q 1 && has_ver=1
+  if [[ "$has_tbl" -eq 1 && "$has_ver" -eq 1 ]]; then
+    echo "OK ${tbl} (+ version row)"
+    return 0
+  fi
+  if [[ -n "${f:-}" ]]; then
+    echo "Applying $f"
+    # CREATE IF NOT EXISTS friendly: ignore duplicate errors
+    mysql --protocol=socket -uroot opensips <"$f" 2>/dev/null || true
+  fi
+  mysql --protocol=socket -uroot opensips -e \
+    "DELETE FROM version WHERE table_name='${tbl}';
+     INSERT INTO version (table_name, table_version) VALUES ('${tbl}', ${ver});" 2>/dev/null || true
+  if [[ "$has_tbl" -eq 0 ]]; then
+    echo "WARN: ${tbl} may still be missing — check package opensips-mysql-dbschema"
+  fi
+}
+
+# Versions match OpenSIPS 3.6.x packaged schemas
+apply_schema dialog dialog 12
+apply_schema drouting dr_gateways 6 || true
+apply_schema permissions address 5 || true
+apply_schema standard acc 7 || true
+
+# Minimal dialog table if package SQL missing but version expected
+if ! mysql --protocol=socket -uroot -N opensips -e \
+  "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='dialog'" | grep -q 1; then
+  echo "Creating dialog table (fallback DDL, ver 12)"
+  mysql --protocol=socket -uroot opensips <<'SQL'
+CREATE TABLE IF NOT EXISTS dialog (
+  dlg_id BIGINT(10) UNSIGNED PRIMARY KEY NOT NULL,
+  callid CHAR(255) NOT NULL,
+  from_uri CHAR(255) NOT NULL,
+  from_tag CHAR(64) NOT NULL,
+  to_uri CHAR(255) NOT NULL,
+  to_tag CHAR(64) NOT NULL,
+  mangled_from_uri CHAR(255) DEFAULT NULL,
+  mangled_to_uri CHAR(255) DEFAULT NULL,
+  caller_cseq CHAR(11) NOT NULL,
+  callee_cseq CHAR(11) NOT NULL,
+  caller_ping_cseq INT(11) UNSIGNED NOT NULL,
+  callee_ping_cseq INT(11) UNSIGNED NOT NULL,
+  caller_route_set TEXT(512),
+  callee_route_set TEXT(512),
+  caller_contact CHAR(255),
+  callee_contact CHAR(255),
+  caller_sock CHAR(64) NOT NULL,
+  callee_sock CHAR(64) NOT NULL,
+  state INT(10) UNSIGNED NOT NULL,
+  start_time INT(10) UNSIGNED NOT NULL,
+  timeout INT(10) UNSIGNED NOT NULL,
+  vars BLOB(4096) DEFAULT NULL,
+  profiles TEXT(512) DEFAULT NULL,
+  script_flags CHAR(255) DEFAULT NULL,
+  module_flags INT(10) UNSIGNED DEFAULT 0 NOT NULL,
+  flags INT(10) UNSIGNED DEFAULT 0 NOT NULL,
+  rt_on_answer CHAR(64) DEFAULT NULL,
+  rt_on_timeout CHAR(64) DEFAULT NULL,
+  rt_on_hangup CHAR(64) DEFAULT NULL
+) ENGINE=InnoDB;
+DELETE FROM version WHERE table_name='dialog';
+INSERT INTO version (table_name, table_version) VALUES ('dialog', 12);
+SQL
+fi
+
+mysql --protocol=socket -uroot opensips -e "SELECT table_name, table_version FROM version WHERE table_name IN ('dialog','location','dr_gateways','address','acc');" || true
+
 bash "$SRC/deploy/patch-minimal-cfg-add-drouting.sh"
 
 # Final sanitize (safe regex only)
