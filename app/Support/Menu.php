@@ -80,6 +80,10 @@ final class Menu
                 ['Destination Policies', '/destination-policies', self::STAFF],
                 ['Simulator', '/routing/simulate', self::STAFF],
             ]],
+            ['Stats', [
+                ['Users', '/stats/users', self::STAFF],
+                ['Carriers', '/stats/carriers', self::STAFF],
+            ]],
             ['Settings', [
                 ['Settings', '/settings', self::STAFF],
                 ['Firewall', '/settings/firewall', self::STAFF],

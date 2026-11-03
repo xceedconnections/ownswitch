@@ -30,6 +30,7 @@ use Ownswitch\Controllers\ResellerController;
 use Ownswitch\Controllers\RoutingController;
 use Ownswitch\Controllers\SettingsController;
 use Ownswitch\Controllers\SipUserController;
+use Ownswitch\Controllers\StatsController;
 use Ownswitch\Controllers\StatementController;
 use Ownswitch\Controllers\SystemController;
 use Ownswitch\Controllers\TariffController;
@@ -226,6 +227,9 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
 
     // Settings (includes kill switch, CPS/concurrent caps, failover SIP codes, tax)
     $r->get('/system/status', [new SystemController(), 'status'], [$STAFF]);
+    $stats = new StatsController();
+    $r->get('/stats/users', [$stats, 'users'], [$STAFF]);
+    $r->get('/stats/carriers', [$stats, 'carriers'], [$STAFF]);
     $settings = new SettingsController();
     $r->get('/settings', [$settings, 'edit'], [$STAFF]);
     $r->post('/settings', [$settings, 'update'], [$STAFF]);
