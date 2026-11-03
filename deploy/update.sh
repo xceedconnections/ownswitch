@@ -50,6 +50,9 @@ echo "== 2/2 OpenSIPS config + health (stages 50,99) =="
 if [[ -f /etc/ownswitch/install.conf ]]; then
   export OWNSWITCH_CONFIG=/etc/ownswitch/install.conf
 fi
+# Skip apt on routine updates (OpenSIPS packages already present). Force with:
+#   OWNSWITCH_FORCE_APT=1 sudo bash deploy/update.sh
+export OWNSWITCH_SKIP_APT="${OWNSWITCH_SKIP_APT:-1}"
 cd "$SRC"
 bash "$SRC/deploy/install.sh" --yes --only 50,99
 

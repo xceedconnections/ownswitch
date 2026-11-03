@@ -4,33 +4,43 @@
 set -Eeuo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
 stage_init "50_opensips"
+log_info "OpenSIPS stage starting (apt skip when already installed)…"
 
 OPENSIPS_KEYRING="/usr/share/keyrings/opensips-org.gpg"
 OPENSIPS_LIST="/etc/apt/sources.list.d/opensips.list"
 
 # ---------------------------------------------------------------------------
-# 1. Repository (documented at https://apt.opensips.org/)
-# ---------------------------------------------------------------------------
-if [[ ! -s "${OPENSIPS_KEYRING}" ]]; then
-  download "https://apt.opensips.org/opensips-org.gpg" "${OPENSIPS_KEYRING}"
-  chmod 0644 "${OPENSIPS_KEYRING}"
-  note_change "installed OpenSIPS apt key"
-fi
-list_line="deb [signed-by=${OPENSIPS_KEYRING}] https://apt.opensips.org ${OS_CODENAME} ${OPENSIPS_VERSION_SERIES}-releases"
-if [[ "$(cat "${OPENSIPS_LIST}" 2>/dev/null || true)" != "${list_line}" ]]; then
-  printf '%s\n' "${list_line}" >"${OPENSIPS_LIST}"
-  note_change "wrote ${OPENSIPS_LIST}"
-  apt_update
-fi
-
-# ---------------------------------------------------------------------------
-# 2. Packages
+# 1. Repository + packages
+# On routine updates OpenSIPS is already installed — skip apt (avoids silent
+# hangs on unattended-upgrades / dpkg lock). Set OWNSWITCH_FORCE_APT=1 to reinstall.
 # ---------------------------------------------------------------------------
 fresh_install=0; pkg_installed opensips || fresh_install=1
-(( fresh_install )) && apt_update || true
-apt_install opensips opensips-mysql-module opensips-cgrates-module
-# nice-to-have modules (names differ slightly between releases, so failures only warn)
-apt_install_optional opensips-http-modules opensips-restclient-module opensips-json-module opensips-cli opensips-nathelper-module
+skip_apt=0
+if is_true "${OWNSWITCH_SKIP_APT:-0}"; then
+  skip_apt=1
+elif (( ! fresh_install )) && ! is_true "${OWNSWITCH_FORCE_APT:-0}"; then
+  skip_apt=1
+fi
+
+if (( skip_apt )); then
+  log_info "OpenSIPS already installed — skipping apt (set OWNSWITCH_FORCE_APT=1 to force)"
+else
+  if [[ ! -s "${OPENSIPS_KEYRING}" ]]; then
+    download "https://apt.opensips.org/opensips-org.gpg" "${OPENSIPS_KEYRING}"
+    chmod 0644 "${OPENSIPS_KEYRING}"
+    note_change "installed OpenSIPS apt key"
+  fi
+  list_line="deb [signed-by=${OPENSIPS_KEYRING}] https://apt.opensips.org ${OS_CODENAME} ${OPENSIPS_VERSION_SERIES}-releases"
+  if [[ "$(cat "${OPENSIPS_LIST}" 2>/dev/null || true)" != "${list_line}" ]]; then
+    printf '%s\n' "${list_line}" >"${OPENSIPS_LIST}"
+    note_change "wrote ${OPENSIPS_LIST}"
+    apt_update
+  fi
+  (( fresh_install )) && apt_update || true
+  apt_install opensips opensips-mysql-module opensips-cgrates-module
+  # nice-to-have modules (names differ slightly between releases, so failures only warn)
+  apt_install_optional opensips-http-modules opensips-restclient-module opensips-json-module opensips-cli opensips-nathelper-module
+fi
 
 installed="$(dpkg-query -W -f='${Version}' opensips 2>/dev/null || true)"
 [[ "$installed" == ${OPENSIPS_VERSION_SERIES}.* ]] || die "OpenSIPS ${OPENSIPS_VERSION_SERIES}.x expected, got '${installed}'"
@@ -113,7 +123,11 @@ for mod in auth_db usrloc dialog permissions drouting dispatcher rtpengine dialp
   apply_schema_once "$mod"
 done
 # Outbound REGISTER to providers (optional but needed for auth_mode=register trunks)
-if apt_install_optional opensips-uac-module 2>/dev/null || apt-get install -y opensips-uac-module 2>/dev/null; then
+if (( ! skip_apt )); then
+  apt_install_optional opensips-uac-module || true
+fi
+if pkg_installed opensips-uac-module || [[ -f /usr/lib/opensips/modules/uac_registrant.so ]] \
+  || find /usr/lib -name 'uac_registrant.so' -path '*opensips*' 2>/dev/null | grep -q .; then
   apply_schema_once uac_registrant || apply_schema_once uac || true
   note_change "opensips-uac-module present"
 else
@@ -164,7 +178,9 @@ else
 fi
 
 # Prefer installing UAC so Register-mode trunks can outbound REGISTER to vendors (Magnus).
-apt_install_optional opensips-uac-module || true
+if (( ! skip_apt )); then
+  apt_install_optional opensips-uac-module || true
+fi
 if [[ -f "${mod_dir}/uac_registrant.so" ]]; then
   export OPENSIPS_UAC_BLOCK="loadmodule \"uac_registrant.so\"
 modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
@@ -195,7 +211,9 @@ else
 fi
 
 # DID aliases (alias_db) — package often ships with opensips-mysql-module / alias_db.so
-apt_install_optional opensips-alias-db-module 2>/dev/null || true
+if (( ! skip_apt )); then
+  apt_install_optional opensips-alias-db-module 2>/dev/null || true
+fi
 if [[ -f "${mod_dir}/alias_db.so" ]]; then
   export OPENSIPS_ALIAS_DB_BLOCK="loadmodule \"alias_db.so\"
 modparam(\"alias_db\", \"db_url\", \"${OPENSIPS_DB_URL}\")"

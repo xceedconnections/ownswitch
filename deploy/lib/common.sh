@@ -372,9 +372,39 @@ ensure_line() { # file line   (append if exact line absent)
 # ---------------------------------------------------------------------------
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
-APT_OPTS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600)
+# Keep lock waits short and visible — long silent DPkg::Lock::Timeout looks like a hang.
+APT_LOCK_TIMEOUT="${APT_LOCK_TIMEOUT:-90}"
+APT_OPTS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}")
 
-apt_update() { apt-get update -o DPkg::Lock::Timeout=600 -qq; }
+# Wait for dpkg/apt locks with progress (unattended-upgrades often holds them on Ubuntu 24.04).
+apt_wait_lock() {
+  local i holder
+  for ((i = 0; i < 120; i++)); do
+    if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+      && ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1 \
+      && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+      return 0
+    fi
+    if (( i == 0 || i % 5 == 0 )); then
+      holder="$(fuser -v /var/lib/dpkg/lock-frontend 2>&1 | tr '\n' ' ' | sed 's/  */ /g' || true)"
+      log_info "waiting for apt/dpkg lock… ${holder:-still held}"
+    fi
+    # Soft-stop unattended-upgrades so updates do not sit for tens of minutes
+    if (( i == 3 )); then
+      systemctl stop unattended-upgrades.service 2>/dev/null || true
+    fi
+    sleep 2
+  done
+  log_warn "apt/dpkg lock still held after ~4 minutes — continuing; apt may fail"
+  return 0
+}
+
+apt_update() {
+  log_info "apt-get update…"
+  apt_wait_lock
+  apt-get update -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" -qq
+  log_ok "apt-get update done"
+}
 
 pkg_installed() {
   [[ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null || true)" == *"install ok installed"* ]]
@@ -385,17 +415,24 @@ apt_install() { # packages... (installs only the ones that are missing)
   for p in "$@"; do pkg_installed "$p" || missing+=("$p"); done
   if (( ${#missing[@]} )); then
     log_info "apt install: ${missing[*]}"
+    apt_wait_lock
     apt-get install "${APT_OPTS[@]}" --no-install-recommends "${missing[@]}"
     note_change "installed packages: ${missing[*]}"
+  else
+    log_info "apt packages already installed: $*"
   fi
 }
 
 apt_install_optional() { # packages... (each tried separately, failures only warn)
-  local p
-  for p in "$@"; do
-    pkg_installed "$p" && continue
+  local p need=()
+  for p in "$@"; do pkg_installed "$p" || need+=("$p"); done
+  ((${#need[@]})) || return 0
+  apt_wait_lock
+  for p in "${need[@]}"; do
+    log_info "optional apt: trying ${p}…"
     if apt-get install "${APT_OPTS[@]}" --no-install-recommends "$p" >/dev/null 2>&1; then
       note_change "installed optional package ${p}"
+      log_ok "optional package ${p}"
     else
       log_warn "optional package not installed: ${p}"
     fi
