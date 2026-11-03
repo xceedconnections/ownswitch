@@ -66,15 +66,27 @@ route[apply_outbound_cid] {
 }
 '''
 
+def replace_route(src: str, name: str, body: str) -> str:
+    key = f"route[{name}]"
+    start = src.find(key)
+    if start < 0:
+        return src.rstrip() + "\n\n" + body + "\n"
+    brace = src.find("{", start)
+    depth = 0
+    i = brace
+    while i < len(src):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[:start] + body.rstrip() + "\n" + src[i + 1 :]
+        i += 1
+    raise SystemExit(f"unbalanced braces in {key}")
+
 if "route[apply_outbound_cid]" in text:
-    text = re.sub(
-        r'route\[apply_outbound_cid\]\s*\{(?:[^{}]|\{[^{}]*\})*\}',
-        new_route.strip(),
-        text,
-        count=1,
-        flags=re.S,
-    )
-    print("replaced route[apply_outbound_cid]")
+    text = replace_route(text, "apply_outbound_cid", new_route.strip())
+    print("replaced route[apply_outbound_cid] (brace-aware)")
 else:
     text = text.rstrip() + "\n" + new_route
     print("appended route[apply_outbound_cid]")
