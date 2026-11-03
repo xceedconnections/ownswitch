@@ -7,7 +7,10 @@ namespace Ownswitch\Services\Reports;
 use Ownswitch\Support\TenantScope;
 use PDO;
 
-/** Revenue / cost / margin from settled CDRs. Decimal sums are done by the DB (exact) and bcmath. */
+/**
+ * Revenue / cost / margin from settled, answered CDRs only.
+ * Failed / unrated / demo legs are counted in "Calls" but do not affect money columns.
+ */
 final class FinancialReportService
 {
     private const GROUPS = ['day' => 'DATE(c.setup_at)', 'customer' => 'c.customer_id', 'carrier' => 'c.carrier_id', 'currency' => 'c.currency'];
@@ -32,35 +35,81 @@ final class FinancialReportService
             'carrier'  => 'COALESCE(ca.name, \'(none)\')',
             default    => "COALESCE(CAST({$expr} AS CHAR), '-')",
         };
+
+        // Money only from settled answered calls (same gate as ledger post)
+        $billed = "c.settlement_status = 'settled' AND c.disposition = 'ANSWERED' AND c.duration_actual > 0 AND IFNULL(c.is_demo, 0) = 0";
+
         $st = $this->pdo->prepare(
-            "SELECT {$name} AS label, c.currency AS currency, COUNT(*) AS calls,
-                SUM(CASE WHEN c.settlement_status = 'settled' AND c.duration_actual > 0 THEN 1 ELSE 0 END) AS billed_calls,
-                COALESCE(SUM(c.duration_billable_customer),0) AS billable_seconds,
-                COALESCE(SUM(c.customer_charge),0) AS revenue, COALESCE(SUM(c.carrier_cost),0) AS cost, COALESCE(SUM(c.gross_margin),0) AS margin
-             FROM cdrs c LEFT JOIN customers cu ON cu.id = c.customer_id LEFT JOIN carriers ca ON ca.id = c.carrier_id
-             WHERE ({$tw}) AND c.setup_at >= ? AND c.setup_at < ?
-             GROUP BY label, c.currency ORDER BY label LIMIT 1000"
+            "SELECT {$name} AS label,
+                COALESCE(c.currency, '—') AS currency,
+                COUNT(*) AS calls,
+                SUM(CASE WHEN {$billed} THEN 1 ELSE 0 END) AS billed_calls,
+                COALESCE(SUM(CASE WHEN {$billed} THEN c.duration_billable_customer ELSE 0 END), 0) AS billable_seconds,
+                COALESCE(SUM(CASE WHEN {$billed} THEN c.customer_charge ELSE 0 END), 0) AS revenue,
+                COALESCE(SUM(CASE WHEN {$billed} THEN c.carrier_cost ELSE 0 END), 0) AS cost
+             FROM cdrs c
+             LEFT JOIN customers cu ON cu.id = c.customer_id
+             LEFT JOIN carriers ca ON ca.id = c.carrier_id
+             WHERE ({$tw})
+               AND c.setup_at >= ? AND c.setup_at < ?
+               AND IFNULL(c.is_demo, 0) = 0
+             GROUP BY label, c.currency
+             ORDER BY label
+             LIMIT 1000"
         );
         $st->execute([...$tp, $from . ' 00:00:00', (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00')]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
-        $tot = ['calls' => '0', 'billed_calls' => '0', 'billable_seconds' => '0', 'revenue' => '0', 'cost' => '0', 'margin' => '0'];
+        $tot = [
+            'calls' => '0',
+            'billed_calls' => '0',
+            'billable_seconds' => '0',
+            'revenue' => '0.000000',
+            'cost' => '0.000000',
+            'margin' => '0.000000',
+        ];
         $currencies = [];
         foreach ($rows as &$r) {
-            $r['margin_pct'] = bccomp((string) $r['revenue'], '0', 6) > 0 ? bcdiv(bcmul((string) $r['margin'], '100', 8), (string) $r['revenue'], 2) : '0.00';
+            $rev = $this->dec6((string) $r['revenue']);
+            $cost = $this->dec6((string) $r['cost']);
+            $margin = bcsub($rev, $cost, 6);
+            $r['revenue'] = $rev;
+            $r['cost'] = $cost;
+            $r['margin'] = $margin;
+            $r['calls'] = (string) (int) $r['calls'];
+            $r['billed_calls'] = (string) (int) $r['billed_calls'];
+            $r['billable_seconds'] = (string) (int) $r['billable_seconds'];
+            $r['margin_pct'] = bccomp($rev, '0', 6) > 0
+                ? bcdiv(bcmul($margin, '100', 8), $rev, 2)
+                : (bccomp($cost, '0', 6) > 0 ? '-100.00' : '0.00');
+
             if (!$showCost) {
                 unset($r['cost'], $r['margin'], $r['margin_pct']);
             }
-            foreach ($tot as $k => $_) {
-                if (isset($r[$k])) {
-                    $tot[$k] = bcadd($tot[$k], (string) $r[$k], 6);
-                }
-            }
+            $tot['calls'] = (string) ((int) $tot['calls'] + (int) $r['calls']);
+            $tot['billed_calls'] = (string) ((int) $tot['billed_calls'] + (int) $r['billed_calls']);
+            $tot['billable_seconds'] = (string) ((int) $tot['billable_seconds'] + (int) $r['billable_seconds']);
+            $tot['revenue'] = bcadd($tot['revenue'], $rev, 6);
+            $tot['cost'] = bcadd($tot['cost'], $cost, 6);
             $currencies[(string) $r['currency']] = true;
         }
         unset($r);
-        $tot['currencies'] = implode(',', array_keys($currencies));   // totals are only meaningful when a single currency
-        $tot['margin_pct'] = bccomp($tot['revenue'], '0', 6) > 0 ? bcdiv(bcmul($tot['margin'], '100', 8), $tot['revenue'], 2) : '0.00';
+
+        $tot['margin'] = bcsub($tot['revenue'], $tot['cost'], 6);
+        $tot['currencies'] = implode(',', array_keys($currencies));
+        $tot['margin_pct'] = bccomp($tot['revenue'], '0', 6) > 0
+            ? bcdiv(bcmul($tot['margin'], '100', 8), $tot['revenue'], 2)
+            : (bccomp($tot['cost'], '0', 6) > 0 ? '-100.00' : '0.00');
+
         return ['rows' => $rows, 'totals' => $tot, 'show_cost' => $showCost];
+    }
+
+    private function dec6(string $v): string
+    {
+        $v = trim($v);
+        if ($v === '' || !preg_match('/^-?\d+(\.\d+)?$/', $v)) {
+            return '0.000000';
+        }
+        return bcadd($v, '0', 6);
     }
 }
