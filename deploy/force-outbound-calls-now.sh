@@ -17,17 +17,64 @@ git reset --hard origin/main
 
 chattr -i "$CFG" 2>/dev/null || true
 
-echo "======== BEFORE (must show User not registered OR missing do_routing) ========"
-grep -nE 'do_routing|User not registered|lookup\("location"\)' "$CFG" | head -n 40 || true
+echo "======== BEFORE ========"
+grep -nE 'do_routing|User not registered|gw_attrs_avp|lookup\("location"\)' "$CFG" | head -n 40 || true
+
+echo "======== Sanitize OpenSIPS 3.6 drouting (drop removed gw_attrs_avp) ========"
+python3 - "$CFG" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8", errors="replace").read()
+orig = text
+# Removed years ago — causes CRITICAL parse error on 3.x
+text = re.sub(
+    r'^[ \t]*modparam\(\s*"drouting"\s*,\s*"gw_attrs_avp"\s*,\s*[^)]+\)\s*\n?',
+    "",
+    text,
+    flags=re.M,
+)
+# Prefer attrs via do_routing 5th argument
+text = re.sub(
+    r'do_routing\(\s*"1"\s*\)',
+    'do_routing("1", , , , $avp(dr_gw_attrs))',
+    text,
+)
+text = re.sub(
+    r"do_routing\(\s*'1'\s*\)",
+    'do_routing("1", , , , $avp(dr_gw_attrs))',
+    text,
+)
+# Already 5-arg form is fine; avoid double-patching
+if text != orig:
+    open(path, "w", encoding="utf-8").write(text)
+    print("sanitized", path)
+else:
+    print("no gw_attrs_avp / do_routing() changes needed")
+PY
 
 echo "======== Ensure packages / tables ========"
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y opensips-mysql-dbschema opensips-mysql-module \
   opensips-auth-modules opensips-nathelper-module 2>/dev/null || true
-# optional billing / media
 apt-get install -y opensips-cgrates-module 2>/dev/null || true
 
 bash "$SRC/deploy/patch-minimal-cfg-add-drouting.sh"
+
+# Sanitize again in case patch re-introduced anything
+python3 - "$CFG" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8", errors="replace").read()
+text2 = re.sub(
+    r'^[ \t]*modparam\(\s*"drouting"\s*,\s*"gw_attrs_avp"\s*,\s*[^)]+\)\s*\n?',
+    "",
+    text,
+    flags=re.M,
+)
+if text2 != text:
+    open(path, "w", encoding="utf-8").write(text2)
+    print("removed leftover gw_attrs_avp")
+PY
 
 echo "======== AFTER (must have do_routing, must NOT have User not registered) ========"
 grep -nE 'do_routing|User not registered|lookup\("location"\)' "$CFG" | head -n 40 || true

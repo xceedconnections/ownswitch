@@ -34,7 +34,7 @@ def ensure_mod(src, name, block_after=""):
 extras = [
     ("dialog.so", f'modparam("dialog", "db_url", "{db_url}")\nmodparam("dialog", "db_mode", 2)\nmodparam("dialog", "default_timeout", 7200)\n'),
     ("permissions.so", f'modparam("permissions", "db_url", "{db_url}")\n'),
-    ("drouting.so", f'modparam("drouting", "db_url", "{db_url}")\nmodparam("drouting", "gw_attrs_avp", \'$avp(dr_gw_attrs)\')\n'),
+    ("drouting.so", f'modparam("drouting", "db_url", "{db_url}")\n'),
     ("rtpengine.so", 'modparam("rtpengine", "rtpengine_sock", "udp:127.0.0.1:22222")\n'),
     ("acc.so", f'modparam("acc", "db_url", "{db_url}")\nmodparam("acc", "early_media", 0)\nmodparam("acc", "report_cancels", 1)\n'),
 ]
@@ -78,7 +78,7 @@ replacement = (
     '		do_accounting("db", "cdr|missed|failed");\n'
     '		rtpengine_manage();\n'
     '		t_on_failure("carrier_failover");\n'
-    '		if (!do_routing("1")) {\n'
+    '		if (!do_routing("1", , , , $avp(dr_gw_attrs))) {\n'
     '			xlog("L_WARN", "no route for $rU from $fU — sync trunks/routes\\n");\n'
     '			send_reply(503, "No Route");\n'
     '			exit;\n'

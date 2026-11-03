@@ -114,8 +114,7 @@ modparam("acc", "db_extra", "src_user=$fU;dst_user=$rU;src_ip=$si")
 # dynamic routing (carrier selection / failover) - data loaded from the opensips DB
 loadmodule "drouting.so"
 modparam("drouting", "db_url", "@@OPENSIPS_DB_URL@@")
-# Gateway attrs (from_user / from_domain / CID rewrite) pushed by Ownswitch trunk sync
-modparam("drouting", "gw_attrs_avp", '$avp(dr_gw_attrs)')
+# OpenSIPS 3.x: no gw_attrs_avp modparam — pass $avp(dr_gw_attrs) as do_routing() 5th arg
 
 # DID → SIP user aliases (Ownswitch DID assignments)
 @@OPENSIPS_ALIAS_DB_BLOCK@@
@@ -284,8 +283,8 @@ route {
 	t_on_failure("carrier_failover");
 
 	# Group "1" is filled by Ownswitch (php bin/sync-opensips-trunks.php / trunk+route save)
-	# strip + pri_prefix are applied by drouting from dr_gateways
-	if (!do_routing("1")) {
+	# 5th arg = gw attrs pvar (fu=/fd=/rstrip= from trunk sync). strip/pri_prefix via DR.
+	if (!do_routing("1", , , , $avp(dr_gw_attrs))) {
 		xlog("L_WARN", "no route for $rU (from $fU) — sync trunks/routes to OpenSIPS\n");
 		acc_db_request("503 No Route", "acc");
 		send_reply(503, "No Route");
