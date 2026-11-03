@@ -47,6 +47,33 @@ echo "Port ${PORT} is free."
 
 echo "======== B) Packages (auth.so is REQUIRED) ========"
 export DEBIAN_FRONTEND=noninteractive
+
+wait_for_apt() {
+  local i
+  echo "Waiting for apt/dpkg lock (unattended-upgrades)..."
+  for i in $(seq 1 180); do
+    if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+      && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1 \
+      && ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
+      # also ensure no unattended-upgr / apt-get running
+      if ! pgrep -x unattended-upgr >/dev/null 2>&1 \
+        && ! pgrep -x apt-get >/dev/null 2>&1 \
+        && ! pgrep -x dpkg >/dev/null 2>&1; then
+        echo "apt lock free after ${i}s"
+        return 0
+      fi
+    fi
+    if (( i % 15 == 0 )); then
+      echo "  still waiting... ${i}s (pid: $(pgrep -a unattended-upgr || pgrep -a apt-get || true))"
+    fi
+    sleep 1
+  done
+  echo "WARN: apt still busy after 180s — will try anyway / use existing modules"
+  return 1
+}
+
+wait_for_apt || true
+
 # Ensure apt.opensips.org present (stage 50 style)
 if [[ ! -f /etc/apt/sources.list.d/opensips.list ]]; then
   curl -fsSL https://apt.opensips.org/opensips-org.gpg -o /usr/share/keyrings/opensips-org.gpg || true
@@ -57,7 +84,7 @@ fi
 apt-get update -qq || true
 apt-get install -y opensips opensips-auth-modules opensips-mysql-module \
   opensips-nathelper-module opensips-cli || true
-apt-get install -y opensips-auth-modules
+apt-get install -y opensips-auth-modules || true
 
 MOD_DIR="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -1)")"
 [[ -d "$MOD_DIR" ]] || { echo "FATAL: modules dir missing"; exit 1; }
