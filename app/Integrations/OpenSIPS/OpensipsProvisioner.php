@@ -75,7 +75,8 @@ final class OpensipsProvisioner
     }
 
     /**
-     * @param array<string,mixed>|null $account Ownswitch sip_accounts row (CallerID → rpid, etc.)
+     * @param array<string,mixed>|null $account Ownswitch sip_accounts row.
+     *        Pass `_plain_password` so OpenSIPS calculate_ha1=1 can auth any Domain (FQDN/IP).
      */
     public function upsertSubscriber(string $username, string $domain, string $ha1, string $ha1b, ?array $account = null): void
     {
@@ -84,16 +85,38 @@ final class OpensipsProvisioner
             throw new \RuntimeException('opensips.subscriber table missing — re-run deploy stage 50 / OpenSIPS schema');
         }
         $cols = $this->columns('subscriber');
-        $st = $db->prepare('SELECT id FROM subscriber WHERE username = ? AND domain = ?');
-        $st->execute([$username, $domain]);
+        // Match username only for lookup when multiple domain rows may exist historically
+        $st = $db->prepare('SELECT id FROM subscriber WHERE username = ? ORDER BY id ASC LIMIT 1');
+        $st->execute([$username]);
         $id = $st->fetchColumn();
 
-        $set = ['ha1' => $ha1];
+        $set = [
+            'domain' => $domain,
+            'ha1' => $ha1,
+        ];
         if (in_array('ha1b', $cols, true)) {
             $set['ha1b'] = $ha1b;
         }
+        // Plaintext for calculate_ha1=1 (Eyebeam/Asterisk/FS/VOS with Domain=IP or FQDN)
         if (in_array('password', $cols, true)) {
-            $set['password'] = '';
+            $plain = '';
+            if ($account !== null) {
+                $plain = (string) ($account['_plain_password'] ?? '');
+                if ($plain === '' && !empty($account['password_enc'])) {
+                    try {
+                        $plain = Crypto::decrypt((string) $account['password_enc']);
+                    } catch (\Throwable) {
+                        $plain = '';
+                    }
+                }
+            }
+            if ($plain !== '') {
+                $set['password'] = $plain;
+            } elseif ($id) {
+                // keep existing opensips password on updates without a known secret
+            } else {
+                $set['password'] = '';
+            }
         }
         if ($account !== null && in_array('rpid', $cols, true)) {
             $cid = trim((string) ($account['caller_id'] ?? ''));
@@ -174,11 +197,13 @@ final class OpensipsProvisioner
     {
         $db = $this->db();
         if ($this->tableExists('subscriber')) {
-            $db->prepare('DELETE FROM subscriber WHERE username = ? AND domain = ?')->execute([$username, $domain]);
+            // use_domain=0 — remove all domain rows for this username
+            $db->prepare('DELETE FROM subscriber WHERE username = ?')->execute([$username]);
         }
         if ($this->tableExists('address')) {
             $db->prepare('DELETE FROM address WHERE grp = ? AND context_info = ?')->execute([self::GRP_CUSTOMER, 'sip:' . $username]);
         }
+        unset($domain);
     }
 
     public function upsertAddress(int $group, string $ip, int $mask, int $port, string $proto, string $context = ''): void
@@ -754,10 +779,14 @@ final class OpensipsProvisioner
     public function registeredContacts(): array
     {
         $fromMi = $this->registeredContactsFromMi();
-        if ($fromMi !== []) {
-            return $fromMi;
+        $fromSql = $this->registeredContactsFromSql();
+        // Merge — MI is authoritative when present; SQL fills gaps (write-through / no MI)
+        foreach ($fromSql as $u => $info) {
+            if (!isset($fromMi[$u])) {
+                $fromMi[$u] = $info;
+            }
         }
-        return $this->registeredContactsFromSql();
+        return $fromMi;
     }
 
     /**
@@ -805,7 +834,8 @@ final class OpensipsProvisioner
                             $expTs = $ts;
                         }
                     }
-                    if ($expTs >= time() && !isset($out[$u])) {
+                    // Accept contacts even when expires parsing is ambiguous (portal status)
+                    if (!isset($out[$u]) && (string) $contact !== '') {
                         $out[$u] = [
                             'contact' => (string) $contact,
                             'received' => is_string($received) ? $received : '',
@@ -844,34 +874,50 @@ final class OpensipsProvisioner
         }
         $hasRecv = in_array('received', $cols, true);
         $hasExp = in_array('expires', $cols, true);
+        // Prefer non-expired rows; still show row if expires column missing/odd (tz skew)
         $sql = 'SELECT username, contact'
             . ($hasRecv ? ', received' : '')
             . ($hasExp ? ', expires' : '')
             . ' FROM location';
+        if ($hasExp) {
+            $sql .= ' WHERE expires IS NULL OR expires > UTC_TIMESTAMP() - INTERVAL 1 MINUTE'
+                . ' OR expires > FROM_UNIXTIME(UNIX_TIMESTAMP() - 60)';
+        }
         $out = [];
-        foreach ($this->db()->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+        try {
+            $rows = $this->db()->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable) {
+            $rows = $this->db()->query(
+                'SELECT username, contact'
+                . ($hasRecv ? ', received' : '')
+                . ($hasExp ? ', expires' : '')
+                . ' FROM location'
+            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+        foreach ($rows as $row) {
             $u = strtolower((string) ($row['username'] ?? ''));
-            if ($u === '') {
+            if ($u === '' || isset($out[$u])) {
                 continue;
             }
-            $expires = time() + 60;
+            $contact = (string) ($row['contact'] ?? '');
+            if ($contact === '') {
+                continue;
+            }
+            $expires = time() + 3600;
             if ($hasExp) {
                 $raw = $row['expires'] ?? null;
                 if (is_numeric($raw)) {
                     $expires = (int) $raw;
                 } elseif (is_string($raw) && $raw !== '') {
-                    $ts = strtotime($raw);
-                    $expires = $ts !== false ? $ts : time() + 60;
+                    $ts = strtotime($raw . ' UTC');
+                    if ($ts === false) {
+                        $ts = strtotime($raw);
+                    }
+                    $expires = $ts !== false ? $ts : time() + 3600;
                 }
             }
-            if ($expires > 0 && $expires < time()) {
-                continue;
-            }
-            if (isset($out[$u])) {
-                continue;
-            }
             $out[$u] = [
-                'contact' => (string) ($row['contact'] ?? ''),
+                'contact' => $contact,
                 'received' => $hasRecv ? (string) ($row['received'] ?? '') : '',
                 'expires' => $expires,
             ];

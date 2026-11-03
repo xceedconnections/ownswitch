@@ -10,6 +10,7 @@ use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\SipAccountRepository;
 use Ownswitch\Services\Sip\SipOptionsProbe;
+use Ownswitch\Support\Crypto;
 use Ownswitch\Support\MediaPolicy;
 use Ownswitch\Support\SipPeerOptions;
 
@@ -321,6 +322,11 @@ final class SipUserController extends CrudController
             $data['ha1b'] = $ha1b;
             $data['password_changed_at'] = gmdate('Y-m-d H:i:s');
             $this->plainPassword = (string) $pw;
+            try {
+                $data['password_enc'] = Crypto::encrypt((string) $pw);
+            } catch (\Throwable $e) {
+                throw new \DomainException('Could not store SIP password: ' . $e->getMessage());
+            }
         }
         if (array_key_exists('media_policy', $data)) {
             $data['media_policy'] = MediaPolicy::normalizeStored(
@@ -374,6 +380,9 @@ final class SipUserController extends CrudController
                         );
                         // record stays record for OpenSIPS rtpengine recording path
                         $row['_effective_media'] = $effective;
+                        if ($this->plainPassword !== null) {
+                            $row['_plain_password'] = $this->plainPassword;
+                        }
                         $prov->upsertSubscriber(
                             (string) $row['username'],
                             (string) $row['domain'],
@@ -407,10 +416,15 @@ final class SipUserController extends CrudController
             if ($port <= 0) {
                 $port = 5060;
             }
-            return "SIP user saved. Eyebeam/softphone: User={$row['username']}  Pass={$this->plainPassword}  "
-                . "Domain={$realm}  (or {$proxy})  Auth realm={$realm}  "
-                . "Registrar/Outbound Proxy={$proxy}  Port={$port}  Transport=UDP. "
-                . "Important: Domain alone (without Proxy={$proxy}) often fails if DNS/Cloudflare points SIP at the web frontend — always set Proxy to the server public IP.";
+            return "SIP user saved. Softphone/PBX: User={$row['username']}  Pass={$this->plainPassword}  "
+                . "Domain={$realm} OR {$proxy}  Registrar/Proxy={$proxy} (recommended)  Port={$port}  UDP. "
+                . "Works with Eyebeam, Asterisk, FreeSWITCH, VOS3000, OpenSIPS peers — Domain may be FQDN or IP.";
+        }
+        if ($row && empty($row['password_enc'])) {
+            App::session()->flash(
+                'warning',
+                'Re-save this SIP user with a password once so OpenSIPS can accept Domain=FQDN and Domain=IP (plaintext digest).'
+            );
         }
         return null;
     }

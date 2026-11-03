@@ -62,14 +62,13 @@ modparam("mi_fifo", "fifo_mode", 0660)
 loadmodule "auth.so"
 loadmodule "auth_db.so"
 modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
-modparam("auth_db", "calculate_ha1", 0)
-modparam("auth_db", "password_column", "ha1")
+# Plaintext password in subscriber.password → HA1 computed for whatever realm the
+# phone uses (FQDN, public IP, private IP). Required for Eyebeam/Asterisk/FS/VOS.
+modparam("auth_db", "calculate_ha1", 1)
+modparam("auth_db", "password_column", "password")
 # Load SIP Directmedia / DTMF pass / CallerID mode from subscriber into AVPs
 modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid")
-# Username-only match: softphones may put FQDN or server IP in Domain while
-# digest realm stays OWNSWITCH_DOMAIN (HA1). use_domain=1 breaks Domain=IP.
-# For Domain=FQDN REGISTER: set Outbound Proxy / Registrar to the server PUBLIC IP
-# (Cloudflare/DNS to the HTTP frontend will black-hole SIP).
+# Username-only (Domain field may be FQDN or IP on any softphone/PBX)
 modparam("auth_db", "use_domain", 0)
 
 loadmodule "usrloc.so"
@@ -180,10 +179,10 @@ route {
 
 	if (is_method("REGISTER")) {
 		xlog("L_INFO", "REGISTER from $si:$sp user=$tU@$td\n");
-		# Always challenge/verify with portal SIP realm (HA1). Domain field may be FQDN or IP.
-		if (!www_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
-			xlog("L_WARN", "REGISTER auth failed for $tU@$td realm=@@OWNSWITCH_DOMAIN@@ src=$si\n");
-			www_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
+		# Empty realm = use To-domain (FQDN or IP) so any softphone Domain works
+		if (!www_authorize("", "subscriber")) {
+			xlog("L_WARN", "REGISTER auth failed for $tU@$td src=$si\n");
+			www_challenge("", "auth");
 			exit;
 		}
 		@@OPENSIPS_NAT_REGISTER_BLOCK@@
@@ -191,7 +190,7 @@ route {
 			xlog("L_ERR", "REGISTER save() failed for $tU\n");
 			sl_reply_error();
 		}
-		xlog("L_INFO", "REGISTER OK $tU@$td from $si\n");
+		xlog("L_INFO", "REGISTER OK $tU@$td from $si contact saved\n");
 		exit;
 	}
 
@@ -201,16 +200,20 @@ route {
 	}
 
 	# ---- INVITE ----
-	# Carrier inbound only when source is carrier ACL and NOT also a customer IP ACL
-	# (overlap used to send softphone calls into lookup→404 Not Found)
-	if (check_source_address(2) && !check_source_address(1)) {
-		route(inbound_from_carrier);
-		exit;
-	}
-
+	# Customer IP ACL → skip digest. Carrier ACL → deliver only if local AOR exists;
+	# otherwise fall through to digest (fixes softphone 404 when IP is also a trunk).
 	if (!check_source_address(1)) {
-		if (!proxy_authorize("@@OWNSWITCH_DOMAIN@@", "subscriber")) {
-			proxy_challenge("@@OWNSWITCH_DOMAIN@@", "auth");
+		if (check_source_address(2)) {
+			@@OPENSIPS_ALIAS_LOOKUP@@
+			if (lookup("location")) {
+				route(inbound_from_carrier_deliver);
+				exit;
+			}
+			xlog("L_WARN", "carrier ACL but no AOR for $rU — customer digest path\n");
+		}
+		# Empty realm = From/To domain (FQDN or IP) for Asterisk/FS/VOS/Eyebeam
+		if (!proxy_authorize("", "subscriber")) {
+			proxy_challenge("", "auth");
 			exit;
 		}
 		consume_credentials();
@@ -279,17 +282,10 @@ route {
 	route(relay);
 }
 
-route[inbound_from_carrier] {
+# Called only after alias+lookup already succeeded for a carrier-sourced INVITE
+route[inbound_from_carrier_deliver] {
 	record_route();
 	create_dialog("B");
-	# Rewrite DID (R-URI user) → SIP username via dbaliases (no-op if alias_db not loaded)
-	@@OPENSIPS_ALIAS_LOOKUP@@
-	if (!lookup("location")) {
-		xlog("L_WARN", "inbound: no registration for $rU\n");
-		acc_db_request("404 Not Found", "acc");
-		send_reply(404, "Not Found");
-		exit;
-	}
 	do_accounting("db", "cdr|missed|failed");
 	$avp(os_media) = "relay";
 	route(apply_media);
