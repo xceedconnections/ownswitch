@@ -130,6 +130,9 @@ apt-get install -y opensips-mysql-dbschema opensips-mysql-module \
 apt-get install -y opensips-cgrates-module 2>/dev/null || true
 
 echo "======== Apply OpenSIPS MySQL schemas (dialog/drouting/acc/…) ========"
+# Stop flapping restarts while we fix DB
+systemctl stop opensips 2>/dev/null || true
+
 mysql --protocol=socket -uroot opensips -e "
 CREATE TABLE IF NOT EXISTS version (
   table_name CHAR(32) NOT NULL,
@@ -138,44 +141,38 @@ CREATE TABLE IF NOT EXISTS version (
 ) ENGINE=InnoDB;
 " 2>/dev/null || true
 
-apply_schema() {
-  local name="$1" tbl="$2" ver="$3"
-  local f
+# Prefer official packaged SQL (creates tables + version rows). Ignore dup errors.
+for name in dialog drouting permissions standard acc auth_db usrloc; do
   f=$(find /usr/share/opensips /usr/share/opensips-mysql-module /usr/share/doc \
-    -type f \( -name "${name}-create.sql" -o -name "*${name}*create*.sql" \) 2>/dev/null | head -1 || true)
-  local has_tbl=0 has_ver=0
-  mysql --protocol=socket -uroot -N opensips -e \
-    "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='${tbl}'" 2>/dev/null | grep -q 1 && has_tbl=1
-  mysql --protocol=socket -uroot -N opensips -e \
-    "SELECT 1 FROM version WHERE table_name='${tbl}'" 2>/dev/null | grep -q 1 && has_ver=1
-  if [[ "$has_tbl" -eq 1 && "$has_ver" -eq 1 ]]; then
-    echo "OK ${tbl} (+ version row)"
-    return 0
-  fi
+    -type f \( -name "${name}-create.sql" -o -iname "*${name}*create*.sql" \) 2>/dev/null | head -1 || true)
   if [[ -n "${f:-}" ]]; then
     echo "Applying $f"
-    # CREATE IF NOT EXISTS friendly: ignore duplicate errors
     mysql --protocol=socket -uroot opensips <"$f" 2>/dev/null || true
+  else
+    echo "WARN: no ${name}-create.sql on disk"
   fi
-  mysql --protocol=socket -uroot opensips -e \
-    "DELETE FROM version WHERE table_name='${tbl}';
-     INSERT INTO version (table_name, table_version) VALUES ('${tbl}', ${ver});" 2>/dev/null || true
-  if [[ "$has_tbl" -eq 0 ]]; then
-    echo "WARN: ${tbl} may still be missing — check package opensips-mysql-dbschema"
-  fi
-}
+done
 
-# Versions match OpenSIPS 3.6.x packaged schemas
-apply_schema dialog dialog 12
-apply_schema drouting dr_gateways 6 || true
-apply_schema permissions address 5 || true
-apply_schema standard acc 7 || true
+# Force version rows OpenSIPS 3.6.10 checks (even if tables already existed
+# and packaged INSERT was skipped as duplicate / never applied).
+mysql --protocol=socket -uroot opensips <<'SQL'
+DELETE FROM version WHERE table_name IN (
+  'dialog','dr_gateways','dr_rules','dr_carriers','dr_groups','dr_partitions',
+  'address','acc'
+);
+INSERT INTO version (table_name, table_version) VALUES
+  ('dialog', 12),
+  ('dr_gateways', 6),
+  ('dr_rules', 4),
+  ('dr_carriers', 3),
+  ('dr_groups', 2),
+  ('dr_partitions', 1),
+  ('address', 5),
+  ('acc', 7);
+SQL
 
-# Minimal dialog table if package SQL missing but version expected
-if ! mysql --protocol=socket -uroot -N opensips -e \
-  "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='dialog'" | grep -q 1; then
-  echo "Creating dialog table (fallback DDL, ver 12)"
-  mysql --protocol=socket -uroot opensips <<'SQL'
+# Fallback DDL when packaged schema files are absent
+mysql --protocol=socket -uroot opensips <<'SQL'
 CREATE TABLE IF NOT EXISTS dialog (
   dlg_id BIGINT(10) UNSIGNED PRIMARY KEY NOT NULL,
   callid CHAR(255) NOT NULL,
@@ -207,12 +204,60 @@ CREATE TABLE IF NOT EXISTS dialog (
   rt_on_timeout CHAR(64) DEFAULT NULL,
   rt_on_hangup CHAR(64) DEFAULT NULL
 ) ENGINE=InnoDB;
-DELETE FROM version WHERE table_name='dialog';
-INSERT INTO version (table_name, table_version) VALUES ('dialog', 12);
-SQL
-fi
 
-mysql --protocol=socket -uroot opensips -e "SELECT table_name, table_version FROM version WHERE table_name IN ('dialog','location','dr_gateways','address','acc');" || true
+CREATE TABLE IF NOT EXISTS dr_gateways (
+  id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  gwid CHAR(64) NOT NULL,
+  type INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  address CHAR(128) NOT NULL,
+  strip INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  pri_prefix CHAR(16) DEFAULT NULL,
+  attrs CHAR(255) DEFAULT NULL,
+  probe_mode INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  state INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  socket CHAR(128) DEFAULT NULL,
+  description CHAR(128) DEFAULT NULL,
+  CONSTRAINT dr_gw_idx UNIQUE (gwid)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS dr_rules (
+  ruleid INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  groupid CHAR(255) NOT NULL,
+  prefix CHAR(64) NOT NULL,
+  timerec CHAR(255) DEFAULT NULL,
+  priority INT(11) DEFAULT 0 NOT NULL,
+  routeid CHAR(255) DEFAULT NULL,
+  gwlist CHAR(255),
+  sort_alg CHAR(1) DEFAULT 'N' NOT NULL,
+  sort_profile INT(10) UNSIGNED DEFAULT NULL,
+  attrs CHAR(255) DEFAULT NULL,
+  description CHAR(128) DEFAULT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS dr_carriers (
+  id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  carrierid CHAR(64) NOT NULL,
+  gwlist CHAR(255) NOT NULL,
+  flags INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  sort_alg CHAR(1) DEFAULT 'N' NOT NULL,
+  state INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  attrs CHAR(255) DEFAULT NULL,
+  description CHAR(128) DEFAULT NULL,
+  CONSTRAINT dr_carrier_idx UNIQUE (carrierid)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS dr_groups (
+  id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  username CHAR(64) NOT NULL,
+  domain CHAR(128) DEFAULT NULL,
+  groupid INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  description CHAR(128) DEFAULT NULL
+) ENGINE=InnoDB;
+SQL
+
+echo "version table after seed:"
+mysql --protocol=socket -uroot opensips -e \
+  "SELECT table_name, table_version FROM version ORDER BY table_name;" || true
 
 bash "$SRC/deploy/patch-minimal-cfg-add-drouting.sh"
 
