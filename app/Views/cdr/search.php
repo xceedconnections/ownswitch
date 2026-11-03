@@ -1,14 +1,20 @@
 <?php
-/** @var array $result @var array $f @var array $customers @var array $carriers @var list<string> $dispositions @var bool $showCost @var array $query @var bool $failedOnly */
+/** @var array $result @var array $f @var array $customers @var array $carriers @var list<string> $dispositions @var bool $showCost @var array $query @var bool $failedOnly @var bool $canDelete */
 $failedOnly = !empty($failedOnly);
-$exportQs = '?' . http_build_query(array_filter($f, static fn ($v) => is_string($v) || is_int($v)));
+$canDelete = !empty($canDelete);
+$exportBase = array_filter($f, static fn ($v) => is_string($v) || is_int($v));
+$csvQs = http_build_query($exportBase);
+$xlsQs = http_build_query($exportBase + ['format' => 'excel']);
 ?>
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title"><?= $failedOnly ? 'Failed CDRs' : 'CDR Search' ?> <span class="os-count"><?= e($result['total']) ?></span></h1>
-        <p class="os-page-sub"><?= $failedOnly ? 'Non-answered calls (busy, cancel, fail, no answer)' : 'Filter and export call detail records' ?></p>
+        <p class="os-page-sub"><?= $failedOnly ? 'Non-answered calls (busy, cancel, fail, no answer)' : 'Filter, export, and manage call detail records' ?></p>
     </div>
-    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs/export' . $exportQs)) ?>"><i class="bi bi-download me-1"></i>Export CSV</a>
+    <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs/export' . ($csvQs !== '' ? '?' . $csvQs : ''))) ?>"><i class="bi bi-download me-1"></i>CSV</a>
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs/export?' . $xlsQs)) ?>"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+    </div>
 </div>
 
 <form method="get" action="<?= e(url('/cdrs')) ?>" class="os-toolbar mb-3">
@@ -45,10 +51,24 @@ $exportQs = '?' . http_build_query(array_filter($f, static fn ($v) => is_string(
 <?php if ($result['total'] === 0): ?>
     <div class="os-empty"><div class="os-empty-title">No calls match</div><div>No CDRs in this period for the selected filters.</div></div>
 <?php else: ?>
+    <form method="post" action="<?= e(url('/cdrs/delete')) ?>" id="cdr-bulk-form" data-confirm="Delete the selected CDRs? This cannot be undone.">
+        <?= csrf_field() ?>
+        <?php foreach ($f as $fk => $fv): if (is_string($fv) || is_int($fv)): ?>
+            <input type="hidden" name="<?= e((string) $fk) ?>" value="<?= e((string) $fv) ?>">
+        <?php endif; endforeach; ?>
+        <?php if ($canDelete): ?>
+        <div class="d-flex flex-wrap gap-2 align-items-center px-3 py-2 border-bottom">
+            <button type="submit" name="mode" value="selected" class="btn btn-outline-danger btn-sm" data-once>Delete selected</button>
+            <button type="submit" name="mode" value="filtered" class="btn btn-outline-danger btn-sm" data-confirm="Delete ALL CDRs matching the current filters?" data-once>Delete filtered</button>
+            <button type="submit" name="mode" value="all" class="btn btn-danger btn-sm" data-confirm="Delete ALL CDRs in the system? This cannot be undone." data-once>Delete all</button>
+            <span class="small text-muted ms-auto">Reports update after delete</span>
+        </div>
+        <?php endif; ?>
     <div class="table-responsive">
     <table class="table table-sm table-hover mb-0 os-table">
         <thead><tr>
-            <th>ID</th><th>Time (UTC)</th>
+            <?php if ($canDelete): ?><th style="width:2rem"><input type="checkbox" id="cdr-check-all" aria-label="Select all"></th><?php endif; ?>
+            <th>ID</th><th></th><th>Time (UTC)</th>
             <?php if ($customers): ?><th>Customer</th><?php endif; ?>
             <th>SIP</th><th>CallerID</th><th>Destination</th><th>Result</th><th>SIP code</th>
             <th class="os-num">Dur (s)</th><th class="os-num">Billable</th><th>I/S</th><th class="os-num">Charge</th>
@@ -57,14 +77,26 @@ $exportQs = '?' . http_build_query(array_filter($f, static fn ($v) => is_string(
         <tbody>
         <?php foreach ($result['rows'] as $c): ?>
             <tr>
+                <?php if ($canDelete): ?>
+                <td><input type="checkbox" form="cdr-bulk-form" name="ids[]" value="<?= e((string) $c['id']) ?>" class="cdr-row-check"></td>
+                <?php endif; ?>
                 <td><a href="<?= e(url('/cdrs/' . (int) $c['id'])) ?>" class="os-mono"><?= e($c['id']) ?></a><?= !empty($c['is_demo']) ? ' <span class="badge text-bg-warning">DEMO</span>' : '' ?></td>
+                <td>
+                    <?php if (!empty($c['has_sip_trace'])): ?>
+                        <a href="<?= e(url('/cdrs/' . (int) $c['id'])) ?>#sip-trace" class="text-decoration-none" title="SIP failover trace">
+                            <i class="bi bi-diagram-3"></i>
+                        </a>
+                    <?php else: ?>
+                        <span class="text-muted">—</span>
+                    <?php endif; ?>
+                </td>
                 <td class="os-mono"><?= e(substr((string) $c['setup_at'], 0, 19)) ?></td>
                 <?php if ($customers): ?><td><?= e($c['customer_name'] ?? '—') ?></td><?php endif; ?>
                 <td class="os-mono"><?= e($c['sip_username'] ?? '—') ?></td>
                 <td class="os-mono"><?= e($c['src'] ?? '—') ?></td>
                 <td class="os-mono"><?= e($c['dst_normalized']) ?></td>
                 <td><span class="badge text-bg-<?= $c['disposition'] === 'ANSWERED' ? 'success' : 'secondary' ?>"><?= e($c['disposition']) ?></span></td>
-                <td class="os-mono"><?= e($c['sip_response'] !== null && $c['sip_response'] !== '' ? $c['sip_response'] : '—') ?></td>
+                <td class="small" title="<?= e($c['sip_code_label'] ?? '') ?>"><?= e($c['sip_code_short'] ?? ($c['sip_response'] ?? '—')) ?></td>
                 <td class="os-num"><?= e($c['duration_actual']) ?></td>
                 <td class="os-num"><?= e($c['duration_billable_customer']) ?></td>
                 <td class="os-mono"><?= e($c['customer_initial'] ?? '—') ?>/<?= e($c['customer_subsequent'] ?? '—') ?></td>
@@ -79,6 +111,16 @@ $exportQs = '?' . http_build_query(array_filter($f, static fn ($v) => is_string(
         </tbody>
     </table>
     </div>
+    </form>
     <?php include __DIR__ . '/../partials/pagination.php'; ?>
 <?php endif; ?>
 </div>
+<script>
+(function () {
+    var all = document.getElementById('cdr-check-all');
+    if (!all) return;
+    all.addEventListener('change', function () {
+        document.querySelectorAll('.cdr-row-check').forEach(function (cb) { cb.checked = all.checked; });
+    });
+})();
+</script>

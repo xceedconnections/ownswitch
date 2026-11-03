@@ -1,30 +1,69 @@
-<?php /** @var list<array> $calls @var ?string $error @var int $count @var bool $canHangup */ ?>
+<?php
+/** @var list<array> $calls @var ?string $error @var int $count @var array $stats @var array $users @var string $filterUser @var bool $canHangup */
+?>
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title">Calls Online <span class="os-count"><?= e((string) $count) ?></span></h1>
-        <p class="os-page-sub">Live OpenSIPS dialogs · refreshes every 5s · hang up ends the dialog</p>
+        <p class="os-page-sub">Live dialogs · Trying / Ringing / Connected · auto-refresh 5s</p>
     </div>
-    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/calls-online')) ?>"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</a>
+    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/calls-online' . ($filterUser !== '' ? '?user=' . urlencode($filterUser) : ''))) ?>"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</a>
 </div>
 
 <?php if ($error): ?>
     <div class="alert alert-warning"><?= e($error) ?></div>
 <?php endif; ?>
 
+<div class="os-dash-grid os-dash-kpis mb-3">
+    <div class="os-kpi"><div class="lbl">Total</div><div class="val"><?= e((string) ($stats['total'] ?? 0)) ?></div><div class="sub">active dialogs</div></div>
+    <div class="os-kpi"><div class="lbl">Trying</div><div class="val"><?= e((string) ($stats['trying'] ?? 0)) ?></div><div class="sub">100 Trying</div></div>
+    <div class="os-kpi"><div class="lbl">Ringing</div><div class="val"><?= e((string) ($stats['ringing'] ?? 0)) ?></div><div class="sub">180 / 183 Progress</div></div>
+    <div class="os-kpi"><div class="lbl">Connected</div><div class="val"><?= e((string) ($stats['connected'] ?? 0)) ?></div><div class="sub">answered / confirmed</div></div>
+</div>
+
+<?php if ($users !== []): ?>
+<form method="get" action="<?= e(url('/calls-online')) ?>" class="os-toolbar mb-3">
+    <div class="row g-2 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label small mb-0" for="user">Filter user / SIP</label>
+            <select class="form-select form-select-sm" id="user" name="user">
+                <option value="">All users</option>
+                <?php foreach ($users as $id => $label): ?>
+                    <option value="<?= e((string) $id) ?>"<?= (string) $filterUser === (string) $id ? ' selected' : '' ?>><?= e($label) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="col-auto"><button class="btn btn-primary btn-sm" type="submit">Submit</button></div>
+        <?php if ($filterUser !== ''): ?>
+            <div class="col-auto"><a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/calls-online')) ?>">Clear</a></div>
+        <?php endif; ?>
+    </div>
+</form>
+<?php endif; ?>
+
+<div class="os-rt-legend mb-2 small text-muted">
+    <span class="os-rt-swatch os-rt-blue-light"></span> Waiting / trying
+    <span class="os-rt-swatch os-rt-blue"></span> Waiting &gt;1m
+    <span class="os-rt-swatch os-rt-blue-dark"></span> Waiting &gt;5m
+    <span class="os-rt-swatch os-rt-pink-soft"></span> On call &gt;10s
+    <span class="os-rt-swatch os-rt-pink"></span> On call &gt;1m
+    <span class="os-rt-swatch os-rt-green"></span> On call &gt;10m
+    <span class="os-rt-swatch os-rt-black"></span> Dead / ending
+</div>
+
 <div class="os-table-wrap">
 <?php if ($calls === []): ?>
-    <div class="os-empty"><div class="os-empty-title">No active calls</div><div>When calls create dialogs they appear here.</div></div>
+    <div class="os-empty"><div class="os-empty-title">No active calls</div><div>Trying, ringing (180/183) and connected dialogs appear here.</div></div>
 <?php else: ?>
-    <div class="table-responsive"><table class="table table-sm mb-0 os-table">
-        <thead><tr><th>From</th><th>To</th><th>State</th><th class="os-num">Duration</th><th>Call-ID</th><?php if (!empty($canHangup)): ?><th></th><?php endif; ?></tr></thead>
+    <div class="table-responsive"><table class="table table-sm mb-0 os-table os-rt-table">
+        <thead><tr><th>From</th><th>To</th><th>Status</th><th class="os-num">MM:SS</th><th>Call-ID</th><?php if (!empty($canHangup)): ?><th></th><?php endif; ?></tr></thead>
         <tbody>
         <?php foreach ($calls as $c): ?>
-            <tr>
+            <tr class="<?= e((string) ($c['color'] ?? '')) ?>">
                 <td class="os-mono"><?= e($c['from_user'] !== '' ? $c['from_user'] : $c['from']) ?></td>
                 <td class="os-mono"><?= e($c['to_user'] !== '' ? $c['to_user'] : $c['to']) ?></td>
-                <td><?= e($c['state']) ?></td>
+                <td><strong><?= e($c['state']) ?></strong></td>
                 <td class="os-num os-mono"><?= e(fmt_duration((int) $c['duration'])) ?></td>
-                <td class="os-mono small text-muted"><?= e(mb_substr((string) $c['callid'], 0, 36)) ?></td>
+                <td class="os-mono small text-muted"><?= e(mb_substr((string) $c['callid'], 0, 40)) ?></td>
                 <?php if (!empty($canHangup)): ?>
                 <td class="text-end">
                     <form method="post" action="<?= e(url('/calls-online/hangup')) ?>" class="d-inline" data-confirm="Hang up this call?">
@@ -41,4 +80,4 @@
     </table></div>
 <?php endif; ?>
 </div>
-<meta http-equiv="refresh" content="5">
+<meta http-equiv="refresh" content="5<?= $filterUser !== '' ? ';url=' . e(url('/calls-online?user=' . rawurlencode($filterUser))) : '' ?>">

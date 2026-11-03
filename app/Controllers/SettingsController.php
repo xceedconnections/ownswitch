@@ -7,6 +7,7 @@ namespace Ownswitch\Controllers;
 use Ownswitch\App;
 use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
+use Ownswitch\Services\Routing\FailoverSipCodesSync;
 use Ownswitch\Services\Settings\SettingsService;
 
 final class SettingsController extends BaseController
@@ -93,7 +94,18 @@ final class SettingsController extends BaseController
             }
         }
         $this->audit($r, 'settings_update', 'system_settings', null, array_intersect_key($before, $clean), $clean);
-        return $this->redirect($r, '/settings', 'Settings saved.');
+        $msg = 'Settings saved.';
+        if (array_key_exists('failover_sip_codes', $clean) || array_key_exists('failover_max_retries', $clean)) {
+            try {
+                $sync = (new FailoverSipCodesSync($this->db()))->sync();
+                if (!empty($sync['ok'])) {
+                    $msg .= ' Failover codes written to OpenSIPS cfg (' . ($sync['pattern'] ?? '') . '). Restart opensips to apply.';
+                }
+            } catch (\Throwable $e) {
+                $msg .= ' (failover sync skipped: ' . mb_substr($e->getMessage(), 0, 80) . ')';
+            }
+        }
+        return $this->redirect($r, '/settings', $msg);
     }
 
     /** @param array<string,mixed> $file */

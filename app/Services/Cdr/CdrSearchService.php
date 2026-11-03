@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ownswitch\Services\Cdr;
 
+use Ownswitch\Support\SipCode;
 use Ownswitch\Support\TenantScope;
 use PDO;
 
@@ -96,8 +97,19 @@ final class CdrSearchService
         $st->bindValue($i, ($page - 1) * $perPage, PDO::PARAM_INT);
         $st->execute();
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+        $callIds = [];
         foreach ($rows as &$r) {
             $r = self::normalizeRowDisplay($r);
+            if (!empty($r['sip_call_id'])) {
+                $callIds[] = (string) $r['sip_call_id'];
+            }
+        }
+        unset($r);
+        $legsByCall = $this->legsByCallIds($callIds);
+        foreach ($rows as &$r) {
+            $cid = (string) ($r['sip_call_id'] ?? '');
+            $r['attempt_legs'] = $legsByCall[$cid] ?? [];
+            $r['has_sip_trace'] = ($r['attempt_legs'] !== []);
         }
         unset($r);
 
@@ -148,13 +160,75 @@ final class CdrSearchService
         if (isset($r['dst_normalized']) && is_string($r['dst_normalized'])) {
             $r['dst_normalized'] = OpensipsAccImporter::cleanCallerId($r['dst_normalized']) ?: $r['dst_normalized'];
         }
+        $code = isset($r['sip_response']) ? (int) $r['sip_response'] : 0;
+        $r['sip_code_label'] = SipCode::label($code);
+        $r['sip_code_short'] = SipCode::short($code);
         return $r;
+    }
+
+    /**
+     * @param list<string> $callIds
+     * @return array<string,list<array<string,mixed>>>
+     */
+    private function legsByCallIds(array $callIds): array
+    {
+        $callIds = array_values(array_unique(array_filter($callIds)));
+        if ($callIds === []) {
+            return [];
+        }
+        try {
+            $ph = implode(',', array_fill(0, count($callIds), '?'));
+            $st = $this->pdo->prepare(
+                "SELECT * FROM cdr_attempt_legs WHERE sip_call_id IN ({$ph}) ORDER BY attempt_no ASC, id ASC"
+            );
+            $st->execute($callIds);
+            $out = [];
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $leg) {
+                $cid = (string) $leg['sip_call_id'];
+                $leg['sip_code_label'] = SipCode::label((int) ($leg['sip_code'] ?? 0));
+                $out[$cid][] = $leg;
+            }
+            return $out;
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    /** @param list<int> $ids @return int */
+    public function deleteByIds(TenantScope $scope, array $ids): int
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn ($i) => $i > 0)));
+        if ($ids === []) {
+            return 0;
+        }
+        [$where, $params] = $this->where($scope, []);
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        // where() aliases table as c — use subquery for DELETE
+        $sql = "DELETE FROM cdrs WHERE id IN ({$ph}) AND id IN (SELECT id FROM (SELECT c.id FROM cdrs c WHERE {$where}) AS scoped)";
+        $st = $this->pdo->prepare($sql);
+        $st->execute([...$ids, ...$params]);
+        $n = $st->rowCount();
+        try {
+            $this->pdo->prepare("DELETE FROM cdr_attempt_legs WHERE cdr_id IN ({$ph})")->execute($ids);
+        } catch (\Throwable) {
+        }
+        return $n;
+    }
+
+    /** Delete all CDRs matching filters (max 50k). */
+    public function deleteFiltered(TenantScope $scope, array $filters, int $max = 50000): int
+    {
+        [$where, $params] = $this->where($scope, $filters);
+        $st = $this->pdo->prepare("SELECT c.id FROM cdrs c WHERE {$where} ORDER BY c.id DESC LIMIT " . (int) $max);
+        $st->execute($params);
+        $ids = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN) ?: []);
+        return $this->deleteByIds($scope, $ids);
     }
 
     /** Stream CSV in chunks (keyset on id) so large exports do not exhaust memory. Max 200k rows. */
     public function exportCsv(TenantScope $scope, array $filters, callable $write): void
     {
-        $hdr = ['id', 'setup_at', 'src', 'dst', 'disposition', 'sip_response', 'duration_s', 'billable_s', 'rate', 'increment', 'charge', 'currency'];
+        $hdr = ['id', 'setup_at', 'src', 'dst', 'disposition', 'sip_code', 'sip_code_label', 'duration_s', 'billable_s', 'rate', 'increment', 'charge', 'currency'];
         $staff = $scope->isGlobal();
         if ($staff) {
             array_push($hdr, 'carrier', 'carrier_cost', 'margin');
@@ -172,7 +246,9 @@ final class CdrSearchService
                 break;
             }
             foreach ($rows as $r) {
-                $line = [$r['id'], $r['setup_at'], $r['src'], $r['dst_normalized'], $r['disposition'], $r['sip_response'], $r['duration_actual'],
+                $code = (int) ($r['sip_response'] ?? 0);
+                $line = [$r['id'], $r['setup_at'], $r['src'], $r['dst_normalized'], $r['disposition'], $code > 0 ? $code : '',
+                    SipCode::label($code), $r['duration_actual'],
                     $r['duration_billable_customer'], $r['customer_rate'], ($r['customer_initial'] ?? '') . '/' . ($r['customer_subsequent'] ?? ''), $r['customer_charge'], $r['currency']];
                 if ($staff) {
                     array_push($line, $r['carrier_name'], $r['carrier_cost'], $r['gross_margin']);

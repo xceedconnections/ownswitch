@@ -617,3 +617,25 @@ body.os-auth-body {
   .os-wf-body { grid-area: body; }
   .os-wf-switch { grid-area: toggle; justify-self: start; margin-top: .25rem; }
 }
+
+/* VICIdial-style realtime call colors */
+.os-rt-legend { display: flex; flex-wrap: wrap; gap: .55rem 1rem; align-items: center; }
+.os-rt-swatch {
+  display: inline-block; width: 1rem; height: .85rem; border: 1px solid rgba(0,0,0,.15);
+  vertical-align: middle; margin-right: .25rem;
+}
+.os-rt-table tbody tr.os-rt-white td { background: #fff; }
+.os-rt-table tbody tr.os-rt-blue-light td { background: #b8d4f0; }
+.os-rt-table tbody tr.os-rt-blue td { background: #4a90d9; color: #fff; }
+.os-rt-table tbody tr.os-rt-blue-dark td { background: #1e4f8c; color: #fff; }
+.os-rt-table tbody tr.os-rt-pink-soft td { background: #f0c8e0; }
+.os-rt-table tbody tr.os-rt-pink td { background: #e89ac8; }
+.os-rt-table tbody tr.os-rt-green td { background: #b8e0b0; }
+.os-rt-table tbody tr.os-rt-black td { background: #222; color: #eee; }
+.os-rt-swatch.os-rt-blue-light { background: #b8d4f0; }
+.os-rt-swatch.os-rt-blue { background: #4a90d9; }
+.os-rt-swatch.os-rt-blue-dark { background: #1e4f8c; }
+.os-rt-swatch.os-rt-pink-soft { background: #f0c8e0; }
+.os-rt-swatch.os-rt-pink { background: #e89ac8; }
+.os-rt-swatch.os-rt-green { background: #b8e0b0; }
+.os-rt-swatch.os-rt-black { background: #222; }

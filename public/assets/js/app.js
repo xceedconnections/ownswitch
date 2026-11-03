@@ -318,9 +318,7 @@
         root.querySelectorAll('[data-wf-sort]').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var key = btn.getAttribute('data-wf-sort');
-                var attr = 'data-asr';
-                if (key === 'acd') { attr = 'data-acd'; }
-                if (key === 'long') { attr = 'data-long-acd'; }
+                var attr = key === 'long' ? 'data-long-acd' : 'data-asr';
                 var rows = Array.prototype.slice.call(onList.querySelectorAll('[data-wf-row]'));
                 rows.sort(function (a, b) {
                     var av = parseFloat(a.getAttribute(attr) || '0');

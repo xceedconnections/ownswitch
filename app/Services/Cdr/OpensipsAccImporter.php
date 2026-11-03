@@ -103,6 +103,7 @@ final class OpensipsAccImporter
             }
             try {
                 $ins->execute([json_encode($payload, JSON_THROW_ON_ERROR), 'opensips_' . $table]);
+                $this->recordAttemptLeg($payload);
                 $n++;
                 if ($id > $maxId) {
                     $maxId = $id;
@@ -228,6 +229,57 @@ final class OpensipsAccImporter
             $payload['carrier_trunk_id'] = $trunkId;
         }
         return $payload;
+    }
+
+    /** @param array<string,mixed> $payload */
+    private function recordAttemptLeg(array $payload): void
+    {
+        $callid = (string) ($payload['sip_call_id'] ?? '');
+        if ($callid === '') {
+            return;
+        }
+        try {
+            $this->portalDb->exec(
+                'CREATE TABLE IF NOT EXISTS cdr_attempt_legs (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    sip_call_id VARCHAR(191) NOT NULL,
+                    cdr_id BIGINT UNSIGNED NULL,
+                    attempt_no SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+                    carrier_trunk_id BIGINT UNSIGNED NULL,
+                    trunk_name VARCHAR(120) NULL,
+                    sip_code SMALLINT UNSIGNED NULL,
+                    sip_reason VARCHAR(190) NULL,
+                    disposition VARCHAR(32) NULL,
+                    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    KEY ix_leg_callid (sip_call_id),
+                    KEY ix_leg_cdr (cdr_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+            );
+            $trunkId = isset($payload['carrier_trunk_id']) ? (int) $payload['carrier_trunk_id'] : null;
+            $trunkName = null;
+            if ($trunkId !== null) {
+                $st = $this->portalDb->prepare('SELECT name FROM carrier_trunks WHERE id = ?');
+                $st->execute([$trunkId]);
+                $trunkName = ($v = $st->fetchColumn()) !== false ? (string) $v : null;
+            }
+            $cnt = $this->portalDb->prepare('SELECT COUNT(*) FROM cdr_attempt_legs WHERE sip_call_id = ?');
+            $cnt->execute([$callid]);
+            $attemptNo = (int) $cnt->fetchColumn() + 1;
+            $this->portalDb->prepare(
+                'INSERT INTO cdr_attempt_legs (sip_call_id, attempt_no, carrier_trunk_id, trunk_name, sip_code, sip_reason, disposition)
+                 VALUES (?,?,?,?,?,?,?)'
+            )->execute([
+                mb_substr($callid, 0, 190),
+                $attemptNo,
+                $trunkId,
+                $trunkName,
+                isset($payload['sip_response']) ? (int) $payload['sip_response'] : null,
+                isset($payload['failure_reason']) ? mb_substr((string) $payload['failure_reason'], 0, 190) : null,
+                (string) ($payload['disposition'] ?? ''),
+            ]);
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] attempt leg: ' . $e->getMessage());
+        }
     }
 
     private function sipUsernameExists(string $username): bool

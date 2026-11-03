@@ -98,7 +98,6 @@ $renderRow = static function (string $tid, bool $on, int $rank) use ($wfMeta, $w
         <?php if (!$readonly): ?>
             <div class="os-wf-sorts">
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="asr">Best ASR first</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="acd">Longest talk time first</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-wf-sort="long">Long connected (&gt;12s) first</button>
             </div>
         <?php endif; ?>

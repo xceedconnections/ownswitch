@@ -482,6 +482,14 @@ failure_route[carrier_failover] {
 	if (t_was_cancelled()) {
 		exit;
 	}
+	# Only fail over on codes from Settings → Failover SIP codes (synced below)
+	# @@FAILOVER_SIP_STATUS@@ is replaced at deploy / settings save, e.g. "408|480|486|503"
+	if (!t_check_status("@@FAILOVER_SIP_STATUS@@")) {
+		xlog("L_INFO", "failover skip: reply $T_reply_code not in failover list\n");
+		rtpengine_delete();
+		exit;
+	}
+	xlog("L_WARN", "failover after $T_reply_code — trying next trunk\n");
 	# try next gateway of the selected route
 	if (use_next_gw()) {
 		route(apply_ruri_strip);

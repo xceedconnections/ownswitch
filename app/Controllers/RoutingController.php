@@ -231,8 +231,31 @@ final class RoutingController extends CrudController
                 return $sb <=> $sa;
             });
         } elseif ($strategy === 'lcr') {
-            // Keep operator order for LCR at save; live LCR uses rates in RouteSimulator.
-            // Still stable: leave as-is.
+            $costs = [];
+            $resolver = new RateResolver($this->db(), new SettingsService($this->db()));
+            $rating = new RatingService();
+            foreach ($active as $m) {
+                $tid = (int) $m['id'];
+                // Sample a common NANP-style destination to rank trunks by buy rate
+                $k = $resolver->carrier($tid, '12125550100');
+                if ($k === null) {
+                    $k = $resolver->carrier($tid, '1');
+                }
+                $costs[(string) $tid] = $k
+                    ? (string) $rating->rate($k['rate'], $k['initial'], $k['subsequent'], 60, $k['connect_fee'])['total']
+                    : null;
+            }
+            usort($active, static function (array $a, array $b) use ($costs): int {
+                $ca = $costs[(string) $a['id']] ?? null;
+                $cb = $costs[(string) $b['id']] ?? null;
+                if ($ca === null xor $cb === null) {
+                    return $ca === null ? 1 : -1;
+                }
+                if ($ca !== null && ($c = bccomp((string) $ca, (string) $cb, 6)) !== 0) {
+                    return $c;
+                }
+                return $a['id'] <=> $b['id'];
+            });
         }
         return array_merge($active, $off);
     }

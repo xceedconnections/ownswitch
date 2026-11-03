@@ -87,8 +87,16 @@ abstract class BaseController
     protected function dateRange(Request $r, int $defaultDays = 7): array
     {
         $ok = static fn ($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) && \DateTimeImmutable::createFromFormat('!Y-m-d', $v)?->format('Y-m-d') === $v;
-        $to = $ok($r->query('to')) ? (string) $r->query('to') : gmdate('Y-m-d');
-        $from = $ok($r->query('from')) ? (string) $r->query('from') : gmdate('Y-m-d', strtotime("-{$defaultDays} days"));
+        $toRaw = $r->query('to');
+        if (!$ok($toRaw)) {
+            $toRaw = $r->input('to');
+        }
+        $fromRaw = $r->query('from');
+        if (!$ok($fromRaw)) {
+            $fromRaw = $r->input('from');
+        }
+        $to = $ok($toRaw) ? (string) $toRaw : gmdate('Y-m-d');
+        $from = $ok($fromRaw) ? (string) $fromRaw : gmdate('Y-m-d', strtotime("-{$defaultDays} days"));
         if ($from > $to) {
             [$from, $to] = [$to, $from];
         }

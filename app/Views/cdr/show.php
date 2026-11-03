@@ -1,10 +1,14 @@
-<?php /** @var array $cdr @var bool $showCost */
+<?php
+/** @var array $cdr @var bool $showCost @var list<array> $legs */
+$legs = $legs ?? [];
+$code = (int) ($cdr['sip_response'] ?? 0);
+$codeLabel = \Ownswitch\Support\SipCode::label($code);
 $rows = [
     'UUID' => $cdr['uuid'], 'External key' => $cdr['external_cdr_key'], 'SIP Call-ID' => $cdr['sip_call_id'],
     'Customer' => $cdr['customer_name'] ?? '-', 'SIP user' => $cdr['sip_username'] ?? '-', 'CallerID' => $cdr['src'],
     'Destination (raw)' => $cdr['dst_raw'], 'Destination (normalised)' => $cdr['dst_normalized'],
     'Matched prefix' => $cdr['dst_prefix'], 'Setup (UTC)' => $cdr['setup_at'], 'Answer (UTC)' => $cdr['answer_at'], 'End (UTC)' => $cdr['end_at'],
-    'Disposition' => $cdr['disposition'], 'SIP code' => $cdr['sip_response'], 'Failure reason' => $cdr['failure_reason'],
+    'Disposition' => $cdr['disposition'], 'SIP code' => $codeLabel, 'Failure reason' => $cdr['failure_reason'],
     'Actual duration (s)' => $cdr['duration_actual'], 'Billable customer (s)' => $cdr['duration_billable_customer'],
     'Customer rate / min' => $cdr['customer_rate'], 'Customer I/S' => ($cdr['customer_initial'] ?? '-') . '/' . ($cdr['customer_subsequent'] ?? '-'),
     'Connection fee' => $cdr['customer_connect_fee'], 'Charge (total)' => $cdr['customer_charge'] . ' ' . $cdr['currency'],
@@ -31,3 +35,24 @@ if ($showCost) {
         <tr><th class="w-50 fw-normal text-muted"><?= e($k) ?></th><td class="os-mono"><?= e($v === null || $v === '' ? '-' : $v) ?></td></tr>
     <?php endforeach; ?>
 </table></div>
+
+<?php if ($legs !== []): ?>
+<div class="os-panel col-xl-8 overflow-hidden mt-3" id="sip-trace">
+    <div class="px-3 py-2 border-bottom fw-semibold"><i class="bi bi-diagram-3 me-1"></i>SIP failover trace</div>
+    <table class="table table-sm mb-0 os-table">
+        <thead><tr><th>#</th><th>Trunk</th><th>Code</th><th>Disposition</th><th>Reason</th></tr></thead>
+        <tbody>
+        <?php foreach ($legs as $leg): ?>
+            <tr>
+                <td class="os-mono"><?= e((string) ($leg['attempt_no'] ?? '')) ?></td>
+                <td><?= e($leg['trunk_name'] ?? ('#' . ($leg['carrier_trunk_id'] ?? '—'))) ?></td>
+                <td><?= e($leg['sip_code_label'] ?? (string) ($leg['sip_code'] ?? '—')) ?></td>
+                <td><?= e((string) ($leg['disposition'] ?? '—')) ?></td>
+                <td class="small text-muted"><?= e((string) ($leg['sip_reason'] ?? '')) ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+<?php endif; ?>
+

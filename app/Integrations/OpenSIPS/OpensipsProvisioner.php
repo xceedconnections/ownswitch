@@ -417,7 +417,9 @@ final class OpensipsProvisioner
         $this->removeRegistrant($trunkId);
     }
 
-    /** @param list<array{prefix:string,carrier_trunk_id:int,priority:int,status?:string}> $rules */
+    /**
+     * @param list<array{prefix:string,carrier_trunk_id:int,priority:int,status?:string,sort_alg?:string,strategy?:string}> $rules
+     */
     public function syncRoutingRules(array $rules): void
     {
         if (!$this->tableExists('dr_rules')) {
@@ -441,8 +443,12 @@ final class OpensipsProvisioner
         $hasSort = in_array('sort_alg', $this->columns('dr_rules'), true);
         foreach ($byPrefix as $prefix => $list) {
             $gws = [];
+            $sortAlg = 'N';
             foreach ($list as $r) {
                 $gws[] = self::gwid((int) $r['carrier_trunk_id']);
+                if (($r['sort_alg'] ?? '') === 'R' || ($r['strategy'] ?? '') === 'random') {
+                    $sortAlg = 'R'; // equal random pick among gateways
+                }
             }
             $gwlist = implode(',', array_unique($gws));
             if ($gwlist === '') {
@@ -453,7 +459,7 @@ final class OpensipsProvisioner
             $desc = 'ownswitch:' . ($prefix === '*' ? 'default' : $prefix);
             if ($hasSort) {
                 $db->prepare('INSERT INTO dr_rules (groupid, prefix, timerec, priority, routeid, gwlist, sort_alg, description) VALUES (?,?,?,?,NULL,?,?,?)')
-                    ->execute([self::DR_GROUP, $drPrefix, '', $prio++, $gwlist, 'N', $desc]);
+                    ->execute([self::DR_GROUP, $drPrefix, '', $prio++, $gwlist, $sortAlg, $desc]);
             } else {
                 $db->prepare('INSERT INTO dr_rules (groupid, prefix, timerec, priority, routeid, gwlist, description) VALUES (?,?,?,?,NULL,?,?)')
                     ->execute([self::DR_GROUP, $drPrefix, '', $prio++, $gwlist, $desc]);
@@ -551,33 +557,115 @@ final class OpensipsProvisioner
     }
 
     /**
-     * Live dialogs from OpenSIPS dlg_list.
+     * Live dialogs from OpenSIPS dlg_list (MI), with dialog table fallback.
      *
      * @return list<array<string,mixed>>
      */
     public function listDialogs(): array
     {
-        $r = $this->miCall('dlg_list');
-        if ($r === null || isset($r['error'])) {
-            return [];
+        $fromMi = $this->listDialogsMi();
+        $fromDb = $this->listDialogsDb();
+        if ($fromMi === []) {
+            return $fromDb;
         }
-        $result = $r['result'] ?? null;
-        if (!is_array($result)) {
-            return [];
+        if ($fromDb === []) {
+            return $fromMi;
         }
-        // OpenSIPS may return {Dialogs:[...]} or a bare list
-        if (isset($result['Dialogs']) && is_array($result['Dialogs'])) {
-            return array_values($result['Dialogs']);
+        // Merge by Call-ID so early/trying dialogs missing from one source still appear
+        $byId = [];
+        foreach (array_merge($fromDb, $fromMi) as $d) {
+            if (!is_array($d)) {
+                continue;
+            }
+            $cid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? '');
+            if ($cid === '') {
+                continue;
+            }
+            $byId[$cid] = isset($byId[$cid]) ? array_merge($byId[$cid], $d) : $d;
         }
-        if (array_is_list($result)) {
-            return $result;
-        }
-        foreach ($result as $v) {
-            if (is_array($v) && array_is_list($v)) {
-                return $v;
+        return array_values($byId);
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function listDialogsMi(): array
+    {
+        foreach (['dlg_list', 'dlg_list_ctx'] as $method) {
+            $r = $this->miCall($method);
+            if ($r === null || isset($r['error'])) {
+                continue;
+            }
+            $result = $r['result'] ?? null;
+            if (!is_array($result)) {
+                continue;
+            }
+            $list = $this->extractDialogList($result);
+            if ($list !== []) {
+                return $list;
             }
         }
         return [];
+    }
+
+    /**
+     * @param array<string,mixed> $result
+     * @return list<array<string,mixed>>
+     */
+    private function extractDialogList(array $result): array
+    {
+        foreach (['Dialogs', 'Dialog', 'dialogs', 'dialog'] as $k) {
+            if (isset($result[$k]) && is_array($result[$k])) {
+                $v = $result[$k];
+                if ($v !== [] && !array_is_list($v) && isset($v['callid'])) {
+                    return [$v];
+                }
+                if (array_is_list($v)) {
+                    return array_values(array_filter($v, 'is_array'));
+                }
+            }
+        }
+        if (array_is_list($result)) {
+            return array_values(array_filter($result, 'is_array'));
+        }
+        // Sometimes MI wraps as { "0": {...}, "1": {...} }
+        $vals = array_values($result);
+        if ($vals !== [] && is_array($vals[0] ?? null) && isset($vals[0]['callid'])) {
+            return array_values(array_filter($vals, 'is_array'));
+        }
+        foreach ($result as $v) {
+            if (is_array($v) && array_is_list($v)) {
+                return array_values(array_filter($v, 'is_array'));
+            }
+        }
+        return [];
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function listDialogsDb(): array
+    {
+        try {
+            $db = $this->db();
+            if (!$this->tableExists('dialog')) {
+                return [];
+            }
+            $cols = $this->columns('dialog');
+            $need = ['callid', 'from_uri', 'to_uri'];
+            foreach ($need as $c) {
+                if (!in_array($c, $cols, true)) {
+                    return [];
+                }
+            }
+            $stateCol = in_array('state', $cols, true) ? 'state' : (in_array('dlg_state', $cols, true) ? 'dlg_state' : null);
+            $startCol = in_array('start_time', $cols, true) ? 'start_time' : null;
+            $sql = 'SELECT callid, from_uri, to_uri'
+                . ($stateCol ? ", `{$stateCol}` AS state" : '')
+                . ($startCol ? ", `{$startCol}` AS start_time" : '')
+                . (in_array('from_tag', $cols, true) ? ', from_tag' : '')
+                . ' FROM dialog ORDER BY ' . ($startCol ? "`{$startCol}`" : 'callid') . ' DESC LIMIT 500';
+            return $db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] listDialogsDb: ' . $e->getMessage());
+            return [];
+        }
     }
 
     /**

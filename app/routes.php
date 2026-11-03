@@ -147,6 +147,7 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $all = $role(Menu::ALL);
     $r->get('/cdrs', [$cdr, 'index'], [$all]);
     $r->get('/cdrs/export', [$cdr, 'export'], [$all]);
+    $r->post('/cdrs/delete', [$cdr, 'delete'], [$role(Menu::STAFF)]);
     $r->get('/cdrs/{id}', [$cdr, 'show'], [$all]);
     $rep = new ReportController();
     $r->get('/reports/cdr-failed', [$rep, 'cdrFailed'], [$all]);
