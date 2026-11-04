@@ -8,7 +8,7 @@
 <?php foreach ($errors as $err): ?>
     <div class="alert alert-danger py-2"><?= e($err) ?></div>
 <?php endforeach; ?>
-<form method="post" action="<?= e(url('/account/password')) ?>" class="os-panel col-lg-5 p-3 p-md-4">
+<form method="post" action="<?= e(url('/account/password')) ?>" class="os-panel col-12 p-3 p-md-4">
     <?= csrf_field() ?>
     <div class="mb-3">
         <label class="form-label fw-semibold" for="current">Current password</label>

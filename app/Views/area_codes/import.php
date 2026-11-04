@@ -15,7 +15,7 @@
 <?php if (!empty($flash)): ?><div class="alert alert-info"><?= e($flash) ?></div><?php endif; ?>
 
 <?php if ($step === 'upload'): ?>
-<form method="post" action="<?= e(url('/area-codes/import/upload')) ?>" enctype="multipart/form-data" class="os-panel p-3 p-md-4 col-xl-8">
+<form method="post" action="<?= e(url('/area-codes/import/upload')) ?>" enctype="multipart/form-data" class="os-panel p-3 p-md-4 col-12">
     <?= csrf_field() ?>
     <label class="form-label fw-semibold">File (CSV or Excel .xlsx)</label>
     <input type="file" name="file" class="form-control" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
@@ -25,7 +25,7 @@
 <?php endif; ?>
 
 <?php if (in_array($step, ['map', 'preview'], true) && $token): ?>
-<form method="post" action="<?= e(url($step === 'preview' && !empty($preview['ok']) ? '/area-codes/import/commit' : '/area-codes/import/preview')) ?>" class="os-panel p-3 p-md-4 mb-3 col-xl-8">
+<form method="post" action="<?= e(url($step === 'preview' && !empty($preview['ok']) ? '/area-codes/import/commit' : '/area-codes/import/preview')) ?>" class="os-panel p-3 p-md-4 mb-3 col-12">
     <?= csrf_field() ?>
     <input type="hidden" name="token" value="<?= e($token) ?>">
     <p class="small text-muted"><?= e((string) $row_count) ?> row(s)</p>

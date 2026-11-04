@@ -6,7 +6,7 @@
     </div>
     <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/invoices')) ?>"><i class="bi bi-arrow-left me-1"></i>Back</a>
 </div>
-<div class="os-panel col-xl-9">
+<div class="os-panel col-12">
     <div class="p-3 p-md-4">
         <div class="row mb-3">
             <div class="col-md-6"><div class="text-muted small">Customer</div><div><?= e($customer['name'] ?? '—') ?></div></div>

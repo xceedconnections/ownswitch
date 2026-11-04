@@ -13,7 +13,7 @@
     <div class="alert alert-danger"><ul class="mb-0"><?php foreach ($errors as $e): ?><li><?= e($e) ?></li><?php endforeach; ?></ul></div>
 <?php endif; ?>
 
-<form method="post" action="<?= e(url('/payments')) ?>" class="os-panel col-xl-8" novalidate>
+<form method="post" action="<?= e(url('/payments')) ?>" class="os-panel col-12" novalidate>
     <div class="p-3 p-md-4">
         <?= csrf_field() ?>
         <input type="hidden" name="nonce" value="<?= e(bin2hex(random_bytes(8))) ?>">

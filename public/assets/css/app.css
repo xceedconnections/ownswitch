@@ -54,10 +54,11 @@ a { text-decoration: none; color: inherit; }
   box-shadow: 0 1px 0 rgba(15,23,42,.03);
 }
 .os-header-inner {
-  max-width: 1400px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   min-height: var(--os-header-h);
-  padding: .55rem 1.25rem;
+  padding: .55rem clamp(.75rem, 2vw, 1.75rem);
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -187,11 +188,29 @@ a { text-decoration: none; color: inherit; }
   color: #fff; font-weight: 700; font-size: .8rem;
 }
 
-/* ---------- Main ---------- */
+/* ---------- Main (full-bleed content width on PC) ---------- */
 .os-main-top {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 1.25rem 1.25rem 2.5rem;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 1.15rem clamp(.75rem, 2vw, 1.75rem) 2.25rem;
+}
+/* Bootstrap col-* wrappers used as page shells — always full row width */
+.os-main-top > .os-panel.col-12,
+.os-main-top > .os-panel.col-xl-6,
+.os-main-top > .os-panel.col-xl-8,
+.os-main-top > .os-panel.col-xl-9,
+.os-main-top > .os-panel.col-xl-10,
+.os-main-top > .os-panel.col-lg-5,
+.os-main-top > form.os-panel.col-12,
+.os-main-top > form.os-panel.col-xl-6,
+.os-main-top > form.os-panel.col-xl-8,
+.os-main-top > form.os-panel.col-xl-9,
+.os-main-top > form.os-panel.col-xl-10,
+.os-main-top > form.os-panel.col-lg-5 {
+  width: 100%;
+  max-width: 100%;
+  flex: 0 0 100%;
 }
 .os-page-head {
   display: flex; justify-content: space-between; align-items: flex-start;
@@ -746,8 +765,10 @@ body.os-auth-body {
   padding: .65rem 1.25rem;
 }
 .os-footer-inner {
-  max-width: 1280px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0 clamp(.75rem, 2vw, 1.75rem);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -763,3 +784,21 @@ body.os-body {
   flex-direction: column;
 }
 body.os-body > .os-main-top { flex: 1 0 auto; }
+
+/* Tables: use full width; horizontal scroll on small screens */
+.os-main-top .os-table-scroll,
+.os-main-top .table-responsive {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.os-main-top .os-panel { width: 100%; }
+
+@media (max-width: 575.98px) {
+  .os-main-top { padding: .85rem .7rem 1.75rem; }
+  .os-header-inner { padding: .45rem .7rem; gap: .65rem; }
+  .os-page-title { font-size: 1.28rem; }
+  .os-footer { padding: .55rem .7rem; }
+  .os-footer-inner { padding: 0; }
+}

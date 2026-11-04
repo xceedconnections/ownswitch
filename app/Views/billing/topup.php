@@ -9,7 +9,7 @@
 <?php if (!$customers): ?>
     <div class="os-panel"><div class="os-empty"><div class="os-empty-title">No customers</div><div>Create a customer first.</div></div></div>
 <?php else: ?>
-<form method="post" action="<?= e(url('/billing/refill')) ?>" class="os-panel col-xl-6 p-3 p-md-4">
+<form method="post" action="<?= e(url('/billing/refill')) ?>" class="os-panel col-12 p-3 p-md-4">
     <?= csrf_field() ?>
     <input type="hidden" name="nonce" value="<?= e(bin2hex(random_bytes(8))) ?>">
     <div class="mb-3"><label class="form-label fw-semibold" for="customer_id">Customer</label>

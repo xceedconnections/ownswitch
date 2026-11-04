@@ -42,9 +42,9 @@ $sipAuthForm = (($base ?? '') === '/sip-users');
 $formExtra = $sipAuthForm ? ' data-os-sip-auth' : '';
 ?>
 <?php if ($viewOnly): ?>
-<div class="os-panel<?= ($base ?? '') === '/trunk-groups' ? ' col-12' : ' col-xl-10' ?>"<?= $formExtra ?>>
+<div class="os-panel col-12"<?= $formExtra ?>>
 <?php else: ?>
-<form method="post" action="<?= e(url($action)) ?>" class="os-panel<?= ($base ?? '') === '/trunk-groups' ? ' col-12' : ' col-xl-10' ?>" novalidate<?= $formExtra ?>>
+<form method="post" action="<?= e(url($action)) ?>" class="os-panel col-12" novalidate<?= $formExtra ?>>
 <?php endif; ?>
     <div class="p-3 p-md-4">
         <?php if (!$viewOnly): ?><?= csrf_field() ?><?php endif; ?>

@@ -7,7 +7,7 @@
         <p class="os-page-sub">Branding, billing, capacity limits, failover and emergency kill switch</p>
     </div>
 </div>
-<form method="post" action="<?= e(url('/settings')) ?>" enctype="multipart/form-data" class="os-panel col-xl-8">
+<form method="post" action="<?= e(url('/settings')) ?>" enctype="multipart/form-data" class="os-panel col-12">
     <div class="p-3 p-md-4">
         <?= csrf_field() ?>
 

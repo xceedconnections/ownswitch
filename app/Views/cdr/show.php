@@ -49,14 +49,14 @@ if ($showCost) {
     </div>
     <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs')) ?>"><i class="bi bi-arrow-left me-1"></i>Back</a>
 </div>
-<div class="os-panel col-xl-8 overflow-hidden"><table class="table table-sm mb-0 os-table">
+<div class="os-panel col-12 overflow-hidden"><table class="table table-sm mb-0 os-table">
     <?php foreach ($rows as $k => $v): ?>
         <tr><th class="w-50 fw-normal text-muted"><?= e($k) ?></th><td class="os-mono"><?= e($v === null || $v === '' ? '-' : $v) ?></td></tr>
     <?php endforeach; ?>
 </table></div>
 
 <?php if ($legs !== []): ?>
-<div class="os-panel col-xl-8 overflow-hidden mt-3" id="sip-trace">
+<div class="os-panel col-12 overflow-hidden mt-3" id="sip-trace">
     <div class="px-3 py-2 border-bottom fw-semibold"><i class="bi bi-diagram-3 me-1"></i>SIP failover trace</div>
     <table class="table table-sm mb-0 os-table">
         <thead><tr><th>#</th><th>Trunk</th><th>Code</th><th>Disposition</th><th>Reason</th><th>Media</th></tr></thead>
