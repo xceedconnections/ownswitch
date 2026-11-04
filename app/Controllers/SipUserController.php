@@ -40,6 +40,7 @@ final class SipUserController extends CrudController
 
     protected function fields(Request $r): array
     {
+        \Ownswitch\Support\DstFormat::ensureColumns($this->db());
         $f = [];
         if (!$this->scope($r)->isCustomerRole()) {
             $f[] = [
@@ -205,6 +206,16 @@ final class SipUserController extends CrudController
                 'options' => $routes,
                 'list' => true,
                 'help' => 'Overrides the Tariff trunk group for this SIP user when set.',
+                'section' => 'Routing & media',
+            ],
+            [
+                'name' => 'dst_format',
+                'label' => 'Destination format',
+                'type' => 'select',
+                'options' => \Ownswitch\Support\DstFormat::OPTIONS,
+                'default' => \Ownswitch\Support\DstFormat::AS_IS,
+                'list' => true,
+                'help' => 'Rewrite the dialled number before it reaches the trunk. E.164 with + : 12135550123 → +12135550123. Trunk Destination format is applied after this.',
                 'section' => 'Routing & media',
             ],
             [
@@ -501,6 +512,9 @@ final class SipUserController extends CrudController
                 isset($data['media_policy']) ? (string) $data['media_policy'] : null
             );
         }
+        $data['dst_format'] = \Ownswitch\Support\DstFormat::normalize(
+            isset($data['dst_format']) ? (string) $data['dst_format'] : null
+        );
         $tg = $data['routing_plan_id'] ?? null;
         $data['routing_plan_id'] = ($tg === null || $tg === '') ? null : (int) $tg;
 

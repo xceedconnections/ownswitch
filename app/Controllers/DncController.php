@@ -21,11 +21,23 @@ final class DncController extends BaseController
 
     public function index(Request $r, array $p = []): Response
     {
-        return $this->view('dnc/groups', [
-            'title' => 'DNC',
-            'groups' => $this->svc()->listGroups(),
-            'canWrite' => $this->canWrite($r),
-        ]);
+        try {
+            $svc = $this->svc();
+            $svc->ensureSchema();
+            return $this->view('dnc/groups', [
+                'title' => 'DNC',
+                'groups' => $svc->listGroups(),
+                'canWrite' => $this->canWrite($r),
+            ]);
+        } catch (\PDOException $e) {
+            error_log('[ownswitch] DNC index: ' . $e->getMessage());
+            return $this->view('error', [
+                'title' => 'DNC',
+                'message' => 'DNC tables are missing or the database rejected the query. On the server run: '
+                    . 'sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/migrate.php',
+                'code' => 500,
+            ], 500);
+        }
     }
 
     public function create(Request $r, array $p = []): Response

@@ -26,9 +26,88 @@ final class DncService
         return self::REDIS_KEY_PREFIX . $groupId;
     }
 
+    /**
+     * Create DNC tables / trunk column if missing (portal Update sometimes skips migrate).
+     * Idempotent — safe on every DNC page hit.
+     */
+    public function ensureSchema(): void
+    {
+        static $done = false;
+        if ($done) {
+            return;
+        }
+        try {
+            $this->pdo->exec(
+                "CREATE TABLE IF NOT EXISTS dnc_groups (
+                  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  name VARCHAR(120) NOT NULL,
+                  status ENUM('active','disabled') NOT NULL DEFAULT 'active',
+                  notes VARCHAR(255) NULL,
+                  number_count INT UNSIGNED NOT NULL DEFAULT 0,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  PRIMARY KEY (id),
+                  UNIQUE KEY uq_dnc_groups_name (name)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+            );
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] DNC ensure groups: ' . $e->getMessage());
+            throw $e;
+        }
+        try {
+            $this->pdo->exec(
+                "CREATE TABLE IF NOT EXISTS dnc_numbers (
+                  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  dnc_group_id BIGINT UNSIGNED NOT NULL,
+                  number_digits VARCHAR(32) NOT NULL,
+                  note VARCHAR(255) NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (id),
+                  UNIQUE KEY uq_dnc_group_number (dnc_group_id, number_digits),
+                  KEY idx_dnc_number_digits (number_digits),
+                  CONSTRAINT fk_dnc_numbers_group FOREIGN KEY (dnc_group_id) REFERENCES dnc_groups(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+            );
+        } catch (\Throwable $e) {
+            // Retry without named FK (older partial tables / privilege quirks)
+            try {
+                $this->pdo->exec(
+                    "CREATE TABLE IF NOT EXISTS dnc_numbers (
+                      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                      dnc_group_id BIGINT UNSIGNED NOT NULL,
+                      number_digits VARCHAR(32) NOT NULL,
+                      note VARCHAR(255) NULL,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY (id),
+                      UNIQUE KEY uq_dnc_group_number (dnc_group_id, number_digits),
+                      KEY idx_dnc_number_digits (number_digits)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+                );
+            } catch (\Throwable $e2) {
+                error_log('[ownswitch] DNC ensure numbers: ' . $e->getMessage() . ' / ' . $e2->getMessage());
+                throw $e2;
+            }
+        }
+        try {
+            $st = $this->pdo->query(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'carrier_trunks' AND COLUMN_NAME = 'dnc_group_id'"
+            );
+            if ((int) $st->fetchColumn() === 0) {
+                $this->pdo->exec(
+                    'ALTER TABLE carrier_trunks ADD COLUMN dnc_group_id BIGINT UNSIGNED NULL DEFAULT NULL AFTER rate_cap, ADD KEY idx_carrier_trunks_dnc (dnc_group_id)'
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] DNC ensure trunk column: ' . $e->getMessage());
+        }
+        $done = true;
+    }
+
     /** @return list<array<string,mixed>> */
     public function listGroups(): array
     {
+        $this->ensureSchema();
         return $this->pdo->query(
             'SELECT id, name, status, notes, number_count, updated_at FROM dnc_groups ORDER BY name ASC'
         )->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -37,6 +116,7 @@ final class DncService
     /** @return array<string,mixed>|null */
     public function findGroup(int $id): ?array
     {
+        $this->ensureSchema();
         $st = $this->pdo->prepare('SELECT * FROM dnc_groups WHERE id = ?');
         $st->execute([$id]);
         $row = $st->fetch(PDO::FETCH_ASSOC);
@@ -46,6 +126,7 @@ final class DncService
     /** @return array<int,string> id => name for selects */
     public function groupOptions(bool $activeOnly = true): array
     {
+        $this->ensureSchema();
         $sql = 'SELECT id, name FROM dnc_groups';
         if ($activeOnly) {
             $sql .= " WHERE status = 'active'";

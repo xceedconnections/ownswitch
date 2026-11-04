@@ -171,6 +171,11 @@ final class OpensipsProvisioner
             if (in_array('allow_calls', $cols, true)) {
                 $set['allow_calls'] = $this->customerAllowsCalls($account) ? 1 : 0;
             }
+            if (in_array('dst_format', $cols, true)) {
+                $set['dst_format'] = \Ownswitch\Support\DstFormat::wireCode(
+                    (string) ($account['dst_format'] ?? 'as_is')
+                );
+            }
         }
 
         if ($id) {
@@ -489,6 +494,10 @@ final class OpensipsProvisioner
         $dncid = (int) ($trunk['dnc_group_id'] ?? 0);
         if ($dncid > 0) {
             $parts[] = 'dncid=' . $dncid;
+        }
+        $dstfmt = \Ownswitch\Support\DstFormat::wireCode((string) ($trunk['dst_format'] ?? 'as_is'));
+        if ($dstfmt !== 'as_is') {
+            $parts[] = 'dstfmt=' . $dstfmt;
         }
         $rawRem = trim((string) ($trunk['remove_prefix'] ?? ''));
         if ($rawRem !== '') {
@@ -974,6 +983,7 @@ final class OpensipsProvisioner
             'cid_min_len INT UNSIGNED NOT NULL DEFAULT 0',
             'cid_max_len INT UNSIGNED NOT NULL DEFAULT 0',
             'allow_calls TINYINT(1) NOT NULL DEFAULT 1',
+            'dst_format VARCHAR(16) NOT NULL DEFAULT \'as_is\'',
         ] as $colDef) {
             $col = explode(' ', $colDef, 2)[0];
             $cols = $this->columns('subscriber');

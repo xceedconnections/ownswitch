@@ -70,7 +70,7 @@ modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("auth_db", "calculate_ha1", 1)
 modparam("auth_db", "password_column", "password")
 # Load SIP Directmedia / DTMF pass / CallerID mode from subscriber into AVPs
-modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid;$avp(os_cid_min)=cid_min_len;$avp(os_cid_max)=cid_max_len;$avp(os_allow)=allow_calls")
+modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid;$avp(os_cid_min)=cid_min_len;$avp(os_cid_max)=cid_max_len;$avp(os_allow)=allow_calls;$avp(os_dstfmt)=dst_format")
 # Username-only match (ignore Domain in subscriber row)
 modparam("auth_db", "use_domain", 0)
 
@@ -325,6 +325,8 @@ route {
 	route(check_trunk_cid_len);
 	route(check_rate_cap);
 	route(check_dnc);
+	route(apply_sip_dst_format);
+	route(apply_trunk_dst_format);
 	route(acc_cli_gw);
 	route(relay);
 }
@@ -507,6 +509,50 @@ route[check_cid_len] {
 # DNC: trunk attrs dncid=N → Redis SISMEMBER or indexed MySQL dnc_cache (never PHP exec)
 @@OPENSIPS_DNC_ROUTE@@
 
+# SIP-user destination format (subscriber.dst_format via load_credentials): plus | digits | as_is
+route[apply_sip_dst_format] {
+	if ($avp(os_dstfmt) == NULL || $(avp(os_dstfmt){s.len}) == 0 || $avp(os_dstfmt) == "as_is") {
+		return;
+	}
+	$var(d) = $(rU{re.subst,/[^0-9]//g});
+	if ($(var(d){s.len}) < 3) {
+		return;
+	}
+	if ($avp(os_dstfmt) == "plus" || $avp(os_dstfmt) == "e164_plus") {
+		$rU = "+" + $var(d);
+		xlog("L_INFO", "sip dst_format=plus RURI=$rU\n");
+		return;
+	}
+	if ($avp(os_dstfmt) == "digits" || $avp(os_dstfmt) == "e164_digits") {
+		$rU = $var(d);
+		xlog("L_INFO", "sip dst_format=digits RURI=$rU\n");
+	}
+}
+
+# Trunk destination format (attrs dstfmt=plus|digits) — applied after SIP user format
+route[apply_trunk_dst_format] {
+	if ($avp(dr_gw_attrs) == NULL) {
+		return;
+	}
+	$var(df) = $(avp(dr_gw_attrs){param.value,dstfmt});
+	if ($var(df) == NULL || $(var(df){s.len}) == 0 || $var(df) == "as_is") {
+		return;
+	}
+	$var(d) = $(rU{re.subst,/[^0-9]//g});
+	if ($(var(d){s.len}) < 3) {
+		return;
+	}
+	if ($var(df) == "plus" || $var(df) == "e164_plus") {
+		$rU = "+" + $var(d);
+		xlog("L_INFO", "trunk dst_format=plus RURI=$rU\n");
+		return;
+	}
+	if ($var(df) == "digits" || $var(df) == "e164_digits") {
+		$rU = $var(d);
+		xlog("L_INFO", "trunk dst_format=digits RURI=$rU\n");
+	}
+}
+
 # Trunk attrs cidmin=/cidmax= after From rewrite
 route[check_trunk_cid_len] {
 	if ($avp(dr_gw_attrs) == NULL) {
@@ -563,6 +609,8 @@ failure_route[carrier_failover] {
 		route(check_trunk_cid_len);
 		route(check_rate_cap);
 		route(check_dnc);
+		route(apply_sip_dst_format);
+		route(apply_trunk_dst_format);
 		route(acc_cli_gw);
 		t_on_failure("carrier_failover");
 		t_relay();

@@ -13,6 +13,7 @@ use Ownswitch\Services\Routing\OpensipsRoutingSync;
 use Ownswitch\Services\Sip\SipOptionsProbe;
 use Ownswitch\Services\Dnc\DncService;
 use Ownswitch\Support\Crypto;
+use Ownswitch\Support\DstFormat;
 use Ownswitch\Support\SipPeerOptions;
 
 /**
@@ -43,6 +44,7 @@ final class CarrierController extends CrudController
 
     protected function fields(Request $r): array
     {
+        DstFormat::ensureColumns($this->db());
         $status = ['name' => 'status', 'label' => 'Status', 'type' => 'select', 'required' => true, 'options' => ['active' => 'Active', 'disabled' => 'Disabled'], 'list' => true];
         if ($this->kind !== 'trunk') {
             return [
@@ -85,6 +87,7 @@ final class CarrierController extends CrudController
             ['name' => 'max_call_duration', 'label' => 'Max call duration (s)', 'type' => 'int', 'min' => 0, 'max' => 604800, 'default' => '0', 'list' => true, 'help' => '0 = use Settings system default (Prepaid hard max). Or set seconds manually (e.g. 7200). SIP user override wins when both are set.'],
             ['name' => 'rate_cap', 'label' => 'CAP (max buy $/min)', 'type' => 'number', 'min' => 0, 'placeholder' => '0.005', 'list' => true, 'help' => 'Max buy rate this trunk may send. Destinations whose provider rate exceeds CAP are blocked (try next trunk / 403). Blank = no CAP.'],
             ['name' => 'dnc_group_id', 'label' => 'DNC group', 'type' => 'select', 'options' => $this->dncGroupOptions(), 'list' => true, 'help' => 'Block destinations listed in this Do Not Call group before connect. Leave blank for no DNC check on this trunk.'],
+            ['name' => 'dst_format', 'label' => 'Destination format', 'type' => 'select', 'options' => DstFormat::OPTIONS, 'default' => DstFormat::AS_IS, 'list' => true, 'help' => 'How the dialled number is sent to this vendor after strip/add prefix. Applied after the SIP user’s Destination format. Example: E.164 with + turns 12135550123 into +12135550123.'],
             ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true, 'list_only' => true],
             $status,
         ];
@@ -200,6 +203,7 @@ final class CarrierController extends CrudController
                     }
                 }
             }
+            $data['dst_format'] = DstFormat::normalize(isset($data['dst_format']) ? (string) $data['dst_format'] : null);
             $mode = (string) ($data['auth_mode'] ?? 'ip');
             if (in_array($mode, ['register', 'invite'], true)) {
                 $user = trim((string) ($data['auth_username'] ?? ($existing['auth_username'] ?? '')));
