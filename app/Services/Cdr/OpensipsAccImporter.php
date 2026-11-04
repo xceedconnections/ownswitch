@@ -150,6 +150,13 @@ final class OpensipsAccImporter
         }
 
         $cli = self::cleanCallerId((string) ($row['cli'] ?? ''));
+        // ACC bug (pre-os_cli): cli was still SIP username after display_name From rewrite
+        if ($cli === '' || ($sipUser !== '' && strcasecmp($cli, $sipUser) === 0) || self::looksLikeSipUser($cli)) {
+            $fromCli = self::cleanCallerId($this->userPart((string) ($row['from_uri'] ?? $row['caller_id'] ?? '')));
+            if ($fromCli !== '' && self::looksLikePhone($fromCli) && ($sipUser === '' || strcasecmp($fromCli, $sipUser) !== 0)) {
+                $cli = $fromCli;
+            }
+        }
         if ($cli === '') {
             // Older ACC rows stored presented CLI in src_user — keep digits for src display
             $maybeCli = self::cleanCallerId($sipUser);

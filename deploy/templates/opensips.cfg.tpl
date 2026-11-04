@@ -282,8 +282,11 @@ route {
 		$dlg_val(os_src) = $fU;
 	}
 	$dlg_val(os_dst) = $rU;
+	# Presented CLI starts as From user; apply_sip_cid may replace with display_name / fixed
+	$dlg_val(os_cli) = $fU;
 	$acc_extra(src) = $dlg_val(os_src);
 	$acc_extra(dst) = $rU;
+	$acc_extra(cli) = $dlg_val(os_cli);
 	$acc_extra(ip) = $si;
 	# Persist DTMF policy for in-dialog INFO filtering
 	if ($avp(os_dtmf) != NULL) {
@@ -374,7 +377,11 @@ route[apply_media] {
 #   fixed        = force portal CallerID (rpid / os_cid)
 #   display_name = use Eyebeam/softphone Display Name as From user when it looks like a number
 # Eyebeam often puts quotes around Display Name ("1213…") — strip to digits/+ only.
+# IMPORTANT: append_hf(From) does NOT refresh $fU — store presented CLI in $dlg_val(os_cli)
+# so ACC / CDR CallerID is the number, not the SIP username.
 route[apply_sip_cid] {
+	# Default presented CLI = current From user (may still be SIP username before rewrite)
+	$dlg_val(os_cli) = $fU;
 	if ($avp(os_cid_mode) == NULL || $(avp(os_cid_mode){s.len}) == 0 || $avp(os_cid_mode) == "passthrough") {
 		return;
 	}
@@ -388,26 +395,38 @@ route[apply_sip_cid] {
 			$var(dn) = $(var(dn){re.subst,/[^0-9+]//g});
 			if ($var(dn) =~ "^[+0-9]{3,30}$") {
 				$var(user) = $var(dn);
+			} else {
+				xlog("L_WARN", "SIP CID display_name raw='$fn' — need digits for CLI\n");
+				return;
 			}
+		} else {
+			xlog("L_WARN", "SIP CID display_name empty — keeping From=$fU\n");
+			return;
 		}
 	} else {
 		return;
 	}
+	$dlg_val(os_cli) = $var(user);
 	remove_hf("From");
 	append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
 	remove_hf("P-Asserted-Identity");
 	append_hf("P-Asserted-Identity: <sip:$var(user)@$var(dom)>\r\n");
 	remove_hf("Remote-Party-ID");
 	append_hf("Remote-Party-ID: <sip:$var(user)@$var(dom)>;party=calling;privacy=off;screen=yes\r\n");
-	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) to sip:$var(user)@$var(dom)\n");
+	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) to sip:$var(user)@$var(dom) os_cli=$dlg_val(os_cli)\n");
 }
 
 # ACC extras after CID/trunk rewrite: keep SIP user in src, presented CLI in cli, trunk gwid in gw
+# Never use $fU for cli after From rewrite — $fU stays as the original SIP username.
 route[acc_cli_gw] {
 	$acc_extra(src) = $dlg_val(os_src);
 	$acc_extra(dst) = $dlg_val(os_dst);
 	$acc_extra(ip) = $si;
-	$acc_extra(cli) = $fU;
+	if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {
+		$acc_extra(cli) = $dlg_val(os_cli);
+	} else {
+		$acc_extra(cli) = $fU;
+	}
 	# Prefer gw_id_avp (gwid like T12); fall back to attrs tid=
 	$var(gw) = $avp(dr_gw_id);
 	if ($var(gw) == NULL || $(var(gw){s.len}) == 0) {
@@ -420,7 +439,7 @@ route[acc_cli_gw] {
 		}
 	}
 	$acc_extra(gw) = $var(gw);
-	xlog("L_INFO", "ACC cli=$fU sip=$dlg_val(os_src) gw=$var(gw)\n");
+	xlog("L_INFO", "ACC cli=$acc_extra(cli) sip=$dlg_val(os_src) gw=$var(gw)\n");
 }
 
 # Multi remove-prefix (attrs rstrip=22,011,00) — strip tech prefix from RURI before send
@@ -451,6 +470,7 @@ route[apply_ruri_strip] {
 
 # Apply Magnus Fromuser / Fromdomain / CID prefixes from gateway attrs (fu=;fd=;cidadd=;cidrem=)
 # When fu= is set it ALWAYS overrides SIP-user CallerID and PBX-sent From (ViciDial etc.).
+# Start from os_cli (display_name / fixed already applied) — $fU is still the SIP username.
 route[apply_trunk_attrs] {
 	if ($avp(dr_gw_attrs) == NULL) {
 		return;
@@ -461,7 +481,11 @@ route[apply_trunk_attrs] {
 	$var(cidadd) = $(var(attrs){param.value,cidadd});
 	$var(cidrem) = $(var(attrs){param.value,cidrem});
 
-	$var(user) = $fU;
+	if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {
+		$var(user) = $dlg_val(os_cli);
+	} else {
+		$var(user) = $fU;
+	}
 	if ($var(cidrem) != NULL && $(var(cidrem){s.len}) > 0) {
 		$var(cidrem) = $(var(cidrem){s.unescape.param});
 		if ($(var(user){s.substr,0,$(var(cidrem){s.len})}) == $var(cidrem)) {
@@ -482,25 +506,31 @@ route[apply_trunk_attrs] {
 	}
 	if (($var(fu) != NULL && $(var(fu){s.len}) > 0) || ($var(fd) != NULL && $(var(fd){s.len}) > 0)
 		|| ($var(cidadd) != NULL && $(var(cidadd){s.len}) > 0) || ($var(cidrem) != NULL && $(var(cidrem){s.len}) > 0)) {
+		$dlg_val(os_cli) = $var(user);
 		remove_hf("From");
 		append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
 		remove_hf("P-Asserted-Identity");
 		append_hf("P-Asserted-Identity: <sip:$var(user)@$var(dom)>\r\n");
-		xlog("L_INFO", "trunk From rewrite to sip:$var(user)@$var(dom)\n");
+		xlog("L_INFO", "trunk From rewrite to sip:$var(user)@$var(dom) os_cli=$dlg_val(os_cli)\n");
 	}
 }
 
 # SIP-user CallerID digit length (from subscriber cid_min_len / cid_max_len)
+# Use os_cli (presented CLI) — $fU is still the SIP username after From rewrite.
 route[check_cid_len] {
-	$var(clid) = $(fU{re.subst,/[^0-9]//g});
+	if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {
+		$var(clid) = $(dlg_val(os_cli){re.subst,/[^0-9]//g});
+	} else {
+		$var(clid) = $(fU{re.subst,/[^0-9]//g});
+	}
 	$var(clen) = $(var(clid){s.len});
 	if ($avp(os_cid_min) != NULL && $(avp(os_cid_min){s.int}) > 0 && $var(clen) < $(avp(os_cid_min){s.int})) {
-		xlog("L_WARN", "Wrong CallerID Length min user=$au len=$var(clen)\n");
+		xlog("L_WARN", "Wrong CallerID Length min user=$au cli=$var(clid) len=$var(clen)\n");
 		send_reply(484, "Wrong CallerID Length");
 		exit;
 	}
 	if ($avp(os_cid_max) != NULL && $(avp(os_cid_max){s.int}) > 0 && $var(clen) > $(avp(os_cid_max){s.int})) {
-		xlog("L_WARN", "Wrong CallerID Length max user=$au len=$var(clen)\n");
+		xlog("L_WARN", "Wrong CallerID Length max user=$au cli=$var(clid) len=$var(clen)\n");
 		send_reply(484, "Wrong CallerID Length");
 		exit;
 	}
