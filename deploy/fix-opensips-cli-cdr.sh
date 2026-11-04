@@ -3,11 +3,39 @@
 # Root cause: append_hf(From) does not refresh $fU, so ACC stored cli=SIP username.
 # Fix: store presented CLI in $dlg_val(os_cli) and account that in acc_cli_gw.
 #
+# Safe for REGISTER: ensures subscriber columns exist before touching load_credentials,
+# verifies opensips stays active, unbans fail2ban SIP jails.
+#
 # Usage: sudo bash /opt/ownswitch-src/deploy/fix-opensips-cli-cdr.sh
 set -Eeuo pipefail
 CFG="${1:-/etc/opensips/opensips.cfg}"
 [[ -f "$CFG" ]] || { echo "Missing $CFG"; exit 1; }
 [[ "$(id -u)" -eq 0 ]] || { echo "Run as root"; exit 1; }
+
+echo "== OpenSIPS CLI / CDR fix =="
+
+# --- Ensure auth columns exist BEFORE any load_credentials change (REGISTER safety) ---
+ensure_col() {
+  local col="$1" def="$2"
+  local n
+  n="$(mysql -Nuroot opensips -e "SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA='opensips' AND TABLE_NAME='subscriber' AND COLUMN_NAME='${col}'" 2>/dev/null || echo 0)"
+  if [[ "${n:-0}" -eq 0 ]]; then
+    echo "ADD subscriber.${col}"
+    mysql -uroot opensips -e "ALTER TABLE subscriber ADD COLUMN ${def}"
+  else
+    echo "OK subscriber.${col}"
+  fi
+}
+ensure_col media_policy "media_policy VARCHAR(16) NOT NULL DEFAULT 'relay'"
+ensure_col dtmf_pass "dtmf_pass VARCHAR(8) NOT NULL DEFAULT 'yes'"
+ensure_col cid_mode "cid_mode VARCHAR(16) NOT NULL DEFAULT 'passthrough'"
+ensure_col cid_min_len "cid_min_len INT UNSIGNED NOT NULL DEFAULT 0"
+ensure_col cid_max_len "cid_max_len INT UNSIGNED NOT NULL DEFAULT 0"
+ensure_col allow_calls "allow_calls TINYINT(1) NOT NULL DEFAULT 1"
+ensure_col dst_format "dst_format VARCHAR(16) NOT NULL DEFAULT 'as_is'"
+ensure_col dnc_group_id "dnc_group_id INT UNSIGNED NOT NULL DEFAULT 0"
+ensure_col rpid "rpid VARCHAR(64) NULL"
 
 BAK="${CFG}.bak-cli-$(date +%Y%m%d%H%M%S)"
 cp -a "$CFG" "$BAK"
@@ -15,23 +43,43 @@ echo "Backup: $BAK"
 
 python3 - "$CFG" <<'PY'
 import re, sys
+
 cfg = sys.argv[1]
 text = open(cfg, encoding="utf-8", errors="replace").read()
 
 def replace_route(text: str, name: str, body: str) -> str:
-    # body includes "route[name] { ... }"
-    pat = re.compile(rf'(?ms)^route\[{re.escape(name)}\]\s*\{{.*?\n\}}\s*')
-    if pat.search(text):
-        text = pat.sub(body.rstrip() + "\n\n", text, count=1)
-        print(f"replaced route[{name}]")
-    else:
-        # insert before route[relay] or append
+    """Replace route[name] { ... } using brace counting (safe with nested ifs)."""
+    marker = f"route[{name}]"
+    start = text.find(marker)
+    if start < 0:
         if "route[relay]" in text:
             text = text.replace("route[relay]", body.rstrip() + "\n\nroute[relay]", 1)
         else:
             text += "\n" + body
         print(f"inserted route[{name}]")
-    return text
+        return text
+    # Find opening brace
+    brace = text.find("{", start)
+    if brace < 0:
+        raise SystemExit(f"no '{{' after {marker}")
+    depth = 0
+    i = brace
+    while i < len(text):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                # swallow trailing whitespace/newlines
+                while end < len(text) and text[end] in " \t\r\n":
+                    end += 1
+                text = text[:start] + body.rstrip() + "\n\n" + text[end:]
+                print(f"replaced route[{name}]")
+                return text
+        i += 1
+    raise SystemExit(f"unbalanced braces in route[{name}]")
 
 sip_cid = r'''route[apply_sip_cid] {
 	$dlg_val(os_cli) = $fU;
@@ -94,28 +142,6 @@ acc_cli = r'''route[acc_cli_gw] {
 }
 '''
 
-# Also patch apply_outbound_cid alias if present (older live cfgs)
-for name in ("apply_sip_cid", "apply_outbound_cid"):
-    if f"route[{name}]" in text or f"route({name})" in text:
-        body = sip_cid if name == "apply_sip_cid" else sip_cid.replace("apply_sip_cid", "apply_outbound_cid")
-        text = replace_route(text, name, body)
-
-if "route[acc_cli_gw]" in text or "route(acc_cli_gw)" in text:
-    text = replace_route(text, "acc_cli_gw", acc_cli)
-else:
-    # Ensure call site exists before relay markers
-    text = replace_route(text, "acc_cli_gw", acc_cli)
-    for anchor in (
-        'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
-        "route(relay);",
-        "\tt_relay();",
-    ):
-        if anchor in text and "route(acc_cli_gw);" not in text.split(anchor, 1)[0][-80:]:
-            text = text.replace(anchor, "route(acc_cli_gw);\n\t" + anchor, 1)
-            print("inserted route(acc_cli_gw); before", anchor[:40])
-            break
-
-# Patch apply_trunk_attrs to prefer os_cli as base From user
 trunk = r'''route[apply_trunk_attrs] {
 	if ($avp(dr_gw_attrs) == NULL) {
 		return;
@@ -159,10 +185,7 @@ trunk = r'''route[apply_trunk_attrs] {
 	}
 }
 '''
-if "route[apply_trunk_attrs]" in text:
-    text = replace_route(text, "apply_trunk_attrs", trunk)
 
-# check_cid_len against os_cli
 cid_len = r'''route[check_cid_len] {
 	if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {
 		$var(clid) = $(dlg_val(os_cli){re.subst,/[^0-9]//g});
@@ -182,10 +205,37 @@ cid_len = r'''route[check_cid_len] {
 	}
 }
 '''
+
+# Only replace routes that already exist — never invent apply_outbound_cid duplicates
+if "route[apply_sip_cid]" in text:
+    text = replace_route(text, "apply_sip_cid", sip_cid)
+elif "route[apply_outbound_cid]" in text:
+    text = replace_route(text, "apply_outbound_cid", sip_cid.replace("apply_sip_cid", "apply_outbound_cid"))
+else:
+    text = replace_route(text, "apply_sip_cid", sip_cid)
+
+if "route[acc_cli_gw]" in text or "route(acc_cli_gw)" in text:
+    text = replace_route(text, "acc_cli_gw", acc_cli)
+else:
+    text = replace_route(text, "acc_cli_gw", acc_cli)
+    for anchor in (
+        'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
+        "route(relay);",
+        "\tt_relay();",
+    ):
+        pinned = "route(acc_cli_gw);\n\t" + anchor
+        if anchor in text and pinned not in text:
+            text = text.replace(anchor, pinned, 1)
+            print("inserted route(acc_cli_gw); before", anchor[:40])
+            break
+
+if "route[apply_trunk_attrs]" in text:
+    text = replace_route(text, "apply_trunk_attrs", trunk)
+
 if "route[check_cid_len]" in text:
     text = replace_route(text, "check_cid_len", cid_len)
 
-# Ensure load_credentials has cid_mode
+# load_credentials: only add cid maps if columns exist (verified by shell above)
 lc = re.search(r'modparam\("auth_db",\s*"load_credentials",\s*"([^"]*)"\)', text)
 if lc and "os_cid_mode" not in lc.group(1):
     creds = lc.group(1)
@@ -194,6 +244,10 @@ if lc and "os_cid_mode" not in lc.group(1):
     creds += "$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid"
     text = text[: lc.start(1)] + creds + text[lc.end(1) :]
     print("load_credentials: added cid_mode")
+
+# Preserve REGISTER block marker
+if "is_method(\"REGISTER\")" not in text and 'is_method("REGISTER")' not in text:
+    raise SystemExit("FATAL: REGISTER route missing after patch — aborting")
 
 open(cfg, "w", encoding="utf-8").write(text)
 print("Patched", cfg)
@@ -207,8 +261,22 @@ fi
 
 systemctl restart opensips
 sleep 1
-systemctl is-active opensips
+if ! systemctl is-active --quiet opensips; then
+  echo "FATAL: opensips not active — restoring $BAK" >&2
+  journalctl -u opensips -n 40 --no-pager >&2 || true
+  cp -a "$BAK" "$CFG"
+  systemctl restart opensips || true
+  exit 1
+fi
+
+# Unban softphones that failed during the brief restart window
+if command -v fail2ban-client >/dev/null 2>&1; then
+  fail2ban-client unban --all >/dev/null 2>&1 || true
+  echo "fail2ban: unban --all"
+fi
+
+echo "opensips: $(systemctl is-active opensips)"
 echo
-echo "OK. Place a test call from Eyebeam (Display Name = digits, CallerID mode = Softphone display)."
-echo "Expect log:  ACC cli=1213… sip=owner"
-echo "CDR CallerID column should show the display-name number, SIP column = owner."
+echo "OK. Re-register Eyebeam, then place a test call."
+echo "Expect: ACC cli=<display digits> sip=<sip username>"
+echo "If REGISTER still fails: sudo bash /opt/ownswitch-src/deploy/fix-opensips-register.sh"
