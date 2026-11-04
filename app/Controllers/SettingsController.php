@@ -8,6 +8,7 @@ use Ownswitch\App;
 use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
 use Ownswitch\Services\Routing\FailoverSipCodesSync;
+use Ownswitch\Services\Settings\DialogTimeoutSync;
 use Ownswitch\Services\Settings\SettingsService;
 
 final class SettingsController extends BaseController
@@ -22,6 +23,8 @@ final class SettingsController extends BaseController
             'failover_max_retries' => '3',
             'failover_sip_codes' => '408,480,486,503',
             'kill_switch' => '0',
+            'switch_name' => '',
+            'prepaid_hard_cap_seconds' => '7200',
         ];
         $values = [];
         foreach (SettingsService::SCHEMA as $k => $_) {
@@ -103,6 +106,16 @@ final class SettingsController extends BaseController
                 }
             } catch (\Throwable $e) {
                 $msg .= ' (failover sync skipped: ' . mb_substr($e->getMessage(), 0, 80) . ')';
+            }
+        }
+        if (array_key_exists('prepaid_hard_cap_seconds', $clean)) {
+            try {
+                $dlg = (new DialogTimeoutSync($this->db()))->sync();
+                if (!empty($dlg['ok'])) {
+                    $msg .= ' OpenSIPS dialog timeout set to ' . (int) ($dlg['seconds'] ?? 0) . 's (restart opensips to apply).';
+                }
+            } catch (\Throwable $e) {
+                $msg .= ' (dialog timeout sync skipped: ' . mb_substr($e->getMessage(), 0, 80) . ')';
             }
         }
         return $this->redirect($r, '/settings', $msg);

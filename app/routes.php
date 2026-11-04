@@ -29,6 +29,7 @@ use Ownswitch\Controllers\ReportController;
 use Ownswitch\Controllers\ResellerController;
 use Ownswitch\Controllers\RoutingController;
 use Ownswitch\Controllers\SettingsController;
+use Ownswitch\Controllers\VersionController;
 use Ownswitch\Controllers\SipUserController;
 use Ownswitch\Controllers\StatsController;
 use Ownswitch\Controllers\StatementController;
@@ -240,6 +241,9 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->post('/settings/firewall/unban', [$fw, 'unban'], [$STAFF]);
     $r->post('/settings/firewall/ban', [$fw, 'ban'], [$STAFF]);
     $r->post('/settings/firewall/config', [$fw, 'saveConfig'], [$STAFF]);
+    $ver = new VersionController();
+    $r->get('/settings/version', [$ver, 'index'], [$STAFF]);
+    $r->post('/settings/version/update', [$ver, 'update'], [$STAFF]);
 
     // Magnus scaffold modules (every remaining menu item)
     $r->get('/modules/{slug}', [new ModuleScaffoldController(), 'show'], [$STAFF]);

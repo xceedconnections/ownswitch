@@ -17,6 +17,12 @@ final class PrepaidService
     {
     }
 
+    /** System default hard cap from Settings (prepaid_hard_cap_seconds). */
+    public function systemHardCap(): int
+    {
+        return (new \Ownswitch\Services\Settings\MaxCallDuration($this->pdo))->systemDefault();
+    }
+
     /**
      * Largest billable duration B (aligned to I + k*S) whose total charge fits within $available.
      * Returns 0 when even the initial block (plus connect fee) cannot be afforded.
@@ -60,8 +66,11 @@ final class PrepaidService
      * @param array{id:int,billing_mode:string,credit_limit:string,currency:string,reseller_id:?int} $customer
      * @return array{authorized:bool,reason?:string,max_seconds?:int,reserved?:string,reservation_id?:int}
      */
-    public function authorize(array $customer, string $callId, string $rate, int $initial, int $subsequent, string $connectFee = '0', int $hardCapSeconds = 7200, int $ttlSeconds = 0): array
+    public function authorize(array $customer, string $callId, string $rate, int $initial, int $subsequent, string $connectFee = '0', int $hardCapSeconds = 0, int $ttlSeconds = 0): array
     {
+        if ($hardCapSeconds <= 0) {
+            $hardCapSeconds = $this->systemHardCap();
+        }
         $cid = (int) $customer['id'];
         return $this->ledger->tx(function () use ($customer, $callId, $rate, $initial, $subsequent, $connectFee, $hardCapSeconds, $ttlSeconds, $cid): array {
             $this->ledger->ensureBalanceRow($cid);

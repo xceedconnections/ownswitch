@@ -115,6 +115,14 @@ if [[ -f "$SRC/deploy/templates/firewall/ownswitch-sip-peer-fw.sh" ]]; then
   mkdir -p /var/lib/ownswitch/sip-peer-fw
   chmod 0750 /var/lib/ownswitch/sip-peer-fw 2>/dev/null || true
 fi
+# Portal “Version → Update now”
+if [[ -f "$SRC/deploy/templates/update/ownswitch-update.sh" ]]; then
+  install -m 0755 "$SRC/deploy/templates/update/ownswitch-update.sh" /usr/local/sbin/ownswitch-update
+  if [[ -f "$SRC/deploy/templates/update/ownswitch-update.sudoers" ]]; then
+    install -m 0440 "$SRC/deploy/templates/update/ownswitch-update.sudoers" /etc/sudoers.d/ownswitch-update
+    visudo -cf /etc/sudoers.d/ownswitch-update >/dev/null 2>&1 || true
+  fi
+fi
 if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-portal.conf" ]]; then
   install -m 0644 "$SRC/deploy/templates/fail2ban/ownswitch-portal.conf" /etc/fail2ban/filter.d/ownswitch-portal.conf
 fi

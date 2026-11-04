@@ -24,10 +24,16 @@ $initials = static function (string $name): string {
     return $a . $b;
 };
 $logoPath = null;
+$footerBrand = 'Ownswitch';
 try {
-    $logoRel = (new \Ownswitch\Services\Settings\SettingsService(\Ownswitch\App::db()))->get('switch_logo', '');
+    $settingsSvc = new \Ownswitch\Services\Settings\SettingsService(\Ownswitch\App::db());
+    $logoRel = $settingsSvc->get('switch_logo', '');
     if (is_string($logoRel) && $logoRel !== '' && is_file(\Ownswitch\App::basePath('public/' . ltrim($logoRel, '/')))) {
         $logoPath = $logoRel;
+    }
+    $sn = $settingsSvc->get('switch_name', '');
+    if (is_string($sn) && trim($sn) !== '') {
+        $footerBrand = trim($sn);
     }
 } catch (\Throwable) {
     $logoPath = null;
@@ -60,18 +66,9 @@ if ($user && in_array($user['role'] ?? '', ['customer_owner', 'customer_tech'], 
         <a class="os-logo" href="<?= e(url('/')) ?>">
             <?php if ($logoPath): ?>
                 <img src="<?= e(base_url() . '/' . ltrim($logoPath, '/')) ?>" alt="Ownswitch" class="os-logo-img">
-            <?php else:
-                $brandName = 'Ownswitch';
-                try {
-                    $n = (new \Ownswitch\Services\Settings\SettingsService(\Ownswitch\App::db()))->get('switch_name', '');
-                    if (is_string($n) && trim($n) !== '') {
-                        $brandName = trim($n);
-                    }
-                } catch (\Throwable) {
-                }
-                ?>
-                <span class="os-logo-mark"><?= e(strtoupper(substr($brandName, 0, 2))) ?></span>
-                <span class="os-logo-text"><?= e($brandName) ?></span>
+            <?php else: ?>
+                <span class="os-logo-mark">Ow</span>
+                <span class="os-logo-text">Ownswitch</span>
             <?php endif; ?>
         </a>
 
@@ -160,6 +157,13 @@ if ($user && in_array($user['role'] ?? '', ['customer_owner', 'customer_tech'], 
     <?php endforeach; ?>
     <?= $content ?>
 </main>
+<footer class="os-footer">
+    <div class="os-footer-inner">
+        <span class="os-footer-brand"><?= e($footerBrand) ?></span>
+        <span class="os-footer-sep" aria-hidden="true">·</span>
+        <span class="os-footer-meta">OpenSIPS VoIP billing</span>
+    </div>
+</footer>
 <?php else: ?>
 <main class="os-auth-page">
     <div class="os-auth-wrap">
@@ -167,7 +171,7 @@ if ($user && in_array($user['role'] ?? '', ['customer_owner', 'customer_tech'], 
             <div class="alert alert-<?= e(in_array($f['type'], ['success', 'danger', 'warning', 'info'], true) ? $f['type'] : 'info') ?>" role="alert"><?= e($f['message']) ?></div>
         <?php endforeach; ?>
         <?= $content ?>
-        <p class="os-auth-foot mb-0">Ownswitch · OpenSIPS VoIP billing</p>
+        <p class="os-auth-foot mb-0"><?= e($footerBrand) ?> · OpenSIPS VoIP billing</p>
     </div>
 </main>
 <?php endif; ?>

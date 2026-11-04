@@ -16,7 +16,11 @@ final class SettingsService
         'tax_rate_percent'            => ['Tax rate (%)', 'decimal', 'Applied on new invoices (0 = no tax)'],
         'charge_connect_on_zero'      => ['Charge connection fee on zero-duration calls', 'bool', 'Default off'],
         'rating_tolerance'            => ['Rating discrepancy tolerance', 'decimal', 'Flag when |CGRateS − portal| exceeds this'],
-        'prepaid_hard_cap_seconds'    => ['Prepaid hard max call duration (s)', 'int', ''],
+        'prepaid_hard_cap_seconds'    => [
+            'Prepaid hard max call duration (s)',
+            'int',
+            'System default max call length in seconds (e.g. 7200 = 2 hours). Used when a SIP user or trunk leaves Max call duration at 0 / Default. Also sets OpenSIPS dialog timeout.',
+        ],
         'system_max_concurrent'       => ['System max concurrent calls', 'int0', '0 = unlimited. Soft cap for capacity planning and health alerts.'],
         'system_max_cps'              => ['System max calls per second', 'int0', '0 = unlimited. Soft CPS guidance for the switch.'],
         'failover_max_retries'        => ['Failover max trunk attempts', 'int', 'How many trunks to try before giving up (1–20)'],
@@ -29,7 +33,7 @@ final class SettingsService
         ],
         'recording_retention_days'    => ['Recording retention (days)', 'int', ''],
         'switch_logo'                 => ['Switch logo', 'logo', 'PNG/JPG/WEBP/SVG, max 2 MB. Shown in the top navigation for all users.'],
-        'switch_name'                 => ['Switch display name', 'text', 'Optional brand name next to logo when no image is set'],
+        'switch_name'                 => ['Switch display name', 'text', 'Shown in the portal footer (not the header). Leave blank for “Ownswitch”.'],
     ];
 
     /** @var array<string,string>|null */
@@ -109,6 +113,11 @@ final class SettingsService
                     return preg_match('/^\d{1,2}$/', $v) && (int) $v >= 1 && (int) $v <= 20
                         ? [(string) (int) $v, null]
                         : [null, "{$label} must be between 1 and 20."];
+                }
+                if ($key === 'prepaid_hard_cap_seconds') {
+                    return preg_match('/^\d{1,7}$/', $v) && (int) $v >= 60 && (int) $v <= 604800
+                        ? [(string) (int) $v, null]
+                        : [null, "{$label} must be between 60 and 604800 seconds (1 min – 7 days)."];
                 }
                 return preg_match('/^\d{1,7}$/', $v) && (int) $v >= 1 ? [(string) (int) $v, null] : [null, "{$label} must be a positive whole number."];
             case 'int0':

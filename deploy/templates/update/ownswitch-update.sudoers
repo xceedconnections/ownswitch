@@ -1,0 +1,2 @@
+# Ownswitch portal may run UI/code update (refresh-ui).
+ownswitch ALL=(root) NOPASSWD: /usr/local/sbin/ownswitch-update

@@ -804,6 +804,7 @@ final class OpensipsProvisioner
             ['qualify', 'VARCHAR(8) NULL'],
             ['allowtransfer', 'VARCHAR(8) NULL'],
             ['max_cps', 'INT NOT NULL DEFAULT 1'],
+            ['max_call_duration', 'INT UNSIGNED NOT NULL DEFAULT 0'],
         ] as [$col, $def]) {
             try {
                 $db->exec("ALTER TABLE ownswitch_sip ADD COLUMN `{$col}` {$def}");
@@ -827,14 +828,22 @@ final class OpensipsProvisioner
         if ($maxCps === 0) {
             $maxCps = 1;
         }
+        $maxDur = (int) ($account['max_call_duration'] ?? 0);
+        if ($maxDur < 0) {
+            $maxDur = 0;
+        }
+        if ($maxDur > 604800) {
+            $maxDur = 604800;
+        }
         $st = $db->prepare(
             'INSERT INTO ownswitch_sip
-                (username, media_policy, max_channels, max_cps, sip_port, codecs, dtmfmode, dtmf_pass, nat, insecure, peer_type, `qualify`, allowtransfer)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (username, media_policy, max_channels, max_cps, max_call_duration, sip_port, codecs, dtmfmode, dtmf_pass, nat, insecure, peer_type, `qualify`, allowtransfer)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON DUPLICATE KEY UPDATE
                 media_policy = VALUES(media_policy),
                 max_channels = VALUES(max_channels),
                 max_cps = VALUES(max_cps),
+                max_call_duration = VALUES(max_call_duration),
                 sip_port = VALUES(sip_port),
                 codecs = VALUES(codecs),
                 dtmfmode = VALUES(dtmfmode),
@@ -850,6 +859,7 @@ final class OpensipsProvisioner
             $mediaPolicy,
             (int) $maxChannels,
             $maxCps,
+            $maxDur,
             $port,
             isset($account['codecs']) ? mb_substr((string) $account['codecs'], 0, 190) : null,
             isset($account['dtmfmode']) ? mb_substr((string) $account['dtmfmode'], 0, 32) : null,

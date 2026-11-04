@@ -249,6 +249,17 @@ final class SipUserController extends CrudController
                 'section' => 'Routing & media',
             ],
             [
+                'name' => 'max_call_duration',
+                'label' => 'Max call duration (s)',
+                'type' => 'int',
+                'min' => 0,
+                'max' => 604800,
+                'default' => '0',
+                'list' => true,
+                'help' => '0 = use Settings → Prepaid hard max call duration (system default). Or set a custom max in seconds (e.g. 3600 = 1 hour).',
+                'section' => 'Routing & media',
+            ],
+            [
                 'name' => 'rate_cap',
                 'label' => 'CAP (max buy $/min)',
                 'type' => 'number',
@@ -524,6 +535,20 @@ final class SipUserController extends CrudController
                 $cps = 1000;
             }
             $data['max_cps'] = $cps === 0 ? 1 : $cps;
+        }
+        if (array_key_exists('max_call_duration', $data)) {
+            $mcd = (int) $data['max_call_duration'];
+            if ($mcd < 0) {
+                $mcd = 0;
+            }
+            if ($mcd > 604800) {
+                $mcd = 604800;
+            }
+            // 1–59 → treat as mis-entry; bump to 60 when non-zero
+            if ($mcd > 0 && $mcd < 60) {
+                $mcd = 60;
+            }
+            $data['max_call_duration'] = $mcd;
         }
         if (!array_key_exists('rate_cap', $data) || $data['rate_cap'] === '' || $data['rate_cap'] === null) {
             $data['rate_cap'] = null;

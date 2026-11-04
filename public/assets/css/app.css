@@ -737,3 +737,29 @@ body.os-auth-body {
   border-color: #d5e8ec;
 }
 .os-host-grid .os-kpi { min-height: 5.5rem; }
+
+/* Portal footer (switch display name) */
+.os-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--os-line, #e5e7eb);
+  background: #f8fafc;
+  padding: .65rem 1.25rem;
+}
+.os-footer-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .35rem .5rem;
+  font-size: .82rem;
+  color: #64748b;
+}
+.os-footer-brand { font-weight: 600; color: #334155; }
+.os-footer-sep { opacity: .5; }
+body.os-body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+body.os-body > .os-main-top { flex: 1 0 auto; }
