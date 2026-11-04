@@ -222,9 +222,21 @@ route {
 	}
 
 	# ---- INVITE ----
-	# Customer IP ACL → skip digest. Carrier ACL → deliver only if local AOR exists;
-	# otherwise fall through to digest (fixes softphone 404 when IP is also a trunk).
-	if (!check_source_address(1)) {
+	# Customer IP ACL → trust source IP. Softphones (Eyebeam) still send digest — we MUST
+	# still proxy_authorize so load_credentials fills os_cid_mode / os_dncid / media AVPs.
+	# Without that, Softphone Display Name mode never runs (AVPs stay NULL → passthrough).
+	# Carrier ACL → deliver only if local AOR exists; else fall through to digest.
+	if (check_source_address(1)) {
+		if (is_present_hf("Proxy-Authorization") || is_present_hf("Authorization")) {
+			if (proxy_authorize("", "subscriber")) {
+				consume_credentials();
+			} else {
+				xlog("L_WARN", "IP ACL ok but INVITE digest failed user=$fU from=$si (AVPs may be empty)\n");
+			}
+		} else {
+			xlog("L_INFO", "IP ACL peer (no digest) from=$si user=$fU — CID prefs need sql load if used\n");
+		}
+	} else {
 		if (check_source_address(2)) {
 			@@OPENSIPS_ALIAS_LOOKUP@@
 			if (lookup("location")) {
@@ -376,44 +388,74 @@ route[apply_media] {
 #   passthrough  = leave From as ViciDial / Eyebeam sent (portal CallerID empty)
 #   fixed        = force portal CallerID (rpid / os_cid)
 #   display_name = use Eyebeam/softphone Display Name as From user when it looks like a number
-# Eyebeam often puts quotes around Display Name ("1213…") — strip to digits/+ only.
+# Eyebeam: From: "12138007000" <sip:owner@host>  →  $fn=display, $fU=owner
 # IMPORTANT: append_hf(From) does NOT refresh $fU — store presented CLI in $dlg_val(os_cli)
 # so ACC / CDR CallerID is the number, not the SIP username.
 route[apply_sip_cid] {
 	# Default presented CLI = current From user (may still be SIP username before rewrite)
 	$dlg_val(os_cli) = $fU;
-	if ($avp(os_cid_mode) == NULL || $(avp(os_cid_mode){s.len}) == 0 || $avp(os_cid_mode) == "passthrough") {
-		return;
-	}
+	$var(mode) = $avp(os_cid_mode);
 	$var(user) = $fU;
 	$var(dom) = $fd;
-	if ($avp(os_cid_mode) == "fixed" && $avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
+
+	# Collect Eyebeam Display Name from several places ($fn is primary)
+	$var(dn) = $fn;
+	if ($var(dn) == NULL || $(var(dn){s.len}) == 0) {
+		$var(dn) = $(hdr(From){nameaddr.name});
+	}
+	if ($var(dn) == NULL || $(var(dn){s.len}) == 0) {
+		$var(dn) = $(hdr(P-Asserted-Identity){nameaddr.name});
+	}
+	if ($var(dn) == NULL || $(var(dn){s.len}) == 0) {
+		$var(dn) = $(hdr(Remote-Party-ID){nameaddr.name});
+	}
+	$var(dn_digits) = null;
+	if ($var(dn) != NULL && $(var(dn){s.len}) > 0) {
+		$var(dn_digits) = $(var(dn){re.subst,/[^0-9+]//g});
+	}
+
+	# If AVP missing (IP ACL skipped digest) but Display Name is a phone and From user is not,
+	# treat as Softphone Display Name — this is the Eyebeam case that was silently skipped.
+	if (($var(mode) == NULL || $(var(mode){s.len}) == 0) && $var(dn_digits) != NULL
+		&& $(var(dn_digits){s.len}) >= 3 && $(var(dn_digits){s.len}) <= 30
+		&& !($fU =~ "^[+0-9]{8,30}$")) {
+		$var(mode) = "display_name";
+		xlog("L_INFO", "SIP CID mode inferred display_name (AVP empty) fn='$var(dn)'\n");
+	}
+
+	if ($var(mode) == NULL || $(var(mode){s.len}) == 0 || $var(mode) == "passthrough") {
+		# Still prefer Display Name digits for CDR when From user is the SIP username
+		if ($var(dn_digits) != NULL && $(var(dn_digits){s.len}) >= 8 && $(var(dn_digits){s.len}) <= 30
+			&& !($fU =~ "^[+0-9]{8,30}$")) {
+			$dlg_val(os_cli) = $var(dn_digits);
+			$acc_extra(cli) = $var(dn_digits);
+			xlog("L_INFO", "SIP CID passthrough CDR-cli from display '$var(dn_digits)' (From user=$fU kept)\n");
+		}
+		return;
+	}
+
+	if ($var(mode) == "fixed" && $avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
 		$var(user) = $(avp(os_cid){re.subst,/[^0-9+]//g});
-	} else if ($avp(os_cid_mode) == "display_name") {
-		$var(dn) = $fn;
-		if ($var(dn) != NULL && $(var(dn){s.len}) > 0) {
-			$var(dn) = $(var(dn){re.subst,/[^0-9+]//g});
-			if ($var(dn) =~ "^[+0-9]{3,30}$") {
-				$var(user) = $var(dn);
-			} else {
-				xlog("L_WARN", "SIP CID display_name raw='$fn' — need digits for CLI\n");
-				return;
-			}
+	} else if ($var(mode) == "display_name") {
+		if ($var(dn_digits) != NULL && $(var(dn_digits){s.len}) >= 3 && $(var(dn_digits){s.len}) <= 30
+			&& ($var(dn_digits) =~ "^[+0-9]{3,30}$")) {
+			$var(user) = $var(dn_digits);
 		} else {
-			xlog("L_WARN", "SIP CID display_name empty — keeping From=$fU\n");
+			xlog("L_WARN", "SIP CID display_name empty/invalid fn='$fn' dn='$var(dn)' From=$fU — set Eyebeam Display Name to digits\n");
 			return;
 		}
 	} else {
 		return;
 	}
 	$dlg_val(os_cli) = $var(user);
+	$acc_extra(cli) = $var(user);
 	remove_hf("From");
 	append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
 	remove_hf("P-Asserted-Identity");
 	append_hf("P-Asserted-Identity: <sip:$var(user)@$var(dom)>\r\n");
 	remove_hf("Remote-Party-ID");
 	append_hf("Remote-Party-ID: <sip:$var(user)@$var(dom)>;party=calling;privacy=off;screen=yes\r\n");
-	xlog("L_INFO", "SIP CID mode=$avp(os_cid_mode) to sip:$var(user)@$var(dom) os_cli=$dlg_val(os_cli)\n");
+	xlog("L_INFO", "SIP CID mode=$var(mode) to sip:$var(user)@$var(dom) os_cli=$dlg_val(os_cli)\n");
 }
 
 # ACC extras after CID/trunk rewrite: keep SIP user in src, presented CLI in cli, trunk gwid in gw
