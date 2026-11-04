@@ -76,6 +76,18 @@ fi
 ln -sfn "$REL" "$OWN_OPT/current"
 echo "Switched current → $REL"
 
+# Detect PHP-FPM unit (8.3 preferred)
+php_fpm_unit() {
+  for s in php8.3-fpm php8.2-fpm php8.1-fpm php-fpm; do
+    if systemctl cat "${s}.service" >/dev/null 2>&1; then
+      echo "$s"
+      return 0
+    fi
+  done
+  echo "php8.3-fpm"
+}
+PHP_FPM_SVC="$(php_fpm_unit)"
+
 # Keep nginx document root on /opt/ownswitch/current/public
 NGINX_CONF="/etc/nginx/sites-available/ownswitch.conf"
 if [[ -f "$NGINX_CONF" ]]; then
@@ -83,12 +95,22 @@ if [[ -f "$NGINX_CONF" ]]; then
     sed -i -E 's#root[[:space:]]+[^;]+/public;#root /opt/ownswitch/current/public;#g' "$NGINX_CONF"
     echo "Nginx root → /opt/ownswitch/current/public"
   fi
-  nginx -t && systemctl reload nginx
+  if nginx -t; then
+    systemctl reload nginx || systemctl restart nginx || true
+  else
+    echo "WARN: nginx -t failed — leaving nginx running; fix config then: systemctl reload nginx" >&2
+  fi
 else
   echo "WARN: $NGINX_CONF missing — skip nginx rewrite"
 fi
 
-systemctl reload php8.3-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
+# Hard restart FPM so Update-now never leaves a dead pool (reload can no-op while broken)
+echo "Restarting ${PHP_FPM_SVC}…"
+systemctl restart "$PHP_FPM_SVC" || systemctl restart php8.3-fpm || systemctl restart php8.2-fpm || true
+sleep 1
+if ! systemctl is-active --quiet "$PHP_FPM_SVC" 2>/dev/null && ! systemctl is-active --quiet php8.3-fpm 2>/dev/null; then
+  echo "WARN: PHP-FPM not active after restart — portal may 502. Run: sudo bash $SRC/deploy/fix-portal-502.sh" >&2
+fi
 
 # Persist APP_SRC
 if [[ -f "$OWN_ETC/install.conf" ]]; then
@@ -156,6 +178,10 @@ if [[ -f "$REL/bin/migrate.php" ]]; then
   fi
 fi
 
+# Final service health (after helpers / migrations)
+systemctl restart "$PHP_FPM_SVC" 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
+systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+
 DOMAIN="$(grep -E '^OWNSWITCH_DOMAIN=' "$OWN_ETC/install.conf" 2>/dev/null | cut -d= -f2- || true)"
 DOMAIN="${DOMAIN:-voip.xceedconnections.com}"
 echo
@@ -163,4 +189,8 @@ echo "Hard-refresh the browser (Ctrl+Shift+R)."
 echo "Checks:"
 echo "  curl -k -I https://${DOMAIN}/assets/css/app.css"
 echo "  curl -k -s https://${DOMAIN}/login | grep -E 'os-auth-page|bootstrap-icons|os-brand-mark'"
+echo "  systemctl is-active nginx ${PHP_FPM_SVC}"
 echo "Done ($HEAD)."
+if ! systemctl is-active --quiet nginx || { ! systemctl is-active --quiet "$PHP_FPM_SVC" 2>/dev/null && ! systemctl is-active --quiet php8.3-fpm 2>/dev/null; }; then
+  echo "WARN: services unhealthy — run: sudo bash $SRC/deploy/fix-portal-502.sh" >&2
+fi
