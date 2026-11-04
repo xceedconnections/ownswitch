@@ -150,6 +150,15 @@ final class OpensipsAccImporter
         }
 
         $cli = self::cleanCallerId((string) ($row['cli'] ?? ''));
+        // Custom hybrid ACC sometimes swaps fields: src_user=phone CLI, cli=SIP username
+        if (
+            $sipUser !== '' && $cli !== ''
+            && self::looksLikePhone($sipUser) && self::looksLikeSipUser($cli)
+        ) {
+            $tmp = $sipUser;
+            $sipUser = $cli;
+            $cli = self::cleanCallerId($tmp);
+        }
         // ACC bug (pre-os_cli): cli was still SIP username after display_name From rewrite
         if ($cli === '' || ($sipUser !== '' && strcasecmp($cli, $sipUser) === 0) || self::looksLikeSipUser($cli)) {
             $fromCli = self::cleanCallerId($this->userPart((string) ($row['from_uri'] ?? $row['caller_id'] ?? '')));
@@ -157,7 +166,7 @@ final class OpensipsAccImporter
                 $cli = $fromCli;
             }
         }
-        if ($cli === '') {
+        if ($cli === '' || ($sipUser !== '' && strcasecmp($cli, $sipUser) === 0)) {
             // Older ACC rows stored presented CLI in src_user — keep digits for src display
             $maybeCli = self::cleanCallerId($sipUser);
             if ($maybeCli !== '' && self::looksLikePhone($maybeCli) && !self::looksLikeSipUser($sipUser)) {

@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Fix CDR CallerID when SIP mode = Softphone display name.
-# Root cause: append_hf(From) does not refresh $fU, so ACC stored cli=SIP username.
-# Fix: store presented CLI in $dlg_val(os_cli) and account that in acc_cli_gw.
+# Fix CDR CallerID for Softphone display name (Eyebeam Display Name → CLI).
 #
-# Safe for REGISTER: ensures subscriber columns exist before touching load_credentials,
-# verifies opensips stays active, unbans fail2ban SIP jails.
+# Why CDR shows SIP username:
+#  1) append_hf(From) does not refresh $fU → ACC cli=$fU stays "owner"
+#  2) Custom "acc_extra before relay" often does $acc_extra(src)=$fU (wrong field / stale $fU)
+# Fix: dlg_val(os_cli) + force every ACC cli/src write to use os_cli / os_src.
 #
-# Usage: sudo bash /opt/ownswitch-src/deploy/fix-opensips-cli-cdr.sh
+# REGISTER-safe. Usage: sudo bash /opt/ownswitch-src/deploy/fix-opensips-cli-cdr.sh
 set -Eeuo pipefail
 CFG="${1:-/etc/opensips/opensips.cfg}"
 [[ -f "$CFG" ]] || { echo "Missing $CFG"; exit 1; }
 [[ "$(id -u)" -eq 0 ]] || { echo "Run as root"; exit 1; }
 
-echo "== OpenSIPS CLI / CDR fix =="
+echo "== OpenSIPS CLI → CDR fix =="
 
-# --- Ensure auth columns exist BEFORE any load_credentials change (REGISTER safety) ---
 ensure_col() {
   local col="$1" def="$2"
   local n
@@ -37,18 +36,19 @@ ensure_col dst_format "dst_format VARCHAR(16) NOT NULL DEFAULT 'as_is'"
 ensure_col dnc_group_id "dnc_group_id INT UNSIGNED NOT NULL DEFAULT 0"
 ensure_col rpid "rpid VARCHAR(64) NULL"
 
+echo "OpenSIPS subscriber cid_mode values:"
+mysql -Nuroot opensips -e "SELECT username, cid_mode, LEFT(IFNULL(rpid,''),20) FROM subscriber LIMIT 20" 2>/dev/null || true
+
 BAK="${CFG}.bak-cli-$(date +%Y%m%d%H%M%S)"
 cp -a "$CFG" "$BAK"
 echo "Backup: $BAK"
 
 python3 - "$CFG" <<'PY'
 import re, sys
-
 cfg = sys.argv[1]
 text = open(cfg, encoding="utf-8", errors="replace").read()
 
 def replace_route(text: str, name: str, body: str) -> str:
-    """Replace route[name] { ... } using brace counting (safe with nested ifs)."""
     marker = f"route[{name}]"
     start = text.find(marker)
     if start < 0:
@@ -58,21 +58,18 @@ def replace_route(text: str, name: str, body: str) -> str:
             text += "\n" + body
         print(f"inserted route[{name}]")
         return text
-    # Find opening brace
     brace = text.find("{", start)
     if brace < 0:
         raise SystemExit(f"no '{{' after {marker}")
     depth = 0
     i = brace
     while i < len(text):
-        ch = text[i]
-        if ch == "{":
+        if text[i] == "{":
             depth += 1
-        elif ch == "}":
+        elif text[i] == "}":
             depth -= 1
             if depth == 0:
                 end = i + 1
-                # swallow trailing whitespace/newlines
                 while end < len(text) and text[end] in " \t\r\n":
                     end += 1
                 text = text[:start] + body.rstrip() + "\n\n" + text[end:]
@@ -92,6 +89,9 @@ sip_cid = r'''route[apply_sip_cid] {
 		$var(user) = $(avp(os_cid){re.subst,/[^0-9+]//g});
 	} else if ($avp(os_cid_mode) == "display_name") {
 		$var(dn) = $fn;
+		if ($var(dn) == NULL || $(var(dn){s.len}) == 0) {
+			$var(dn) = $(hdr(From){nameaddr.name});
+		}
 		if ($var(dn) != NULL && $(var(dn){s.len}) > 0) {
 			$var(dn) = $(var(dn){re.subst,/[^0-9+]//g});
 			if ($var(dn) =~ "^[+0-9]{3,30}$") {
@@ -108,6 +108,7 @@ sip_cid = r'''route[apply_sip_cid] {
 		return;
 	}
 	$dlg_val(os_cli) = $var(user);
+	$acc_extra(cli) = $var(user);
 	remove_hf("From");
 	append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
 	remove_hf("P-Asserted-Identity");
@@ -177,6 +178,7 @@ trunk = r'''route[apply_trunk_attrs] {
 	if (($var(fu) != NULL && $(var(fu){s.len}) > 0) || ($var(fd) != NULL && $(var(fd){s.len}) > 0)
 		|| ($var(cidadd) != NULL && $(var(cidadd){s.len}) > 0) || ($var(cidrem) != NULL && $(var(cidrem){s.len}) > 0)) {
 		$dlg_val(os_cli) = $var(user);
+		$acc_extra(cli) = $var(user);
 		remove_hf("From");
 		append_hf("From: <sip:$var(user)@$var(dom)>;tag=$ft\r\n");
 		remove_hf("P-Asserted-Identity");
@@ -206,7 +208,6 @@ cid_len = r'''route[check_cid_len] {
 }
 '''
 
-# Only replace routes that already exist — never invent apply_outbound_cid duplicates
 if "route[apply_sip_cid]" in text:
     text = replace_route(text, "apply_sip_cid", sip_cid)
 elif "route[apply_outbound_cid]" in text:
@@ -214,10 +215,8 @@ elif "route[apply_outbound_cid]" in text:
 else:
     text = replace_route(text, "apply_sip_cid", sip_cid)
 
-if "route[acc_cli_gw]" in text or "route(acc_cli_gw)" in text:
-    text = replace_route(text, "acc_cli_gw", acc_cli)
-else:
-    text = replace_route(text, "acc_cli_gw", acc_cli)
+text = replace_route(text, "acc_cli_gw", acc_cli)
+if "route(acc_cli_gw)" not in text:
     for anchor in (
         'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
         "route(relay);",
@@ -226,28 +225,79 @@ else:
         pinned = "route(acc_cli_gw);\n\t" + anchor
         if anchor in text and pinned not in text:
             text = text.replace(anchor, pinned, 1)
-            print("inserted route(acc_cli_gw); before", anchor[:40])
+            print("call site route(acc_cli_gw); before", anchor[:40])
             break
 
 if "route[apply_trunk_attrs]" in text:
     text = replace_route(text, "apply_trunk_attrs", trunk)
-
 if "route[check_cid_len]" in text:
     text = replace_route(text, "check_cid_len", cid_len)
 
-# load_credentials: only add cid maps if columns exist (verified by shell above)
+# --- Global ACC field corrections (custom hybrid cfgs) ---
+# Never store SIP username in cli via stale $fU
+n = text.count("$acc_extra(cli) = $fU;")
+if n:
+    text = text.replace(
+        "$acc_extra(cli) = $fU;",
+        "if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) { $acc_extra(cli) = $dlg_val(os_cli); } else { $acc_extra(cli) = $fU; }",
+    )
+    print(f"rewrote $acc_extra(cli)=$fU → os_cli ({n} site(s))")
+
+# Custom before-relay block: src must stay SIP user (os_src), cli = os_cli
+# Old broken pattern from fix-cdr-import-now.sh:
+#   $acc_extra(src) = $fU;
+#   xlog(... src=$fU ...)
+old_relay = re.compile(
+    r'\$acc_extra\(src\)\s*=\s*\$fU;\s*\n'
+    r'(\s*)\$acc_extra\(dst\)\s*=\s*\$dlg_val\(os_dst\);\s*\n'
+    r'(\s*)\$acc_extra\(ip\)\s*=\s*\$si;\s*\n'
+    r'(\s*)xlog\("L_INFO",\s*"OWNSWITCH acc_extra before relay src=\$fU dst=\$dlg_val\(os_dst\)\\n"\);',
+)
+new_relay = (
+    '$acc_extra(src) = $dlg_val(os_src);\n'
+    r'\1$acc_extra(dst) = $dlg_val(os_dst);\n'
+    r'\1$acc_extra(ip) = $si;\n'
+    r'\1if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) { $acc_extra(cli) = $dlg_val(os_cli); } else { $acc_extra(cli) = $fU; }\n'
+    r'\1xlog("L_INFO", "OWNSWITCH acc_extra before relay sip=$dlg_val(os_src) cli=$acc_extra(cli) dst=$dlg_val(os_dst)\n");'
+)
+text2, nrelay = old_relay.subn(new_relay, text)
+if nrelay:
+    text = text2
+    print(f"fixed OWNSWITCH acc_extra before relay block ({nrelay})")
+else:
+    # Looser: any before-relay xlog — inject cli from os_cli just above it
+    if "OWNSWITCH acc_extra before relay" in text and "$acc_extra(cli) = $dlg_val(os_cli)" not in text:
+        text = text.replace(
+            'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
+            'if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) { $acc_extra(cli) = $dlg_val(os_cli); } else if ($acc_extra(cli) == NULL) { $acc_extra(cli) = $fU; }\n'
+            '\t$acc_extra(src) = $dlg_val(os_src);\n'
+            '\txlog("L_INFO", "OWNSWITCH acc_extra before relay',
+            1,
+        )
+        print("injected os_cli into custom acc_extra before relay")
+
+# Init os_cli next to os_src / os_dst if missing
+if "$dlg_val(os_cli)" not in text.split("create_dialog", 1)[-1][:500] if "create_dialog" in text else True:
+    if "$dlg_val(os_dst) = $rU;" in text and "$dlg_val(os_cli) = $fU;" not in text:
+        text = text.replace(
+            "$dlg_val(os_dst) = $rU;",
+            "$dlg_val(os_dst) = $rU;\n\t$dlg_val(os_cli) = $fU;",
+            1,
+        )
+        print("init os_cli after os_dst")
+
+# load_credentials must expose cid_mode
 lc = re.search(r'modparam\("auth_db",\s*"load_credentials",\s*"([^"]*)"\)', text)
 if lc and "os_cid_mode" not in lc.group(1):
     creds = lc.group(1)
     if not creds.endswith(";"):
         creds += ";"
-    creds += "$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid"
+    creds += "$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid;$avp(os_cid_min)=cid_min_len;$avp(os_cid_max)=cid_max_len"
     text = text[: lc.start(1)] + creds + text[lc.end(1) :]
     print("load_credentials: added cid_mode")
 
-# Preserve REGISTER block marker
-if "is_method(\"REGISTER\")" not in text and 'is_method("REGISTER")' not in text:
-    raise SystemExit("FATAL: REGISTER route missing after patch — aborting")
+if 'is_method("REGISTER")' not in text and "is_method('REGISTER')" not in text:
+    raise SystemExit("FATAL: REGISTER route missing after patch")
 
 open(cfg, "w", encoding="utf-8").write(text)
 print("Patched", cfg)
@@ -269,14 +319,24 @@ if ! systemctl is-active --quiet opensips; then
   exit 1
 fi
 
-# Unban softphones that failed during the brief restart window
-if command -v fail2ban-client >/dev/null 2>&1; then
-  fail2ban-client unban --all >/dev/null 2>&1 || true
-  echo "fail2ban: unban --all"
+fail2ban-client unban --all >/dev/null 2>&1 || true
+
+# Re-push SIP users so subscriber.cid_mode = display_name
+if [[ -f /opt/ownswitch/current/bin/sync-opensips-sip-users.php ]]; then
+  echo "Syncing SIP users → OpenSIPS subscriber.cid_mode…"
+  sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
+    php /opt/ownswitch/current/bin/sync-opensips-sip-users.php || true
 fi
 
+echo
+echo "subscriber cid_mode after sync:"
+mysql -Nuroot opensips -e "SELECT username, cid_mode FROM subscriber" 2>/dev/null || true
+echo
 echo "opensips: $(systemctl is-active opensips)"
 echo
-echo "OK. Re-register Eyebeam, then place a test call."
-echo "Expect: ACC cli=<display digits> sip=<sip username>"
-echo "If REGISTER still fails: sudo bash /opt/ownswitch-src/deploy/fix-opensips-register.sh"
+echo "Test:"
+echo "  1) Re-register Eyebeam"
+echo "  2) Display Name = digits only (e.g. 12138007000), no letters"
+echo "  3) Call; watch: journalctl -u opensips -f | grep -E 'SIP CID|ACC cli'"
+echo "  Expect: SIP CID mode=display_name … os_cli=1213…"
+echo "          ACC cli=1213… sip=owner"
