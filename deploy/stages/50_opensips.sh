@@ -439,8 +439,9 @@ modparam(\"cachedb_redis\", \"cachedb_url\", \"redis:dnc=>${REDIS_CDB_URL}\")
 	}
 }'
 elif [[ -f "${mod_dir}/sqlops.so" ]]; then
+  # OpenSIPS 3.6 sqlops: db_url without name=>; sql_query_one(query, "$var(x)")
   DNC_MODS+="loadmodule \"sqlops.so\"
-modparam(\"sqlops\", \"db_url\", \"dnc=>@@OPENSIPS_DB_URL@@\")
+modparam(\"sqlops\", \"db_url\", \"@@OPENSIPS_DB_URL@@\")
 "
   DNC_ROUTE='route[check_dnc] {
 	if ($avp(dr_gw_attrs) == NULL) {
@@ -454,7 +455,8 @@ modparam(\"sqlops\", \"db_url\", \"dnc=>@@OPENSIPS_DB_URL@@\")
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;
 	}
-	if (sql_query("dnc", "select 1 from dnc_cache where group_id=$var(dncid) and number_digits='\''$var(dnc_dst)'\'' limit 1") && $sql_query_num_rows > 0) {
+	$var(dnc_hit) = NULL;
+	if (sql_query_one("select 1 from dnc_cache where group_id=$var(dncid) and number_digits='\''$var(dnc_dst)'\'' limit 1", "$var(dnc_hit)") && $var(dnc_hit) != NULL) {
 		xlog("L_WARN", "DNC hit (sql) group=$var(dncid) dst=$var(dnc_dst)\n");
 		if ($var(dnc_tries) == NULL) {
 			$var(dnc_tries) = 0;

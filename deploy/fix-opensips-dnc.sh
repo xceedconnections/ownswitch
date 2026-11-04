@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Enable DNC check in a live OpenSIPS cfg without full reinstall.
-# Prefer Redis SISMEMBER; fall back to sqlops + opensips.dnc_cache.
+# Enable DNC check in a live OpenSIPS cfg (OpenSIPS 3.6+ sqlops / cachedb_redis).
+# Backs up cfg and restores if opensips -c fails — never leaves a broken config.
 set -Eeuo pipefail
 CFG="${1:-/etc/opensips/opensips.cfg}"
 [[ -f "$CFG" ]] || { echo "Missing $CFG"; exit 1; }
 
 mod_dir="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -n1)")"
+[[ -d "$mod_dir" ]] || { echo "OpenSIPS modules dir not found"; exit 1; }
+
+# Optional modules
+apt-get install -y opensips-module-cachedb-redis opensips-cachedb-redis-module \
+  opensips-module-sqlops opensips-sqlops-module >/dev/null 2>&1 || true
+
 REDIS_PASS=""
 [[ -s /etc/ownswitch/secrets/redis_password ]] && REDIS_PASS="$(tr -d '\n' </etc/ownswitch/secrets/redis_password)"
 REDIS_DB="${REDIS_PORTAL_DB:-1}"
@@ -20,12 +26,16 @@ mysql -uroot opensips -e \
     PRIMARY KEY (group_id, number_digits)
   ) ENGINE=InnoDB DEFAULT CHARSET=latin1" 2>/dev/null || true
 
+BAK="${CFG}.bak-dnc-$(date +%Y%m%d%H%M%S)"
+cp -a "$CFG" "$BAK"
+echo "Backup: $BAK"
+
 python3 - "$CFG" "$mod_dir" "$REDIS_PASS" "$REDIS_DB" "$DB_URL" <<'PY'
 import os, re, sys
 cfg, mod_dir, redis_pass, redis_db, db_url = sys.argv[1:6]
 text = open(cfg, encoding="utf-8", errors="replace").read()
 
-# Ensure route(check_dnc) after check_rate_cap
+# Ensure route(check_dnc) after check_rate_cap (invite + failover)
 if "route(check_dnc)" not in text:
     text = text.replace("route(check_rate_cap);", "route(check_rate_cap);\n\troute(check_dnc);")
 
@@ -33,6 +43,7 @@ redis_so = os.path.isfile(os.path.join(mod_dir, "cachedb_redis.so"))
 sql_so = os.path.isfile(os.path.join(mod_dir, "sqlops.so"))
 
 mods = ""
+# OpenSIPS 3.6 sqlops: sql_query_one(query, "$var(x)") — NOT sql_query("name", query) / $sql_query_num_rows
 route = """route[check_dnc] {
 	return;
 }
@@ -76,9 +87,11 @@ modparam("cachedb_redis", "cachedb_url", "redis:dnc=>{url}")
 	}
 }
 '''
+    mode = "redis"
 elif sql_so:
+    # Default DB URL id 0 — OpenSIPS 3.6 style (no "name=>" prefix)
     mods = f'''loadmodule "sqlops.so"
-modparam("sqlops", "db_url", "dnc=>{db_url}")
+modparam("sqlops", "db_url", "{db_url}")
 '''
     route = r'''route[check_dnc] {
 	if ($avp(dr_gw_attrs) == NULL) {
@@ -92,7 +105,8 @@ modparam("sqlops", "db_url", "dnc=>{db_url}")
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;
 	}
-	if (sql_query("dnc", "select 1 from dnc_cache where group_id=$var(dncid) and number_digits='$var(dnc_dst)' limit 1") && $sql_query_num_rows > 0) {
+	$var(dnc_hit) = NULL;
+	if (sql_query_one("select 1 from dnc_cache where group_id=$var(dncid) and number_digits='$var(dnc_dst)' limit 1", "$var(dnc_hit)") && $var(dnc_hit) != NULL) {
 		xlog("L_WARN", "DNC hit (sql) group=$var(dncid) dst=$var(dnc_dst)\n");
 		if ($var(dnc_tries) == NULL) {
 			$var(dnc_tries) = 0;
@@ -108,8 +122,11 @@ modparam("sqlops", "db_url", "dnc=>{db_url}")
 	}
 }
 '''
+    mode = "sqlops"
+else:
+    mode = "stub"
 
-# Strip old DNC blocks
+# Strip old / broken DNC blocks (including bad $sql_query_num_rows versions)
 text = re.sub(r'(?m)^loadmodule "cachedb_redis\.so"\s*\n(?:modparam\("cachedb_redis"[^\n]*\n)*', "", text)
 text = re.sub(r'(?m)^loadmodule "sqlops\.so"\s*\n(?:modparam\("sqlops"[^\n]*\n)*', "", text)
 text = re.sub(r'(?ms)^route\[check_dnc\]\s*\{.*?\n\}\s*', "", text)
@@ -119,16 +136,24 @@ if mods and 'loadmodule "drouting.so"' in text:
 elif mods:
     text = mods + "\n" + text
 
-# Insert route before relay route
 if "route[relay]" in text:
     text = text.replace("route[relay]", route + "\nroute[relay]", 1)
 else:
     text += "\n" + route
 
 open(cfg, "w", encoding="utf-8").write(text)
-print("Patched", cfg, "redis" if redis_so else ("sqlops" if sql_so else "stub"))
+print("Patched", cfg, mode)
 PY
 
-opensips -c -f "$CFG"
+if ! opensips -c -f "$CFG"; then
+  echo "ERROR: opensips -c failed — restoring $BAK" >&2
+  cp -a "$BAK" "$CFG"
+  opensips -c -f "$CFG" || true
+  exit 1
+fi
+
 systemctl restart opensips
-echo "DNC OpenSIPS check applied. Rebuild portal cache: php /opt/ownswitch/current/bin/sync-dnc-cache.php"
+echo "DNC OpenSIPS check OK."
+echo "Next: pull latest code, then:"
+echo "  sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/sync-dnc-cache.php"
+echo "  (or portal Update / refresh-ui so bin/sync-dnc-cache.php exists)"

@@ -4,6 +4,10 @@ set -Eeuo pipefail
 CFG="${1:-/etc/opensips/opensips.cfg}"
 [[ -f "$CFG" ]] || { echo "Missing $CFG"; exit 1; }
 
+BAK="${CFG}.bak-dstfmt-$(date +%Y%m%d%H%M%S)"
+cp -a "$CFG" "$BAK"
+echo "Backup: $BAK"
+
 python3 - "$CFG" <<'PY'
 import re, sys
 cfg = sys.argv[1]
@@ -113,7 +117,11 @@ if [[ -n "$PW" ]]; then
     "ALTER TABLE subscriber ADD COLUMN dst_format VARCHAR(16) NOT NULL DEFAULT 'as_is'" 2>/dev/null || true
 fi
 
-opensips -c -f "$CFG"
+if ! opensips -c -f "$CFG"; then
+  echo "ERROR: opensips -c failed — restoring $BAK" >&2
+  cp -a "$BAK" "$CFG"
+  exit 1
+fi
 systemctl restart opensips
 echo "Destination format routes applied."
 echo "Re-save SIP users / trunks (or: php bin/sync-opensips-trunks.php) so dstfmt attrs sync."
