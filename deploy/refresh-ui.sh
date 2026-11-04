@@ -40,9 +40,17 @@ if ! grep -q 'os-auth-page\|os-topbar\|os-brand-mark' "$SRC/app/Views/layout.php
   echo "FATAL: pulled layout.php does not contain the new CRM markup — wrong commit?"
   exit 1
 fi
+if ! grep -q 'MISSION CONTROL\|mc-pause-banner\|Calling paused' "$SRC/app/Views/dashboard/customer.php"; then
+  echo "FATAL: customer dashboard missing Mission Control / Calling paused markup — wrong commit?"
+  exit 1
+fi
+if grep -q 'usage, balance & call quality' "$SRC/app/Views/dashboard/customer.php"; then
+  echo "FATAL: old customer dashboard still present (usage, balance & call quality) — pull failed?"
+  exit 1
+fi
 
 HEAD="$(git -C "$SRC" rev-parse --short HEAD)"
-echo "Source OK at $HEAD"
+echo "Source OK at $HEAD (Mission Control dashboard present)"
 
 getent passwd ownswitch >/dev/null 2>&1 || useradd --system --home-dir "$OWN_OPT" --shell /usr/sbin/nologin --user-group ownswitch
 install -d -m 0755 "$OWN_OPT/releases"
@@ -163,8 +171,14 @@ fi
 echo
 echo "== Verify =="
 echo "layout markers: $(grep -c 'os-auth-page\|os-topbar\|os-brand-mark' "$OWN_OPT/current/app/Views/layout.php" || true)"
+echo "mission-control: $(grep -c 'MISSION CONTROL\|mc-pause-banner' "$OWN_OPT/current/app/Views/dashboard/customer.php" || true)"
+echo "mc-css: $(grep -c 'mc-pause-banner\|mc-low-banner' "$OWN_OPT/current/public/assets/css/app.css" || true)"
 echo "css bytes: $(wc -c < "$OWN_OPT/current/public/assets/css/app.css")"
 ls -la "$OWN_OPT/current/public/assets/css/app.css" "$OWN_OPT/current/public/assets/js/app.js"
+if ! grep -q 'MISSION CONTROL\|mc-pause-banner' "$OWN_OPT/current/app/Views/dashboard/customer.php"; then
+  echo "FATAL: deployed current/ still has old customer dashboard" >&2
+  exit 1
+fi
 # Apply DB migrations (must succeed for new modules e.g. DIDs)
 if [[ -f "$REL/bin/migrate.php" ]]; then
   echo "Running migrations…"
