@@ -81,12 +81,15 @@ if "route(check_sip_dnc)" not in text:
 
 # Ensure route(check_dnc) is CALLED on the outbound path (definition alone is useless).
 # Custom Magnus/Ownswitch hybrids often lack apply_ruri_strip — inject before relay markers.
+# NOTE: CLI/CDR fix may rewrite ACC xlog lines; keep many anchors so DNC survives CLI patches.
 if "route(check_dnc);" not in text:
     inserted = False
     for needle, repl in (
         ("route(apply_ruri_strip);", "route(check_dnc);\n\troute(apply_ruri_strip);"),
         ("route(check_rate_cap);", "route(check_dnc);\n\troute(check_rate_cap);"),
         ("route(apply_sip_cid);", "route(check_dnc);\n\troute(apply_sip_cid);"),
+        ("route(apply_outbound_cid);", "route(check_dnc);\n\troute(apply_outbound_cid);"),
+        ("route(acc_cli_gw);", "route(check_dnc);\n\troute(acc_cli_gw);"),
         (
             'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
             'route(check_dnc);\n\txlog("L_INFO", "OWNSWITCH acc_extra before relay',
@@ -106,16 +109,22 @@ if "route(check_dnc);" not in text:
     if not inserted:
         print("WARN: could not find outbound relay anchor for check_dnc — manual cfg edit needed")
 
-# Custom hybrid cfgs: always pin check_dnc immediately before outbound ACC/relay markers
-# even if a stale route(check_dnc); exists elsewhere and never runs on the INVITE path.
+# Always pin check_dnc on the live outbound path (CLI fix must not orphan DNC).
 for anchor in (
+    "route(acc_cli_gw);",
     'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
     'xlog("L_INFO", "ACC cli=',
+    "route(apply_sip_cid);",
+    "route(apply_outbound_cid);",
 ):
+    if anchor not in text:
+        continue
     pinned = "route(check_dnc);\n\t" + anchor
-    if anchor in text and pinned not in text:
-        text = text.replace(anchor, pinned, 1)
-        print("pinned route(check_dnc); before custom anchor:", anchor[:40])
+    # Avoid double-pin if already immediately before this anchor
+    if pinned in text:
+        continue
+    text = text.replace(anchor, pinned, 1)
+    print("pinned route(check_dnc); before:", anchor[:48])
 
 redis_so = os.path.isfile(os.path.join(mod_dir, "cachedb_redis.so"))
 sql_so = os.path.isfile(os.path.join(mod_dir, "sqlops.so"))
@@ -334,7 +343,11 @@ if ! systemctl is-active --quiet opensips; then
   systemctl restart opensips || true
   exit 1
 fi
+fail2ban-client unban --all >/dev/null 2>&1 || true
 echo "DNC OpenSIPS check OK (instant 403, no vendor hit, NANP aliases). opensips=$(systemctl is-active opensips)"
+echo "Verify call sites:"
+grep -nE 'route\(check_dnc\)|route\(check_sip_dnc\)|route\[check_dnc\]' "$CFG" | head -n 20 || true
 echo "If REGISTER broken: sudo bash /opt/ownswitch-src/deploy/fix-opensips-register.sh"
-echo "Rebuild cache: sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/sync-dnc-cache.php"
-echo "Re-save SIP users / trunks so dncid attrs sync."
+echo "Then: sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/sync-dnc-cache.php"
+echo "      sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/sync-opensips-trunks.php"
+echo "Re-save trunk (DNC group) + SIP user if needed. Test: journalctl -u opensips -f | grep DNC"

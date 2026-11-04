@@ -299,6 +299,21 @@ if lc and "os_cid_mode" not in lc.group(1):
 if 'is_method("REGISTER")' not in text and "is_method('REGISTER')" not in text:
     raise SystemExit("FATAL: REGISTER route missing after patch")
 
+# Preserve / re-pin DNC on outbound path (this script must not disable DNC)
+for anchor in (
+    "route(acc_cli_gw);",
+    'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
+    'xlog("L_INFO", "ACC cli=',
+    "route(apply_sip_cid);",
+):
+    if anchor not in text:
+        continue
+    pinned = "route(check_dnc);\n\t" + anchor
+    if "route[check_dnc]" in text and pinned not in text:
+        text = text.replace(anchor, pinned, 1)
+        print("re-pinned route(check_dnc); before:", anchor[:40])
+        break
+
 open(cfg, "w", encoding="utf-8").write(text)
 print("Patched", cfg)
 PY
