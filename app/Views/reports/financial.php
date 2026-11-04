@@ -1,7 +1,9 @@
 <?php
-/** @var array $res @var string $from @var string $to @var string $group @var bool $canCarrier */
+/** @var array $res @var string $from @var string $to @var string $group @var bool $canCarrier @var array $result @var array $query */
 $groups = ['day' => 'Day', 'customer' => 'Customer', 'currency' => 'Currency'] + ($canCarrier ? ['carrier' => 'Carrier'] : []);
 $showCost = $res['show_cost'];
+$result = $result ?? ['total' => count($res['rows'] ?? []), 'page' => 1, 'pages' => 1, 'perPage' => 10];
+$query = $query ?? ['from' => $from, 'to' => $to, 'group' => $group];
 ?>
 <div class="os-page-head">
     <div>
@@ -55,5 +57,6 @@ $showCost = $res['show_cost'];
                 <td class="os-num<?= bccomp((string) $res['totals']['margin'], '0', 6) < 0 ? ' text-danger' : '' ?>"><?= e($res['totals']['margin_pct']) ?></td>
             <?php endif; ?></tr></tfoot>
     </table></div>
+    <?php include __DIR__ . '/../partials/pagination.php'; ?>
 <?php endif; ?>
 </div>

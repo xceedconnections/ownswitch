@@ -27,7 +27,7 @@ final class Fail2banService
      *   maxretry:string,findtime:string,bantime:string,jail_enabled:string,sip_port:string
      * }
      */
-    public function status(): array
+    public function status(bool $withDetails = true): array
     {
         $base = [
             'ok' => false,
@@ -57,7 +57,7 @@ final class Fail2banService
                 $base['detail'] = trim($err !== '' ? $err : $out) ?: 'fail2ban status failed';
                 return $base;
             }
-            return $this->statusFromSingle($out, $base);
+            return $this->statusFromSingle($out, $base, $withDetails);
         }
         $blocks = preg_split('/^---\s*$/m', $out) ?: [$out];
         $jails = [];
@@ -108,9 +108,11 @@ final class Fail2banService
         }
         $ips = array_values(array_unique($ips));
         $details = [];
-        foreach ($entries as $e) {
-            $key = $e['ip'] . '|' . $e['jail'];
-            $details[$key] = $this->banDetail($e['ip'], $e['jail']);
+        if ($withDetails) {
+            foreach ($entries as $e) {
+                $key = $e['ip'] . '|' . $e['jail'];
+                $details[$key] = $this->banDetail($e['ip'], $e['jail']);
+            }
         }
         $sip = $jails[self::JAIL_SIP] ?? [];
         return [
@@ -132,7 +134,7 @@ final class Fail2banService
     }
 
     /** @param array<string,mixed> $base */
-    private function statusFromSingle(string $out, array $base): array
+    private function statusFromSingle(string $out, array $base, bool $withDetails = true): array
     {
         $kv = $this->parseKv($out);
         $list = [];
@@ -148,7 +150,9 @@ final class Fail2banService
         $details = [];
         foreach ($list as $ip) {
             $entries[] = ['ip' => $ip, 'jail' => self::JAIL_SIP, 'label' => 'SIP auth'];
-            $details[$ip . '|' . self::JAIL_SIP] = $this->banDetail($ip, self::JAIL_SIP);
+            if ($withDetails) {
+                $details[$ip . '|' . self::JAIL_SIP] = $this->banDetail($ip, self::JAIL_SIP);
+            }
         }
         return [
             'ok' => true,

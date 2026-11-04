@@ -1,7 +1,10 @@
 <?php
-/** @var array $status @var bool $available @var string $helperPath */
+/** @var array $status @var bool $available @var string $helperPath @var string $q @var array $result @var array $query */
 $s = $status;
 $available = !empty($available);
+$q = (string) ($q ?? '');
+$result = $result ?? ['total' => 0, 'page' => 1, 'pages' => 1, 'perPage' => 10];
+$query = $query ?? [];
 $jails = $s['jails'] ?? [];
 $sip = $jails['opensips-auth'] ?? [
     'label' => 'SIP auth', 'enabled' => !empty($s['enabled']), 'maxretry' => $s['maxretry'] ?? '5',
@@ -15,11 +18,8 @@ $portal = $jails['ownswitch-portal'] ?? [
 ];
 $entries = $s['ban_entries'] ?? [];
 $details = $s['ban_details'] ?? [];
-if ($entries === [] && !empty($s['banned'])) {
-    foreach ($s['banned'] as $ip) {
-        $entries[] = ['ip' => $ip, 'jail' => 'opensips-auth', 'label' => 'SIP auth'];
-    }
-}
+$bannedTotal = (int) ($result['total'] ?? count($entries));
+$refreshQs = $query !== [] ? ('?' . http_build_query($query)) : '';
 ?>
 <div class="os-page-head">
     <div>
@@ -101,14 +101,28 @@ if ($entries === [] && !empty($s['banned'])) {
 
     <div class="col-lg-8">
         <div class="os-panel overflow-hidden">
-            <div class="px-3 py-2 border-bottom d-flex justify-content-between align-items-center">
-                <span class="fw-semibold">Currently banned <span class="text-muted fw-normal">(<?= e((string) count($entries)) ?>)</span></span>
-                <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/settings/firewall')) ?>"><i class="bi bi-arrow-clockwise"></i></a>
+            <div class="px-3 py-2 border-bottom">
+                <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
+                    <span class="fw-semibold">Currently banned <span class="text-muted fw-normal">(<?= e((string) $bannedTotal) ?>)</span></span>
+                    <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/settings/firewall' . $refreshQs)) ?>"><i class="bi bi-arrow-clockwise"></i></a>
+                </div>
+                <form method="get" action="<?= e(url('/settings/firewall')) ?>" class="row g-2 align-items-end">
+                    <div class="col">
+                        <label class="form-label small mb-0" for="ban_q">Search IP</label>
+                        <input class="form-control form-control-sm" type="search" id="ban_q" name="q" value="<?= e($q) ?>" placeholder="e.g. 1.2.3.4" autocomplete="off">
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-outline-secondary btn-sm">Search</button>
+                        <?php if ($q !== ''): ?>
+                            <a class="btn btn-link btn-sm" href="<?= e(url('/settings/firewall')) ?>">Clear</a>
+                        <?php endif; ?>
+                    </div>
+                </form>
             </div>
-            <?php if ($entries === []): ?>
+            <?php if ($bannedTotal === 0): ?>
                 <div class="os-empty py-4">
-                    <div class="os-empty-title">No banned IPs</div>
-                    <div>SIP wrong-password attacks and portal login floods appear here automatically.</div>
+                    <div class="os-empty-title"><?= $q !== '' ? 'No matching bans' : 'No banned IPs' ?></div>
+                    <div><?= $q !== '' ? 'Try another IP fragment or clear the search.' : 'SIP wrong-password attacks and portal login floods appear here automatically.' ?></div>
                 </div>
             <?php else: ?>
                 <div class="list-group list-group-flush">
@@ -149,6 +163,8 @@ if ($entries === [] && !empty($s['banned'])) {
                                     <?= csrf_field() ?>
                                     <input type="hidden" name="ip" value="<?= e($ip) ?>">
                                     <input type="hidden" name="jail" value="<?= e($jail) ?>">
+                                    <?php if ($q !== ''): ?><input type="hidden" name="return_q" value="<?= e($q) ?>"><?php endif; ?>
+                                    <?php if ((int) ($result['page'] ?? 1) > 1): ?><input type="hidden" name="return_page" value="<?= e((string) $result['page']) ?>"><?php endif; ?>
                                     <button type="submit" class="btn btn-outline-primary btn-sm" data-once>Unban</button>
                                 </form>
                             </div>
@@ -167,6 +183,7 @@ if ($entries === [] && !empty($s['banned'])) {
                         </div>
                     <?php endforeach; ?>
                 </div>
+                <?php include __DIR__ . '/../partials/pagination.php'; ?>
             <?php endif; ?>
         </div>
         <p class="small text-muted mt-2 mb-0">Helper: <code><?= e($helperPath) ?></code> · CAPTCHA + fail2ban protect portal login; SIP digest failures ban on 5060</p>

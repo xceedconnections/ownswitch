@@ -28,6 +28,7 @@ final class ReportController extends BaseController
 
         [$from, $to] = $this->dateRange($r, $meta['bucket'] === 'month' ? 90 : 7);
         $res = (new CallSummaryService($this->db()))->run($slug, $scope, $from, $to, $this->userTimezone($r));
+        [$res, $result, $query] = $this->paginateRows($res, $r, 10, ['from' => $from, 'to' => $to]);
 
         $reportLinks = [];
         foreach (CallSummaryService::REPORTS as $key => $rep) {
@@ -44,6 +45,8 @@ final class ReportController extends BaseController
             'to' => $to,
             'res' => $res,
             'reportLinks' => $reportLinks,
+            'result' => $result,
+            'query' => $query,
         ]);
     }
 
@@ -58,8 +61,16 @@ final class ReportController extends BaseController
         [$from, $to] = $this->dateRange($r, 30);
         $group = is_string($r->query('group')) ? (string) $r->query('group') : 'day';
         $res = (new FinancialReportService($this->db()))->summary($this->scope($r), $from, $to, $group, $this->userTimezone($r));
+        [$res, $result, $query] = $this->paginateRows($res, $r, 10, ['from' => $from, 'to' => $to, 'group' => $group]);
         return $this->view('reports/financial', [
-            'title' => 'Financial Report', 'res' => $res, 'from' => $from, 'to' => $to, 'group' => $group, 'canCarrier' => $this->scope($r)->isGlobal(),
+            'title' => 'Financial Report',
+            'res' => $res,
+            'from' => $from,
+            'to' => $to,
+            'group' => $group,
+            'canCarrier' => $this->scope($r)->isGlobal(),
+            'result' => $result,
+            'query' => $query,
         ]);
     }
 
@@ -146,7 +157,7 @@ final class ReportController extends BaseController
         $scope = $this->scope($r);
         [$tw, $tp] = $scope->where('owned', 'c');
         $page = max(1, (int) $r->query('page', 1));
-        $per = 50;
+        $per = 10;
         $issue = "(c.settlement_status IN ('unrated','unattributed') OR c.rating_discrepancy = 1)";
         $focusSql = match ($focus) {
             'unrated' => "c.settlement_status = 'unrated'",
@@ -196,12 +207,43 @@ final class ReportController extends BaseController
         $query['focus'] = $focus;
         return $this->view('reports/cdr_reconciliation', [
             'title' => 'CDR Reconciliation',
-            'result' => ['rows' => $rows, 'total' => $total, 'page' => $page, 'per_page' => $per, 'pages' => max(1, (int) ceil(max(1, $total) / $per))],
+            'result' => ['rows' => $rows, 'total' => $total, 'page' => $page, 'perPage' => $per, 'pages' => max(1, (int) ceil(max(0, $total) / $per))],
             'from' => $from,
             'to' => $to,
             'focus' => $focus,
             'counts' => $counts,
             'query' => $query,
         ]);
+    }
+
+    /**
+     * Slice in-memory report rows for pagination; totals stay for the full set.
+     *
+     * @param array<string,mixed> $res
+     * @param array<string,string> $keepQuery
+     * @return array{0:array<string,mixed>,1:array{rows:list<array<string,mixed>>,total:int,page:int,perPage:int,pages:int},2:array<string,string>}
+     */
+    private function paginateRows(array $res, Request $r, int $perPage, array $keepQuery): array
+    {
+        $all = array_values($res['rows'] ?? []);
+        $total = count($all);
+        $pages = max(1, (int) ceil($total / $perPage));
+        $page = max(1, min($pages, (int) $r->query('page', 1)));
+        $slice = array_slice($all, ($page - 1) * $perPage, $perPage);
+        $res['rows'] = $slice;
+        $query = $keepQuery;
+        foreach ($r->query as $k => $v) {
+            if (is_string($k) && is_string($v) && $k !== 'page' && !array_key_exists($k, $query)) {
+                $query[$k] = $v;
+            }
+        }
+        $result = [
+            'rows' => $slice,
+            'total' => $total,
+            'page' => $page,
+            'perPage' => $perPage,
+            'pages' => $pages,
+        ];
+        return [$res, $result, $query];
     }
 }

@@ -34,7 +34,7 @@ final class CdrController extends BaseController
         $scope = $this->scope($r);
         $svc = new CdrSearchService($this->db());
         $f = $this->filters($r);
-        $res = $svc->search($scope, $f, (int) $r->query('page', 1), 50,
+        $res = $svc->search($scope, $f, (int) $r->query('page', 1), 10,
             is_string($r->query('sort')) ? (string) $r->query('sort') : 'setup_at', is_string($r->query('dir')) ? (string) $r->query('dir') : 'desc');
         $customers = [];
         if (!$scope->isCustomerRole()) {

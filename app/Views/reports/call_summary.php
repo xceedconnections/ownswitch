@@ -2,12 +2,15 @@
 /**
  * @var string $title @var string $slug @var string $from @var string $to
  * @var array $res @var list<array{label:string,path:string}> $reportLinks
+ * @var array $result @var array $query
  */
 $showCost = !empty($res['show_cost']);
 $cols = $res['columns'] ?? [];
 $rows = $res['rows'] ?? [];
 $tot = $res['totals'] ?? [];
 $blurb = (string) ($res['meta']['blurb'] ?? '');
+$result = $result ?? ['total' => count($rows), 'page' => 1, 'pages' => 1, 'perPage' => 10];
+$query = $query ?? ['from' => $from, 'to' => $to];
 ?>
 <div class="os-page-head">
     <div>
@@ -110,5 +113,6 @@ $blurb = (string) ($res['meta']['blurb'] ?? '');
             </tfoot>
         </table>
     </div>
+    <?php include __DIR__ . '/../partials/pagination.php'; ?>
 <?php endif; ?>
 </div>
