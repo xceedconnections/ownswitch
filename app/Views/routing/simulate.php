@@ -31,11 +31,12 @@
     </div>
     <?php if (!empty($result['routes'])): ?>
         <div class="table-responsive"><table class="table table-sm mb-0 os-table">
-            <thead><tr><th>#</th><th>Carrier / trunk</th><th>Host</th><th>Dialled out</th><th>From</th><th class="os-num">Priority</th><th class="os-num">Carrier rate</th><th class="os-num">Sample cost</th></tr></thead>
+            <thead><tr><th>#</th><th>Carrier / trunk</th><th>Host</th><th>Dialled out</th><th>From</th><th>DNC</th><th class="os-num">Priority</th><th class="os-num">Carrier rate</th><th class="os-num">Sample cost</th></tr></thead>
             <tbody><?php foreach ($result['routes'] as $rt): ?>
-                <tr><td><?= e($rt['attempt_order']) ?></td><td><?= e($rt['carrier_name']) ?> / <?= e($rt['trunk_name']) ?></td><td class="os-mono"><?= e($rt['host']) ?>:<?= e($rt['port']) ?></td>
+                <tr<?= !empty($rt['dnc_blocked']) ? ' class="table-danger"' : '' ?>><td><?= e($rt['attempt_order']) ?></td><td><?= e($rt['carrier_name']) ?> / <?= e($rt['trunk_name']) ?></td><td class="os-mono"><?= e($rt['host']) ?>:<?= e($rt['port']) ?></td>
                     <td class="os-mono"><?= e($rt['dialled_out'] ?? $result['destination'] ?? '') ?></td>
                     <td class="os-mono"><?= e($rt['from_rewrite'] ?? '—') ?></td>
+                    <td><?= !empty($rt['dnc_blocked']) ? '<span class="badge text-bg-danger">Blocked</span>' : (!empty($rt['dnc_group_id']) ? '<span class="text-muted">OK</span>' : '—') ?></td>
                     <td class="os-num"><?= e($rt['priority']) ?></td><td class="os-num os-mono"><?= e($rt['carrier_rate'] ?? 'unrated') ?></td>
                     <td class="os-num os-mono"><?= e($rt['carrier_sample_cost'] ?? '-') ?></td></tr>
             <?php endforeach; ?></tbody>

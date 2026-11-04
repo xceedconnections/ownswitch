@@ -55,6 +55,14 @@ return [
             'port'     => (int) Env::get('FREESWITCH_PORT', 8021),
             'password' => Env::get('FREESWITCH_PASSWORD', ''),
         ],
+        // Portal / OpenSIPS DNC hot cache (Redis SET). DB index must not collide with CGRateS (usually 10).
+        'redis' => [
+            'enabled'  => (bool) Env::get('REDIS_HOST', '127.0.0.1'),
+            'host'     => (string) Env::get('REDIS_HOST', '127.0.0.1'),
+            'port'     => (int) Env::get('REDIS_PORT', 6379),
+            'password' => (string) Env::get('REDIS_PASSWORD', ''),
+            'db'       => (int) Env::get('REDIS_PORTAL_DB', 1),
+        ],
     ],
 
     'recordings_dir' => Env::get('RECORDINGS_DIR', ''),

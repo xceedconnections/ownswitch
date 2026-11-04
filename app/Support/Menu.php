@@ -78,6 +78,7 @@ final class Menu
                 ['Trunk Groups', '/trunk-groups', self::STAFF],
                 ['Provider Rates', '/provider-rates', self::STAFF],
                 ['Destination Policies', '/destination-policies', self::STAFF],
+                ['DNC', '/dnc', self::STAFF],
                 ['Simulator', '/routing/simulate', self::STAFF],
             ]],
             ['Stats', [

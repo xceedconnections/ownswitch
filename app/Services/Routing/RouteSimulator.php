@@ -102,7 +102,7 @@ final class RouteSimulator
 
         $st = $this->pdo->prepare(
             "SELECT r.id AS rule_id, r.prefix, r.priority, t.id AS trunk_id, t.name AS trunk_name, t.host, t.port, t.max_channels,
-                    t.add_prefix, t.remove_prefix, t.from_user, t.from_domain, t.qualify, ca.name AS carrier_name
+                    t.add_prefix, t.remove_prefix, t.from_user, t.from_domain, t.qualify, t.dnc_group_id, ca.name AS carrier_name
              FROM routing_rules r JOIN carrier_trunks t ON t.id = r.carrier_trunk_id AND t.status = 'active'
              JOIN carriers ca ON ca.id = t.carrier_id AND ca.status = 'active'
              WHERE r.routing_plan_id = ? AND r.status = 'active' AND (r.prefix IN ({$in}) OR r.prefix = '*')"
@@ -147,6 +147,18 @@ final class RouteSimulator
             $rr['from_rewrite'] = trim((string) ($rr['from_user'] ?? '')) !== ''
                 ? (string) $rr['from_user'] . '@' . ((string) ($rr['from_domain'] ?? '') !== '' ? $rr['from_domain'] : 'trunk-host')
                 : null;
+            $dncGid = (int) ($rr['dnc_group_id'] ?? 0);
+            $rr['dnc_blocked'] = false;
+            if ($dncGid > 0) {
+                try {
+                    $rr['dnc_blocked'] = (new \Ownswitch\Services\Dnc\DncService($this->pdo))->isBlocked($dncGid, $dst);
+                    if ($rr['dnc_blocked']) {
+                        $rr['dnc_note'] = 'DNC group #' . $dncGid . ' blocks this destination';
+                    }
+                } catch (\Throwable) {
+                    $rr['dnc_note'] = 'DNC check unavailable';
+                }
+            }
         }
         unset($rr);
 

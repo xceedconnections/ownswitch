@@ -377,6 +377,118 @@ else
 }'
 fi
 
+# DNC: Redis SISMEMBER (preferred) or indexed MySQL dnc_cache — never PHP exec (dialer-safe)
+if (( ! skip_apt )); then
+  apt_install_optional opensips-module-cachedb-redis 2>/dev/null \
+    || apt_install_optional opensips-cachedb-redis-module 2>/dev/null \
+    || apt_install_optional opensips-redis-module 2>/dev/null || true
+  apt_install_optional opensips-module-sqlops 2>/dev/null \
+    || apt_install_optional opensips-sqlops-module 2>/dev/null || true
+fi
+REDIS_PASS=""
+if [[ -s /etc/ownswitch/secrets/redis_password ]]; then
+  REDIS_PASS="$(tr -d '\n' </etc/ownswitch/secrets/redis_password)"
+fi
+REDIS_DB="${REDIS_PORTAL_DB:-1}"
+DNC_MODS=''
+DNC_ROUTE='route[check_dnc] {
+	return;
+}'
+if [[ -f "${mod_dir}/cachedb_redis.so" ]]; then
+  if [[ -n "${REDIS_PASS}" ]]; then
+    REDIS_CDB_URL="redis://:${REDIS_PASS}@127.0.0.1:6379/${REDIS_DB}"
+  else
+    REDIS_CDB_URL="redis://127.0.0.1:6379/${REDIS_DB}"
+  fi
+  DNC_MODS+="loadmodule \"cachedb_redis.so\"
+modparam(\"cachedb_redis\", \"cachedb_url\", \"redis:dnc=>${REDIS_CDB_URL}\")
+"
+  DNC_ROUTE='route[check_dnc] {
+	if ($avp(dr_gw_attrs) == NULL) {
+		return;
+	}
+	$var(dncid) = $(avp(dr_gw_attrs){param.value,dncid});
+	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
+		return;
+	}
+	$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
+	if ($(var(dnc_dst){s.len}) < 3) {
+		return;
+	}
+	$var(dnc_key) = "ownswitch:dnc:" + $var(dncid);
+	$var(dnc_hit) = NULL;
+	if (cache_raw_query("redis:dnc", "SISMEMBER $var(dnc_key) $var(dnc_dst)", "$var(dnc_hit)") && $var(dnc_hit) != NULL && $(var(dnc_hit){s.int}) == 1) {
+		xlog("L_WARN", "DNC hit group=$var(dncid) dst=$var(dnc_dst)\n");
+		if ($var(dnc_tries) == NULL) {
+			$var(dnc_tries) = 0;
+		}
+		$var(dnc_tries) = $(var(dnc_tries){s.int}) + 1;
+		if ($(var(dnc_tries){s.int}) < 8 && use_next_gw()) {
+			route(apply_ruri_strip);
+			route(apply_sip_cid);
+			route(check_cid_len);
+			route(apply_trunk_attrs);
+			route(check_trunk_cid_len);
+			route(check_rate_cap);
+			route(check_dnc);
+			return;
+		}
+		acc_db_request("403 Do Not Call", "acc");
+		send_reply(403, "Do Not Call");
+		exit;
+	}
+}'
+elif [[ -f "${mod_dir}/sqlops.so" ]]; then
+  DNC_MODS+="loadmodule \"sqlops.so\"
+modparam(\"sqlops\", \"db_url\", \"dnc=>@@OPENSIPS_DB_URL@@\")
+"
+  DNC_ROUTE='route[check_dnc] {
+	if ($avp(dr_gw_attrs) == NULL) {
+		return;
+	}
+	$var(dncid) = $(avp(dr_gw_attrs){param.value,dncid});
+	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
+		return;
+	}
+	$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
+	if ($(var(dnc_dst){s.len}) < 3) {
+		return;
+	}
+	if (sql_query("dnc", "select 1 from dnc_cache where group_id=$var(dncid) and number_digits='\''$var(dnc_dst)'\'' limit 1") && $sql_query_num_rows > 0) {
+		xlog("L_WARN", "DNC hit (sql) group=$var(dncid) dst=$var(dnc_dst)\n");
+		if ($var(dnc_tries) == NULL) {
+			$var(dnc_tries) = 0;
+		}
+		$var(dnc_tries) = $(var(dnc_tries){s.int}) + 1;
+		if ($(var(dnc_tries){s.int}) < 8 && use_next_gw()) {
+			route(apply_ruri_strip);
+			route(apply_sip_cid);
+			route(check_cid_len);
+			route(apply_trunk_attrs);
+			route(check_trunk_cid_len);
+			route(check_rate_cap);
+			route(check_dnc);
+			return;
+		}
+		acc_db_request("403 Do Not Call", "acc");
+		send_reply(403, "Do Not Call");
+		exit;
+	}
+}'
+else
+  DNC_MODS='# DNC modules missing — install opensips-module-cachedb-redis or opensips-module-sqlops'
+fi
+export OPENSIPS_DNC_MODULES="${DNC_MODS}"
+export OPENSIPS_DNC_ROUTE="${DNC_ROUTE}"
+
+# Ensure OpenSIPS MySQL has dnc_cache for SQL fallback / dual-write from portal
+mysql_root "${DB_OPENSIPS}" -e \
+  "CREATE TABLE IF NOT EXISTS dnc_cache (
+    group_id INT UNSIGNED NOT NULL,
+    number_digits VARCHAR(32) NOT NULL,
+    PRIMARY KEY (group_id, number_digits)
+  ) ENGINE=InnoDB DEFAULT CHARSET=latin1" 2>/dev/null || true
+
 # Render to a temp file first and validate BEFORE touching the live config.
 tmp_cfg="$(mktemp /tmp/opensips.cfg.XXXXXX)"
 trap 'rm -f "$tmp_cfg"' EXIT

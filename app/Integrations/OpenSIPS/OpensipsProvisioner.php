@@ -486,6 +486,10 @@ final class OpensipsProvisioner
         if ($cmax > 0) {
             $parts[] = 'cidmax=' . $cmax;
         }
+        $dncid = (int) ($trunk['dnc_group_id'] ?? 0);
+        if ($dncid > 0) {
+            $parts[] = 'dncid=' . $dncid;
+        }
         $rawRem = trim((string) ($trunk['remove_prefix'] ?? ''));
         if ($rawRem !== '') {
             $list = [];

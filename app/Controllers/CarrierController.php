@@ -11,6 +11,7 @@ use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
 use Ownswitch\Services\Routing\OpensipsRoutingSync;
 use Ownswitch\Services\Sip\SipOptionsProbe;
+use Ownswitch\Services\Dnc\DncService;
 use Ownswitch\Support\Crypto;
 use Ownswitch\Support\SipPeerOptions;
 
@@ -83,9 +84,20 @@ final class CarrierController extends CrudController
             ['name' => 'max_channels', 'label' => 'Channels', 'type' => 'int', 'min' => 0, 'max' => 1000000, 'required' => true, 'default' => '100', 'list' => true, 'help' => 'Soft limit for portal/reporting'],
             ['name' => 'max_call_duration', 'label' => 'Max call duration (s)', 'type' => 'int', 'min' => 0, 'max' => 604800, 'default' => '0', 'list' => true, 'help' => '0 = use Settings system default (Prepaid hard max). Or set seconds manually (e.g. 7200). SIP user override wins when both are set.'],
             ['name' => 'rate_cap', 'label' => 'CAP (max buy $/min)', 'type' => 'number', 'min' => 0, 'placeholder' => '0.005', 'list' => true, 'help' => 'Max buy rate this trunk may send. Destinations whose provider rate exceeds CAP are blocked (try next trunk / 403). Blank = no CAP.'],
+            ['name' => 'dnc_group_id', 'label' => 'DNC group', 'type' => 'select', 'options' => $this->dncGroupOptions(), 'list' => true, 'help' => 'Block destinations listed in this Do Not Call group before connect. Leave blank for no DNC check on this trunk.'],
             ['name' => 'latency_ms', 'label' => 'Latency', 'list' => true, 'list_only' => true],
             $status,
         ];
+    }
+
+    /** @return array<string,string> */
+    private function dncGroupOptions(): array
+    {
+        try {
+            return (new DncService($this->db()))->groupOptions(false);
+        } catch (\Throwable) {
+            return ['' => '— None —'];
+        }
     }
 
     protected function enrichRows(Request $r, array $rows): array
@@ -94,6 +106,11 @@ final class CarrierController extends CrudController
             return $rows;
         }
         foreach ($rows as &$row) {
+            if (($row['dnc_group_id'] ?? null) === null || $row['dnc_group_id'] === '') {
+                $row['dnc_group_id'] = '';
+            } else {
+                $row['dnc_group_id'] = (string) $row['dnc_group_id'];
+            }
             $host = (string) ($row['host'] ?? '');
             $port = (int) ($row['port'] ?? 5060);
             $active = ($row['status'] ?? '') === 'active';
@@ -169,6 +186,19 @@ final class CarrierController extends CrudController
             }
             if (array_key_exists('remove_prefix', $data)) {
                 $data['remove_prefix'] = self::normalizeRemovePrefixes((string) ($data['remove_prefix'] ?? ''));
+            }
+            if (!array_key_exists('dnc_group_id', $data) || $data['dnc_group_id'] === '' || $data['dnc_group_id'] === null) {
+                $data['dnc_group_id'] = null;
+            } else {
+                $data['dnc_group_id'] = (int) $data['dnc_group_id'];
+                if ($data['dnc_group_id'] <= 0) {
+                    $data['dnc_group_id'] = null;
+                } else {
+                    $opts = (new DncService($this->db()))->groupOptions(false);
+                    if (!isset($opts[(string) $data['dnc_group_id']])) {
+                        throw new \DomainException('Select a valid DNC group.');
+                    }
+                }
             }
             $mode = (string) ($data['auth_mode'] ?? 'ip');
             if (in_array($mode, ['register', 'invite'], true)) {

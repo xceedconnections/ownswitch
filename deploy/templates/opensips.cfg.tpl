@@ -123,6 +123,9 @@ modparam("drouting", "gw_id_avp", "$avp(dr_gw_id)")
 # Rate CAP check via portal PHP (opensips-module-exec). Optional — stage/deploy installs when available.
 @@OPENSIPS_EXEC_BLOCK@@
 
+# DNC hot-path (cachedb_redis and/or sqlops) — stage injects when modules exist
+@@OPENSIPS_DNC_MODULES@@
+
 # DID → SIP user aliases (Ownswitch DID assignments)
 @@OPENSIPS_ALIAS_DB_BLOCK@@
 
@@ -321,6 +324,7 @@ route {
 	route(apply_trunk_attrs);
 	route(check_trunk_cid_len);
 	route(check_rate_cap);
+	route(check_dnc);
 	route(acc_cli_gw);
 	route(relay);
 }
@@ -500,6 +504,9 @@ route[check_cid_len] {
 # Stub when exec module is absent — deploy injects real body via @@OPENSIPS_RATE_CAP_ROUTE@@
 @@OPENSIPS_RATE_CAP_ROUTE@@
 
+# DNC: trunk attrs dncid=N → Redis SISMEMBER or indexed MySQL dnc_cache (never PHP exec)
+@@OPENSIPS_DNC_ROUTE@@
+
 # Trunk attrs cidmin=/cidmax= after From rewrite
 route[check_trunk_cid_len] {
 	if ($avp(dr_gw_attrs) == NULL) {
@@ -555,6 +562,7 @@ failure_route[carrier_failover] {
 		route(apply_trunk_attrs);
 		route(check_trunk_cid_len);
 		route(check_rate_cap);
+		route(check_dnc);
 		route(acc_cli_gw);
 		t_on_failure("carrier_failover");
 		t_relay();
