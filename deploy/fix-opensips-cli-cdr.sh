@@ -235,12 +235,16 @@ if "route[check_cid_len]" in text:
 
 # --- Global ACC field corrections (custom hybrid cfgs) ---
 # Never store SIP username in cli via stale $fU
+CLI_BLOCK = (
+    "if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {\n"
+    "\t\t$acc_extra(cli) = $dlg_val(os_cli);\n"
+    "\t} else {\n"
+    "\t\t$acc_extra(cli) = $fU;\n"
+    "\t}"
+)
 n = text.count("$acc_extra(cli) = $fU;")
 if n:
-    text = text.replace(
-        "$acc_extra(cli) = $fU;",
-        "if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) { $acc_extra(cli) = $dlg_val(os_cli); } else { $acc_extra(cli) = $fU; }",
-    )
+    text = text.replace("$acc_extra(cli) = $fU;", CLI_BLOCK)
     print(f"rewrote $acc_extra(cli)=$fU → os_cli ({n} site(s))")
 
 # Custom before-relay block: src must stay SIP user (os_src), cli = os_cli

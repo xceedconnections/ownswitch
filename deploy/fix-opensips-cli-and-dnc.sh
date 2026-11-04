@@ -30,12 +30,26 @@ cfg = sys.argv[1]
 text = open(cfg, encoding="utf-8", errors="replace").read()
 changed = False
 
-# 1) Any leftover cli=$fU → os_cli
+# 1) Any leftover cli=$fU → os_cli (multiline — OpenSIPS-safe)
+CLI_BLOCK = (
+    "if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {\n"
+    "\t\t$acc_extra(cli) = $dlg_val(os_cli);\n"
+    "\t} else {\n"
+    "\t\t$acc_extra(cli) = $fU;\n"
+    "\t}"
+)
+# Also flatten any prior one-line if/else back to multiline
+text2 = re.sub(
+    r'if \(\$dlg_val\(os_cli\) != NULL && \$\(dlg_val\(os_cli\)\{s\.len\}\) > 0\) \{ \$acc_extra\(cli\) = \$dlg_val\(os_cli\); \} else \{ \$acc_extra\(cli\) = \$fU; \}',
+    CLI_BLOCK,
+    text,
+)
+if text2 != text:
+    text = text2
+    changed = True
+    print("epilogue: normalized one-line cli if/else → multiline")
 if "$acc_extra(cli) = $fU;" in text:
-    text = text.replace(
-        "$acc_extra(cli) = $fU;",
-        "if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) { $acc_extra(cli) = $dlg_val(os_cli); } else { $acc_extra(cli) = $fU; }",
-    )
+    text = text.replace("$acc_extra(cli) = $fU;", CLI_BLOCK)
     changed = True
     print("epilogue: rewrote remaining acc_extra(cli)=$fU")
 
@@ -111,6 +125,11 @@ if ! systemctl is-active --quiet opensips; then
 fi
 fail2ban-client unban --all >/dev/null 2>&1 || true
 
+# Always finish with REGISTER repair (columns + load_credentials + unban)
+echo
+echo "==== REGISTER safety pass ===="
+bash "$SRC/deploy/fix-opensips-register.sh" "$CFG"
+
 echo
 echo "==== Sync portal → OpenSIPS ===="
 sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
@@ -128,9 +147,11 @@ echo "subscriber:"; mysql -Nuroot opensips -e "SELECT username, cid_mode, dnc_gr
 echo "gateways dncid:"; mysql -Nuroot opensips -e "SELECT gwid, attrs FROM dr_gateways" 2>/dev/null || true
 echo
 echo "opensips: $(systemctl is-active opensips)"
+ss -ulnp 2>/dev/null | grep 5060 || echo "WARN: no UDP 5060"
 echo
-echo "Test plan:"
-echo "  journalctl -u opensips -f | grep -E 'SIP CID|ACC cli|DNC|REGISTER'"
-echo "  1) Normal call → ACC cli=<display digits> sip=<user>"
-echo "  2) DNC number  → Trunk/SIP DNC hit … 403 (no vendor)"
+echo "Re-register Eyebeam, then test:"
+echo "  journalctl -u opensips -f | grep -E 'REGISTER|SIP CID|ACC cli|DNC'"
+echo "  1) REGISTER OK"
+echo "  2) Normal call → ACC cli=<display digits> sip=<user>"
+echo "  3) DNC number  → DNC hit … 403"
 echo "Done."

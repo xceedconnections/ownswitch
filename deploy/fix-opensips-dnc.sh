@@ -128,12 +128,16 @@ for anchor in (
     print("pinned route(check_dnc); before:", anchor[:48])
     break
 
-# Preserve CLI ACC semantics (DNC must not leave cli=$fU)
+# Preserve CLI ACC semantics (DNC must not leave cli=$fU) — multiline OpenSIPS-safe
+CLI_BLOCK = (
+    "if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {\n"
+    "\t\t$acc_extra(cli) = $dlg_val(os_cli);\n"
+    "\t} else {\n"
+    "\t\t$acc_extra(cli) = $fU;\n"
+    "\t}"
+)
 if "$acc_extra(cli) = $fU;" in text:
-    text = text.replace(
-        "$acc_extra(cli) = $fU;",
-        "if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) { $acc_extra(cli) = $dlg_val(os_cli); } else { $acc_extra(cli) = $fU; }",
-    )
+    text = text.replace("$acc_extra(cli) = $fU;", CLI_BLOCK)
     print("preserved CLI: rewrote acc_extra(cli)=$fU → os_cli")
 if "$acc_extra(src) = $fU;" in text and "OWNSWITCH acc_extra before relay" in text:
     text = text.replace("$acc_extra(src) = $fU;", "$acc_extra(src) = $dlg_val(os_src);")
