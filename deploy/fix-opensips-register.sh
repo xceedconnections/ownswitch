@@ -146,9 +146,45 @@ if ! systemctl is-active --quiet opensips; then
 fi
 
 echo "opensips: $(systemctl is-active opensips)"
+
+# --- 5) Unban SIP IPs — earlier auth failures often ban the softphone; then REGISTER never hits OpenSIPS (no logs) ---
+if command -v fail2ban-client >/dev/null 2>&1; then
+  echo "fail2ban SIP jails:"
+  fail2ban-client status 2>/dev/null | sed -n 's/.*Jail list://p' || true
+  for jail in opensips-auth ownswitch-sip sip-auth; do
+    if fail2ban-client status "$jail" >/dev/null 2>&1; then
+      echo "Unbanning all in jail=$jail"
+      # Prefer unban --all when available; else flush banned IPs one by one
+      if fail2ban-client unban --all >/dev/null 2>&1; then
+        :
+      else
+        banned="$(fail2ban-client status "$jail" 2>/dev/null | sed -n 's/.*Banned IP list:\s*//p' || true)"
+        for ip in $banned; do
+          fail2ban-client set "$jail" unbanip "$ip" >/dev/null 2>&1 || true
+          echo "  unban $ip"
+        done
+      fi
+    fi
+  done
+fi
+
+echo
+echo "Listening sockets (expect 5060 udp/tcp):"
+ss -ulnp 2>/dev/null | grep -E 'opensips|:5060' || echo "WARN: no UDP 5060"
+ss -tlnp 2>/dev/null | grep -E 'opensips|:5060' || echo "(no TCP 5060 — OK if Eyebeam uses UDP)"
+echo
+echo "socket= lines in cfg:"
+grep -E '^socket=' "$CFG" || true
+echo
+echo "subscriber rows:"
+mysql -Nuroot opensips -e "SELECT username, domain, IF(password='' OR password IS NULL,'EMPTY','set'), LENGTH(password) FROM subscriber LIMIT 20" 2>/dev/null || true
 echo
 echo "Recent REGISTER lines:"
 journalctl -u opensips -n 80 --no-pager 2>/dev/null | grep -E 'REGISTER|auth failed|www_authorize|load_credentials|ERROR' | tail -n 30 || true
 echo
-echo "Done. Re-register Eyebeam now (Domain = this server IP or FQDN, user/pass from portal)."
-echo "If still failing: journalctl -u opensips -f   while Eyebeam registers."
+echo "Done. Next:"
+echo "  1) On Eyebeam: Account → Domain = THIS server public IP or voip FQDN (not a wrong host)"
+echo "  2) Run:  journalctl -u opensips -f"
+echo "  3) Click Register in Eyebeam — you MUST see 'REGISTER from=...' within 1s"
+echo "  4) If still nothing:  tcpdump -ni any udp port 5060 -c 20"
+echo "     (no packets = wrong Domain/IP/firewall on client path)"
