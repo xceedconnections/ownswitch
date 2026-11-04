@@ -62,20 +62,60 @@ if lc and "os_dncid" not in lc.group(1):
     text = text[: lc.start(1)] + creds + text[lc.end(1) :]
     print("load_credentials: added os_dncid")
 
-# Ensure route(check_sip_dnc) before do_routing
+# Ensure route(check_sip_dnc) before do_routing (custom cfgs may use different do_routing shapes)
 if "route(check_sip_dnc)" not in text:
-    text = text.replace(
-        "if (!do_routing(1",
-        "route(check_sip_dnc);\n\n\tif (!do_routing(1",
-        1,
-    )
+    inserted = False
+    for needle, repl in (
+        ("if (!do_routing(1", "route(check_sip_dnc);\n\n\tif (!do_routing(1"),
+        ("if (!do_routing(", "route(check_sip_dnc);\n\n\tif (!do_routing("),
+        ('xlog("L_WARN", "OWNSWITCH INVITE $fU', 'route(check_sip_dnc);\n\txlog("L_WARN", "OWNSWITCH INVITE $fU'),
+        ('xlog("L_INFO", "OWNSWITCH: cgrates bypassed', 'route(check_sip_dnc);\n\txlog("L_INFO", "OWNSWITCH: cgrates bypassed'),
+    ):
+        if needle in text:
+            text = text.replace(needle, repl, 1)
+            inserted = True
+            print("inserted route(check_sip_dnc) before:", needle[:40])
+            break
+    if not inserted:
+        print("WARN: could not find do_routing anchor for check_sip_dnc")
 
-# Ensure route(check_dnc) after do_routing / before strip (prefer before apply_ruri_strip)
-if "route(check_dnc)" not in text:
-    if "route(apply_ruri_strip);" in text:
-        text = text.replace("route(apply_ruri_strip);", "route(check_dnc);\n\troute(apply_ruri_strip);", 1)
-    else:
-        text = text.replace("route(check_rate_cap);", "route(check_dnc);\n\troute(check_rate_cap);")
+# Ensure route(check_dnc) is CALLED on the outbound path (definition alone is useless).
+# Custom Magnus/Ownswitch hybrids often lack apply_ruri_strip — inject before relay markers.
+if "route(check_dnc);" not in text:
+    inserted = False
+    for needle, repl in (
+        ("route(apply_ruri_strip);", "route(check_dnc);\n\troute(apply_ruri_strip);"),
+        ("route(check_rate_cap);", "route(check_dnc);\n\troute(check_rate_cap);"),
+        ("route(apply_sip_cid);", "route(check_dnc);\n\troute(apply_sip_cid);"),
+        (
+            'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
+            'route(check_dnc);\n\txlog("L_INFO", "OWNSWITCH acc_extra before relay',
+        ),
+        (
+            'xlog("L_INFO", "ACC cli=',
+            'route(check_dnc);\n\txlog("L_INFO", "ACC cli=',
+        ),
+        ("route(relay);", "route(check_dnc);\n\troute(relay);"),
+        ("\tt_relay();", "\troute(check_dnc);\n\tt_relay();"),
+    ):
+        if needle in text:
+            text = text.replace(needle, repl, 1)
+            inserted = True
+            print("inserted route(check_dnc); before:", needle[:48])
+            break
+    if not inserted:
+        print("WARN: could not find outbound relay anchor for check_dnc — manual cfg edit needed")
+
+# Custom hybrid cfgs: always pin check_dnc immediately before outbound ACC/relay markers
+# even if a stale route(check_dnc); exists elsewhere and never runs on the INVITE path.
+for anchor in (
+    'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
+    'xlog("L_INFO", "ACC cli=',
+):
+    pinned = "route(check_dnc);\n\t" + anchor
+    if anchor in text and pinned not in text:
+        text = text.replace(anchor, pinned, 1)
+        print("pinned route(check_dnc); before custom anchor:", anchor[:40])
 
 redis_so = os.path.isfile(os.path.join(mod_dir, "cachedb_redis.so"))
 sql_so = os.path.isfile(os.path.join(mod_dir, "sqlops.so"))
@@ -126,10 +166,12 @@ modparam("cachedb_redis", "cachedb_url", "redis:dnc=>{url}")
 }
 route[check_dnc] {
 	if ($avp(dr_gw_attrs) == NULL) {
+		xlog("L_INFO", "DNC skip: no dr_gw_attrs (routing attrs empty)\n");
 		return;
 	}
 	$var(dncid) = $(avp(dr_gw_attrs){param.value,dncid});
 	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
+		xlog("L_INFO", "DNC skip: no dncid= in gw attrs [$avp(dr_gw_attrs)] — re-save trunk\n");
 		return;
 	}
 	$var(dnc_dst) = $(dlg_val(os_dst){re.subst,/[^0-9]//g});
@@ -140,6 +182,7 @@ route[check_dnc] {
 		return;
 	}
 	$var(dnc_key) = "ownswitch:dnc:" + $var(dncid);
+	xlog("L_INFO", "DNC check group=$var(dncid) dst=$var(dnc_dst) key=$var(dnc_key)\n");
 	$var(dnc_hit) = NULL;
 	if (cache_raw_query("redis:dnc", "SISMEMBER $var(dnc_key) $var(dnc_dst)", "$var(dnc_hit)") && $var(dnc_hit) != NULL && $(var(dnc_hit){s.int}) == 1) {
 		xlog("L_WARN", "Trunk DNC hit group=$var(dncid) dst=$var(dnc_dst) — instant block (no vendor)\n");
@@ -162,6 +205,7 @@ route[check_dnc] {
 			exit;
 		}
 	}
+	xlog("L_INFO", "DNC miss group=$var(dncid) dst=$var(dnc_dst) (not in cache)\n");
 }
 '''
     mode = "redis"
@@ -203,10 +247,12 @@ modparam("sqlops", "db_url", "{db_url}")
 }
 route[check_dnc] {
 	if ($avp(dr_gw_attrs) == NULL) {
+		xlog("L_INFO", "DNC skip: no dr_gw_attrs (routing attrs empty)\n");
 		return;
 	}
 	$var(dncid) = $(avp(dr_gw_attrs){param.value,dncid});
 	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
+		xlog("L_INFO", "DNC skip: no dncid= in gw attrs [$avp(dr_gw_attrs)] — re-save trunk\n");
 		return;
 	}
 	$var(dnc_dst) = $(dlg_val(os_dst){re.subst,/[^0-9]//g});
@@ -216,6 +262,7 @@ route[check_dnc] {
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;
 	}
+	xlog("L_INFO", "DNC check (sql) group=$var(dncid) dst=$var(dnc_dst)\n");
 	$var(dnc_hit) = NULL;
 	if (sql_query_one("select 1 from dnc_cache where group_id=$var(dncid) and number_digits='$var(dnc_dst)' limit 1", "$var(dnc_hit)") && $var(dnc_hit) != NULL) {
 		xlog("L_WARN", "Trunk DNC hit (sql) group=$var(dncid) dst=$var(dnc_dst) — instant block (no vendor)\n");
@@ -238,6 +285,7 @@ route[check_dnc] {
 			exit;
 		}
 	}
+	xlog("L_INFO", "DNC miss (sql) group=$var(dncid) dst=$var(dnc_dst) (not in cache)\n");
 }
 '''
     mode = "sqlops"
