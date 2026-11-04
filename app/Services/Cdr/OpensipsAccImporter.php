@@ -149,7 +149,9 @@ final class OpensipsAccImporter
             $sipUser = self::cleanToken($this->userPart((string) ($row['from_uri'] ?? $row['caller_id'] ?? $row['from_user'] ?? '')));
         }
 
-        $cli = self::cleanCallerId((string) ($row['cli'] ?? ''));
+        // Prefer ACC.cli (presented CallerID). Fall back carefully — never treat SIP username as CLI.
+        $cliRaw = self::cleanToken((string) ($row['cli'] ?? ''));
+        $cli = self::cleanCallerId($cliRaw);
         // Custom hybrid ACC sometimes swaps fields: src_user=phone CLI, cli=SIP username
         if (
             $sipUser !== '' && $cli !== ''
@@ -161,9 +163,16 @@ final class OpensipsAccImporter
         }
         // ACC bug (pre-os_cli): cli was still SIP username after display_name From rewrite
         if ($cli === '' || ($sipUser !== '' && strcasecmp($cli, $sipUser) === 0) || self::looksLikeSipUser($cli)) {
-            $fromCli = self::cleanCallerId($this->userPart((string) ($row['from_uri'] ?? $row['caller_id'] ?? '')));
-            if ($fromCli !== '' && self::looksLikePhone($fromCli) && ($sipUser === '' || strcasecmp($fromCli, $sipUser) !== 0)) {
-                $cli = $fromCli;
+            $fromUri = (string) ($row['from_uri'] ?? $row['caller_id'] ?? '');
+            // Eyebeam-style: "12138007000" <sip:owner@host> stored in some ACC builds
+            if (preg_match('/"([+0-9]{8,30})"/', $fromUri, $m)) {
+                $cli = self::cleanCallerId($m[1]);
+            }
+            if ($cli === '' || ($sipUser !== '' && strcasecmp($cli, $sipUser) === 0) || self::looksLikeSipUser($cli)) {
+                $fromCli = self::cleanCallerId($this->userPart($fromUri));
+                if ($fromCli !== '' && self::looksLikePhone($fromCli) && ($sipUser === '' || strcasecmp($fromCli, $sipUser) !== 0)) {
+                    $cli = $fromCli;
+                }
             }
         }
         if ($cli === '' || ($sipUser !== '' && strcasecmp($cli, $sipUser) === 0)) {

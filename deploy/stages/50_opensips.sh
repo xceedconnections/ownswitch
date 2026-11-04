@@ -208,11 +208,14 @@ mysql_root "${DB_OPENSIPS}" -e \
 mysql_root "${DB_OPENSIPS}" -e \
   "ALTER TABLE subscriber ADD COLUMN cid_mode VARCHAR(16) NOT NULL DEFAULT 'passthrough'" 2>/dev/null || true
 
-# Extra ACC fields for portal Failed-CDR import (matches acc db_extra in opensips.cfg.tpl)
+# Extra ACC fields for portal CDR import (matches acc extra_fields in opensips.cfg.tpl)
+# cli = presented CallerID (Eyebeam Display Name / fixed); gw = drouting gwid (T{id})
 for _acc_tbl in acc missed_calls; do
   mysql_root "${DB_OPENSIPS}" -e \
-    "ALTER TABLE ${_acc_tbl} ADD COLUMN src_user VARCHAR(64) NULL; ALTER TABLE ${_acc_tbl} ADD COLUMN dst_user VARCHAR(64) NULL; ALTER TABLE ${_acc_tbl} ADD COLUMN src_ip VARCHAR(45) NULL" \
+    "ALTER TABLE ${_acc_tbl} ADD COLUMN src_user VARCHAR(64) NULL; ALTER TABLE ${_acc_tbl} ADD COLUMN dst_user VARCHAR(64) NULL; ALTER TABLE ${_acc_tbl} ADD COLUMN src_ip VARCHAR(45) NULL; ALTER TABLE ${_acc_tbl} ADD COLUMN cli VARCHAR(64) NULL; ALTER TABLE ${_acc_tbl} ADD COLUMN gw VARCHAR(64) NULL" \
     2>/dev/null || true
+  mysql_root "${DB_OPENSIPS}" -e "ALTER TABLE ${_acc_tbl} ADD COLUMN cli VARCHAR(64) NULL" 2>/dev/null || true
+  mysql_root "${DB_OPENSIPS}" -e "ALTER TABLE ${_acc_tbl} ADD COLUMN gw VARCHAR(64) NULL" 2>/dev/null || true
 done
 
 # Make sure the portal/runtime account can use everything created by root

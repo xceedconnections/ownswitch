@@ -294,7 +294,7 @@ route {
 		$dlg_val(os_src) = $fU;
 	}
 	$dlg_val(os_dst) = $rU;
-	# Presented CLI starts as From user; apply_sip_cid may replace with display_name / fixed
+	# Presented CLI starts as From user; apply_sip_cid replaces with display_name / fixed
 	$dlg_val(os_cli) = $fU;
 	$acc_extra(src) = $dlg_val(os_src);
 	$acc_extra(dst) = $rU;
@@ -306,6 +306,10 @@ route {
 	} else {
 		$dlg_val(os_dtmf) = "yes";
 	}
+
+	# Resolve Softphone Display Name → os_cli / ACC cli BEFORE do_accounting so
+	# missed/failed CDRs do not keep the SIP username stamped above.
+	route(apply_sip_cid);
 
 	# CGRateS: accounting when available; portal prepaid empty balance already blocked via allow_calls
 	if (!cgrates_auth()) {
@@ -385,23 +389,41 @@ route[apply_media] {
 }
 
 # SIP-user CallerID policy (before trunk From override):
-#   passthrough  = leave From as ViciDial / Eyebeam sent (portal CallerID empty)
+#   passthrough  = leave From as ViciDial / Eyebeam sent; still prefer Display digits for CDR
 #   fixed        = force portal CallerID (rpid / os_cid)
 #   display_name = use Eyebeam/softphone Display Name as From user when it looks like a number
 # Eyebeam: From: "12138007000" <sip:owner@host>  →  $fn=display, $fU=owner
 # IMPORTANT: append_hf(From) does NOT refresh $fU — store presented CLI in $dlg_val(os_cli)
 # so ACC / CDR CallerID is the number, not the SIP username.
 route[apply_sip_cid] {
-	# Default presented CLI = current From user (may still be SIP username before rewrite)
-	$dlg_val(os_cli) = $fU;
+	# Preserve CLI already resolved on an earlier call (before do_accounting).
+	# A second call after From rewrite can no longer read Display Name from $fn.
+	$var(prior_cli) = $dlg_val(os_cli);
+	if ($var(prior_cli) == NULL || $(var(prior_cli){s.len}) == 0 || $var(prior_cli) == $fU
+		|| !($var(prior_cli) =~ "^[+0-9]{3,30}$")) {
+		$dlg_val(os_cli) = $fU;
+		$var(prior_cli) = "";
+	}
 	$var(mode) = $avp(os_cid_mode);
 	$var(user) = $fU;
 	$var(dom) = $fd;
+	if ($var(dom) == NULL || $(var(dom){s.len}) == 0) {
+		$var(dom) = $td;
+	}
 
-	# Collect Eyebeam Display Name from several places ($fn is primary)
+	# ---- Collect Display Name / CLI digits from every place Eyebeam may put them ----
 	$var(dn) = $fn;
 	if ($var(dn) == NULL || $(var(dn){s.len}) == 0) {
 		$var(dn) = $(hdr(From){nameaddr.name});
+	}
+	# Raw From: "12138007000" <sip:user@host>  or  12138007000 <sip:user@host>
+	if (($var(dn) == NULL || $(var(dn){s.len}) == 0) && is_present_hf("From")) {
+		$var(rawf) = $hdr(From);
+		if ($var(rawf) =~ "\"[+0-9]{3,30}\"") {
+			$var(dn) = $(var(rawf){re.subst,/.*"([+0-9]{3,30})".*/\1/});
+		} else if ($var(rawf) =~ "^[+0-9]{3,30}[[:space:]]*<") {
+			$var(dn) = $(var(rawf){re.subst,/^([+0-9]{3,30})[[:space:]]*<.*/\1/});
+		}
 	}
 	if ($var(dn) == NULL || $(var(dn){s.len}) == 0) {
 		$var(dn) = $(hdr(P-Asserted-Identity){nameaddr.name});
@@ -409,27 +431,49 @@ route[apply_sip_cid] {
 	if ($var(dn) == NULL || $(var(dn){s.len}) == 0) {
 		$var(dn) = $(hdr(Remote-Party-ID){nameaddr.name});
 	}
-	$var(dn_digits) = null;
+	if ($var(dn) == NULL || $(var(dn){s.len}) == 0) {
+		$var(dn) = $(hdr(P-Preferred-Identity){nameaddr.name});
+	}
+	# PAI / RPID / PPI may carry the number as URI user (no display name)
+	$var(pai_u) = $(hdr(P-Asserted-Identity){nameaddr.uri}{uri.user});
+	$var(rpid_u) = $(hdr(Remote-Party-ID){nameaddr.uri}{uri.user});
+	$var(ppi_u) = $(hdr(P-Preferred-Identity){nameaddr.uri}{uri.user});
+
+	$var(dn_digits) = "";
 	if ($var(dn) != NULL && $(var(dn){s.len}) > 0) {
 		$var(dn_digits) = $(var(dn){re.subst,/[^0-9+]//g});
 	}
+	if (($var(dn_digits) == NULL || $(var(dn_digits){s.len}) < 3) && $var(pai_u) != NULL) {
+		$var(dn_digits) = $(var(pai_u){re.subst,/[^0-9+]//g});
+	}
+	if (($var(dn_digits) == NULL || $(var(dn_digits){s.len}) < 3) && $var(rpid_u) != NULL) {
+		$var(dn_digits) = $(var(rpid_u){re.subst,/[^0-9+]//g});
+	}
+	if (($var(dn_digits) == NULL || $(var(dn_digits){s.len}) < 3) && $var(ppi_u) != NULL) {
+		$var(dn_digits) = $(var(ppi_u){re.subst,/[^0-9+]//g});
+	}
 
-	# If AVP missing (IP ACL skipped digest) but Display Name is a phone and From user is not,
-	# treat as Softphone Display Name — this is the Eyebeam case that was silently skipped.
-	if (($var(mode) == NULL || $(var(mode){s.len}) == 0) && $var(dn_digits) != NULL
-		&& $(var(dn_digits){s.len}) >= 3 && $(var(dn_digits){s.len}) <= 30
-		&& !($fU =~ "^[+0-9]{8,30}$")) {
+	xlog("L_INFO", "SIP CID probe mode='$var(mode)' fn='$fn' dn='$var(dn)' digits='$var(dn_digits)' FromUser=$fU auth=$au\n");
+
+	# AVP missing (IP ACL skipped digest) but Display digits present → Softphone Display Name
+	if (($var(mode) == NULL || $(var(mode){s.len}) == 0) && $(var(dn_digits){s.len}) >= 3
+		&& $(var(dn_digits){s.len}) <= 30 && !($fU =~ "^[+0-9]{8,30}$")) {
 		$var(mode) = "display_name";
-		xlog("L_INFO", "SIP CID mode inferred display_name (AVP empty) fn='$var(dn)'\n");
+		xlog("L_INFO", "SIP CID mode inferred display_name (AVP empty) digits='$var(dn_digits)'\n");
+	}
+
+	# Always prefer Display digits for CDR when From user is the SIP username (not a phone)
+	if ($(var(dn_digits){s.len}) >= 3 && $(var(dn_digits){s.len}) <= 30
+		&& ($var(dn_digits) =~ "^[+0-9]{3,30}$") && !($fU =~ "^[+0-9]{8,30}$")) {
+		$dlg_val(os_cli) = $var(dn_digits);
+		$acc_extra(cli) = $var(dn_digits);
 	}
 
 	if ($var(mode) == NULL || $(var(mode){s.len}) == 0 || $var(mode) == "passthrough") {
-		# Still prefer Display Name digits for CDR when From user is the SIP username
-		if ($var(dn_digits) != NULL && $(var(dn_digits){s.len}) >= 8 && $(var(dn_digits){s.len}) <= 30
-			&& !($fU =~ "^[+0-9]{8,30}$")) {
-			$dlg_val(os_cli) = $var(dn_digits);
-			$acc_extra(cli) = $var(dn_digits);
-			xlog("L_INFO", "SIP CID passthrough CDR-cli from display '$var(dn_digits)' (From user=$fU kept)\n");
+		if ($dlg_val(os_cli) =~ "^[+0-9]{3,30}$") {
+			xlog("L_INFO", "SIP CID passthrough CDR-cli='$dlg_val(os_cli)' (From user=$fU kept)\n");
+		} else {
+			xlog("L_INFO", "SIP CID passthrough From=$fU fn='$fn' mode='$var(mode)'\n");
 		}
 		return;
 	}
@@ -437,11 +481,22 @@ route[apply_sip_cid] {
 	if ($var(mode) == "fixed" && $avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
 		$var(user) = $(avp(os_cid){re.subst,/[^0-9+]//g});
 	} else if ($var(mode) == "display_name") {
-		if ($var(dn_digits) != NULL && $(var(dn_digits){s.len}) >= 3 && $(var(dn_digits){s.len}) <= 30
+		if ($(var(dn_digits){s.len}) >= 3 && $(var(dn_digits){s.len}) <= 30
 			&& ($var(dn_digits) =~ "^[+0-9]{3,30}$")) {
 			$var(user) = $var(dn_digits);
+		} else if ($(var(prior_cli){s.len}) >= 3 && ($var(prior_cli) =~ "^[+0-9]{3,30}$")) {
+			# Re-entry after From rewrite: keep digits from the earlier apply_sip_cid call
+			$var(user) = $var(prior_cli);
+			$dlg_val(os_cli) = $var(prior_cli);
+			$acc_extra(cli) = $var(prior_cli);
+			xlog("L_INFO", "SIP CID display_name keep prior os_cli=$var(prior_cli)\n");
+			return;
+		} else if ($avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
+			# Fallback: portal CallerID number when Eyebeam did not send Display Name on INVITE
+			$var(user) = $(avp(os_cid){re.subst,/[^0-9+]//g});
+			xlog("L_WARN", "SIP CID display_name missing on INVITE — using portal CallerID '$var(user)'\n");
 		} else {
-			xlog("L_WARN", "SIP CID display_name empty/invalid fn='$fn' dn='$var(dn)' From=$fU — set Eyebeam Display Name to digits\n");
+			xlog("L_WARN", "SIP CID display_name empty fn='$fn' dn='$var(dn)' From=$fU — set Eyebeam Display Name to digits\n");
 			return;
 		}
 	} else {
@@ -637,7 +692,12 @@ route[check_trunk_cid_len] {
 	$var(attrs) = $avp(dr_gw_attrs);
 	$var(cmin) = $(var(attrs){param.value,cidmin});
 	$var(cmax) = $(var(attrs){param.value,cidmax});
-	$var(clid) = $(fU{re.subst,/[^0-9]//g});
+	# Use presented CLI (os_cli) — $fU stays SIP username after From rewrite
+	if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {
+		$var(clid) = $(dlg_val(os_cli){re.subst,/[^0-9]//g});
+	} else {
+		$var(clid) = $(fU{re.subst,/[^0-9]//g});
+	}
 	$var(clen) = $(var(clid){s.len});
 	if ($var(cmin) != NULL && $(var(cmin){s.int}) > 0 && $var(clen) < $(var(cmin){s.int})) {
 		xlog("L_WARN", "Wrong CallerID Length trunk min len=$var(clen)\n");
