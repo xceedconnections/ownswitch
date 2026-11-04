@@ -100,13 +100,28 @@ final class AuthService
         return ['ok' => true, 'errors' => []];
     }
 
+    /** Record a failed portal attempt (CAPTCHA / throttle) for DB throttle + fail2ban. */
+    public function recordPortalFail(string $ip, string $loginHint = ''): void
+    {
+        $this->logAttempt($ip, $loginHint !== '' ? $loginHint : 'portal', false);
+    }
+
     private function logAttempt(string $ip, string $email, bool $ok): void
     {
-        if ($this->pdo === null) {
-            return;
+        if ($this->pdo !== null) {
+            $this->pdo->prepare('INSERT INTO login_attempts (ip, email_hash, success, attempted_at) VALUES (?,?,?,UTC_TIMESTAMP())')
+                ->execute([$ip, hash('sha256', $email), $ok ? 1 : 0]);
         }
-        $this->pdo->prepare('INSERT INTO login_attempts (ip, email_hash, success, attempted_at) VALUES (?,?,?,UTC_TIMESTAMP())')
-            ->execute([$ip, hash('sha256', $email), $ok ? 1 : 0]);
+        // fail2ban jail ownswitch-portal watches syslog for this line
+        if (!$ok) {
+            $safeIp = preg_replace('/[^0-9a-fA-F:.]/', '', $ip) ?: 'unknown';
+            if (function_exists('openlog') && function_exists('syslog')) {
+                openlog('ownswitch-portal', LOG_PID | LOG_ODELAY, LOG_AUTH);
+                syslog(LOG_WARNING, "Portal auth failed from {$safeIp}");
+                closelog();
+            }
+            error_log("ownswitch-portal: Portal auth failed from {$safeIp}");
+        }
     }
 
     private function ipThrottled(string $ip, int $windowMin, int $max): bool

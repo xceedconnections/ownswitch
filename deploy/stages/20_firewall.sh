@@ -86,6 +86,10 @@ if is_true "${FAIL2BAN_ENABLED}"; then
     install -m 0644 "${f2b_tpl}/opensips-auth.conf" /etc/fail2ban/filter.d/opensips-auth.conf
     note_change "wrote /etc/fail2ban/filter.d/opensips-auth.conf"
   fi
+  if [[ -f "${f2b_tpl}/ownswitch-portal.conf" ]]; then
+    install -m 0644 "${f2b_tpl}/ownswitch-portal.conf" /etc/fail2ban/filter.d/ownswitch-portal.conf
+    note_change "wrote /etc/fail2ban/filter.d/ownswitch-portal.conf"
+  fi
   if [[ -f "${f2b_tpl}/ownswitch-fail2ban.sh" ]]; then
     install -m 0755 "${f2b_tpl}/ownswitch-fail2ban.sh" /usr/local/sbin/ownswitch-fail2ban
     note_change "installed /usr/local/sbin/ownswitch-fail2ban"
@@ -140,6 +144,11 @@ EOF
     fi
   fi
   rm -f "$sip_jail_tmp"
+
+  if [[ -f "${f2b_tpl}/ownswitch-portal.local" && ! -f /etc/fail2ban/jail.d/ownswitch-portal.local ]]; then
+    install -m 0644 "${f2b_tpl}/ownswitch-portal.local" /etc/fail2ban/jail.d/ownswitch-portal.local
+    jail_changed=1; note_change "wrote /etc/fail2ban/jail.d/ownswitch-portal.local"
+  fi
   svc_apply fail2ban 1
 fi
 

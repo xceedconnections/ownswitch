@@ -15,7 +15,7 @@ final class CdrController extends BaseController
     private function filters(Request $r): array
     {
         [$from, $to] = $this->dateRange($r, 1);
-        $f = ['from' => $from, 'to' => $to];
+        $f = ['from' => $from, 'to' => $to, 'tz' => $this->userTimezone($r)];
         foreach (['customer_id', 'carrier_id', 'src', 'dst', 'disposition', 'min_duration', 'failed_only', 'from', 'to'] as $k) {
             $v = $r->query($k);
             if (!is_string($v) || $v === '') {
@@ -25,6 +25,7 @@ final class CdrController extends BaseController
                 $f[$k] = $v;
             }
         }
+        $f['tz'] = $this->userTimezone($r);
         return $f;
     }
 

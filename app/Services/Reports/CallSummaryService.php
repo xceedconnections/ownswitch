@@ -97,7 +97,7 @@ final class CallSummaryService
     /**
      * @return array{rows:list<array<string,mixed>>,totals:array<string,mixed>,show_cost:bool,columns:list<string>}
      */
-    public function run(string $slug, TenantScope $scope, string $from, string $to): array
+    public function run(string $slug, TenantScope $scope, string $from, string $to, string $tz = 'UTC'): array
     {
         $meta = self::REPORTS[$slug] ?? self::REPORTS['summary-day'];
         if (($meta['staff_only'] || $meta['dim'] === 'trunk') && !$scope->isGlobal()) {
@@ -112,13 +112,15 @@ final class CallSummaryService
         $select = [];
         $group = [];
         $columns = [];
+        $tz = \Ownswitch\Support\Timezone::normalize($tz);
+        $offsetSec = (new \DateTimeImmutable('now', new \DateTimeZone($tz)))->getOffset();
 
         if ($meta['bucket'] === 'day') {
-            $select[] = 'DATE(c.setup_at) AS bucket';
+            $select[] = 'DATE(DATE_ADD(c.setup_at, INTERVAL ' . (int) $offsetSec . ' SECOND)) AS bucket';
             $group[] = 'bucket';
             $columns[] = 'Day';
         } elseif ($meta['bucket'] === 'month') {
-            $select[] = "DATE_FORMAT(c.setup_at, '%Y-%m') AS bucket";
+            $select[] = "DATE_FORMAT(DATE_ADD(c.setup_at, INTERVAL " . (int) $offsetSec . " SECOND), '%Y-%m') AS bucket";
             $group[] = 'bucket';
             $columns[] = 'Month';
         }
@@ -179,8 +181,9 @@ final class CallSummaryService
             . " WHERE ({$tw}) AND c.setup_at >= ? AND c.setup_at < ?"
             . $groupSql . $order . ' LIMIT 2000';
 
+        [$fromUtc, $toUtc] = \Ownswitch\Support\Timezone::localDayRangeToUtc($from, $to, $tz);
         $st = $this->pdo->prepare($sql);
-        $st->execute([...$tp, $from . ' 00:00:00', (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00')]);
+        $st->execute([...$tp, $fromUtc, $toUtc]);
         $rows = [];
         $tot = ['calls' => 0, 'answered' => 0, 'session_time' => 0, 'sell' => '0', 'buy' => '0', 'profit' => '0'];
         foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {

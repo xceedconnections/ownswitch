@@ -38,7 +38,7 @@
         <?php foreach ($result['rows'] as $row): ?>
             <tr>
                 <td class="os-mono"><?= e((string) $row['id']) ?></td>
-                <td class="os-mono"><?= e(substr((string) $row['setup_at'], 0, 19)) ?></td>
+                <td class="os-mono"><?= e(fmt_local((string) $row['setup_at'])) ?></td>
                 <td><?= e((string) $row['disposition']) ?></td>
                 <td class="os-mono"><?= e((string) $row['settlement_status']) ?></td>
                 <td><?= !empty($row['rating_discrepancy']) ? 'Yes' : '—' ?></td>

@@ -7,7 +7,8 @@ namespace Ownswitch\Controllers;
 use Ownswitch\App;
 use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
-use Ownswitch\Services\Auth\AuthService;
+use Ownswitch\Support\LoginCaptcha;
+use Ownswitch\Support\Timezone;
 
 final class AuthController extends BaseController
 {
@@ -17,7 +18,13 @@ final class AuthController extends BaseController
         if (App::session()->userId() !== null) {
             return $this->redirect($r, '/');
         }
-        return $this->view('auth/login', ['title' => 'Sign in', 'error' => null, 'email' => '', 'login' => '']);
+        return $this->view('auth/login', [
+            'title' => 'Sign in',
+            'error' => null,
+            'email' => '',
+            'login' => '',
+            'captcha' => LoginCaptcha::issue(),
+        ]);
     }
 
     public function login(Request $r, array $p = []): Response
@@ -27,9 +34,29 @@ final class AuthController extends BaseController
             $login = (string) $r->post['email']; // backwards compatible
         }
         $pass = is_string($r->post['password'] ?? null) ? (string) $r->post['password'] : '';
+        $captchaOk = LoginCaptcha::verify(
+            is_string($r->post['captcha'] ?? null) ? (string) $r->post['captcha'] : null,
+            is_string($r->post['captcha_token'] ?? null) ? (string) $r->post['captcha_token'] : null,
+        );
+        if (!$captchaOk) {
+            App::auth()->recordPortalFail($r->ip(), $login !== '' ? $login : 'captcha');
+            return $this->view('auth/login', [
+                'title' => 'Sign in',
+                'error' => 'Incorrect security check. Please try again.',
+                'email' => $login,
+                'login' => $login,
+                'captcha' => LoginCaptcha::issue(),
+            ], 401);
+        }
         $res = App::auth()->attempt($login, $pass, $r->ip());
         if (!$res['ok']) {
-            return $this->view('auth/login', ['title' => 'Sign in', 'error' => $res['error'], 'email' => $login, 'login' => $login], 401);
+            return $this->view('auth/login', [
+                'title' => 'Sign in',
+                'error' => $res['error'],
+                'email' => $login,
+                'login' => $login,
+                'captcha' => LoginCaptcha::issue(),
+            ], 401);
         }
         $r->setAttr('user', $res['user']);
         $this->audit($r, 'login', 'user', (int) $res['user']['id']);
@@ -62,5 +89,40 @@ final class AuthController extends BaseController
         }
         $this->audit($r, 'password_change', 'user', (int) $this->user($r)['id']);
         return $this->redirect($r, '/', 'Password changed.');
+    }
+
+    public function profileForm(Request $r, array $p = []): Response
+    {
+        $u = $this->user($r);
+        return $this->view('auth/profile', [
+            'title' => 'My profile',
+            'user' => $u,
+            'timezone' => Timezone::fromUser($u),
+            'options' => Timezone::OPTIONS,
+            'errors' => [],
+        ]);
+    }
+
+    public function profileSave(Request $r, array $p = []): Response
+    {
+        $u = $this->user($r);
+        $tz = Timezone::normalize(is_string($r->post['timezone'] ?? null) ? (string) $r->post['timezone'] : 'UTC');
+        if (!isset(Timezone::OPTIONS[$tz])) {
+            // Allow any valid IANA zone even if not in the picker list
+            try {
+                new \DateTimeZone($tz);
+            } catch (\Throwable) {
+                return $this->view('auth/profile', [
+                    'title' => 'My profile',
+                    'user' => $u,
+                    'timezone' => Timezone::fromUser($u),
+                    'options' => Timezone::OPTIONS,
+                    'errors' => ['Invalid timezone.'],
+                ], 422);
+            }
+        }
+        $this->db()->prepare('UPDATE users SET timezone = ? WHERE id = ?')->execute([$tz, (int) $u['id']]);
+        $this->audit($r, 'profile_timezone', 'user', (int) $u['id'], ['timezone' => $u['timezone'] ?? null], ['timezone' => $tz]);
+        return $this->redirect($r, '/account/profile', 'Timezone saved. CDR and reports now use ' . $tz . '.');
     }
 }

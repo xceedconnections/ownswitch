@@ -30,13 +30,21 @@ final class CdrSearchService
         $w = ["({$sql})"];
         $from = $this->date($f['from'] ?? null);
         $to = $this->date($f['to'] ?? null);
-        if ($from) {
+        $tz = \Ownswitch\Support\Timezone::normalize(is_string($f['tz'] ?? null) ? (string) $f['tz'] : 'UTC');
+        if ($from && $to) {
+            [$fromUtc, $toUtc] = \Ownswitch\Support\Timezone::localDayRangeToUtc($from, $to, $tz);
             $w[] = 'c.setup_at >= ?';
-            $params[] = $from . ' 00:00:00';
-        }
-        if ($to) {
+            $params[] = $fromUtc;
             $w[] = 'c.setup_at < ?';
-            $params[] = (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00');
+            $params[] = $toUtc;
+        } elseif ($from) {
+            [$fromUtc] = \Ownswitch\Support\Timezone::localDayRangeToUtc($from, $from, $tz);
+            $w[] = 'c.setup_at >= ?';
+            $params[] = $fromUtc;
+        } elseif ($to) {
+            [, $toUtc] = \Ownswitch\Support\Timezone::localDayRangeToUtc($to, $to, $tz);
+            $w[] = 'c.setup_at < ?';
+            $params[] = $toUtc;
         }
         foreach (['customer_id', 'carrier_id', 'reseller_id'] as $k) {
             if (isset($f[$k]) && $f[$k] !== '' && ctype_digit((string) $f[$k])) {
@@ -248,7 +256,8 @@ final class CdrSearchService
     /** Stream CSV in chunks (keyset on id) so large exports do not exhaust memory. Max 200k rows. */
     public function exportCsv(TenantScope $scope, array $filters, callable $write): void
     {
-        $hdr = ['id', 'setup_at', 'src', 'dst', 'disposition', 'sip_code', 'sip_code_label', 'duration_s', 'billable_s', 'rate', 'increment', 'charge', 'currency'];
+        $tz = \Ownswitch\Support\Timezone::normalize(is_string($filters['tz'] ?? null) ? (string) $filters['tz'] : 'UTC');
+        $hdr = ['id', 'setup_at_' . $tz, 'src', 'dst', 'disposition', 'sip_code', 'sip_code_label', 'duration_s', 'billable_s', 'rate', 'increment', 'charge', 'currency'];
         $staff = $scope->isGlobal();
         if ($staff) {
             array_push($hdr, 'carrier', 'carrier_cost', 'margin');
@@ -267,7 +276,8 @@ final class CdrSearchService
             }
             foreach ($rows as $r) {
                 $code = (int) ($r['sip_response'] ?? 0);
-                $line = [$r['id'], $r['setup_at'], $r['src'], $r['dst_normalized'], $r['disposition'], $code > 0 ? $code : '',
+                $setupLocal = \Ownswitch\Support\Timezone::format(isset($r['setup_at']) ? (string) $r['setup_at'] : null, $tz);
+                $line = [$r['id'], $setupLocal, $r['src'], $r['dst_normalized'], $r['disposition'], $code > 0 ? $code : '',
                     SipCode::label($code), $r['duration_actual'],
                     $r['duration_billable_customer'], $r['customer_rate'], ($r['customer_initial'] ?? '') . '/' . ($r['customer_subsequent'] ?? ''), $r['customer_charge'], $r['currency']];
                 if ($staff) {

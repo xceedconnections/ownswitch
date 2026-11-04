@@ -22,13 +22,17 @@ final class FinancialReportService
     /**
      * @return array{rows:list<array<string,mixed>>,totals:array<string,string>,show_cost:bool}
      */
-    public function summary(TenantScope $scope, string $from, string $to, string $groupBy = 'day'): array
+    public function summary(TenantScope $scope, string $from, string $to, string $groupBy = 'day', string $tz = 'UTC'): array
     {
         $showCost = $scope->isGlobal();   // carrier cost/margin are platform-only
         if (!isset(self::GROUPS[$groupBy]) || (!$showCost && $groupBy === 'carrier')) {
             $groupBy = 'day';
         }
-        $expr = self::GROUPS[$groupBy];
+        $tz = \Ownswitch\Support\Timezone::normalize($tz);
+        $offsetSec = (new \DateTimeImmutable('now', new \DateTimeZone($tz)))->getOffset();
+        $groups = self::GROUPS;
+        $groups['day'] = 'DATE(DATE_ADD(c.setup_at, INTERVAL ' . (int) $offsetSec . ' SECOND))';
+        $expr = $groups[$groupBy];
         [$tw, $tp] = $scope->where('owned', 'c');
         $name = match ($groupBy) {
             'customer' => 'COALESCE(cu.name, CONCAT(\'#\', c.customer_id))',
@@ -57,7 +61,8 @@ final class FinancialReportService
              ORDER BY label
              LIMIT 1000"
         );
-        $st->execute([...$tp, $from . ' 00:00:00', (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00')]);
+        [$fromUtc, $toUtc] = \Ownswitch\Support\Timezone::localDayRangeToUtc($from, $to, $tz);
+        $st->execute([...$tp, $fromUtc, $toUtc]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
         $tot = [

@@ -111,3 +111,26 @@ if (!function_exists('nav_active')) {
         return '';
     }
 }
+
+if (!function_exists('user_timezone')) {
+    function user_timezone(): string
+    {
+        return \Ownswitch\Support\Timezone::fromUser(current_user());
+    }
+}
+
+if (!function_exists('fmt_local')) {
+    /** Format a UTC datetime for the current user's timezone. */
+    function fmt_local(?string $utc, string $format = 'Y-m-d H:i:s'): string
+    {
+        return \Ownswitch\Support\Timezone::format($utc, user_timezone(), $format);
+    }
+}
+
+if (!function_exists('tz_label')) {
+    function tz_label(?string $tz = null): string
+    {
+        $tz = \Ownswitch\Support\Timezone::normalize($tz ?? user_timezone());
+        return \Ownswitch\Support\Timezone::OPTIONS[$tz] ?? $tz;
+    }
+}

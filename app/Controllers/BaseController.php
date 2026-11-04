@@ -83,7 +83,7 @@ abstract class BaseController
             ->execute([$this->user($r)['id'] ?? null, $action, $entity, $id, $strip($before), $strip($after), $r->ip()]);
     }
 
-    /** @return array{0:string,1:string} from/to as Y-m-d (default last 7 days) */
+    /** Calendar dates in the current user's timezone (Y-m-d). */
     protected function dateRange(Request $r, int $defaultDays = 7): array
     {
         $ok = static fn ($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) && \DateTimeImmutable::createFromFormat('!Y-m-d', $v)?->format('Y-m-d') === $v;
@@ -95,15 +95,34 @@ abstract class BaseController
         if (!$ok($fromRaw)) {
             $fromRaw = $r->input('from');
         }
-        $to = $ok($toRaw) ? (string) $toRaw : gmdate('Y-m-d');
-        $from = $ok($fromRaw) ? (string) $fromRaw : gmdate('Y-m-d', strtotime("-{$defaultDays} days"));
+        $tz = \Ownswitch\Support\Timezone::fromUser($this->user($r));
+        $to = $ok($toRaw) ? (string) $toRaw : \Ownswitch\Support\Timezone::today($tz);
+        $from = $ok($fromRaw) ? (string) $fromRaw : \Ownswitch\Support\Timezone::daysAgo($tz, $defaultDays);
         if ($from > $to) {
             [$from, $to] = [$to, $from];
         }
         // cap range to 366 days to protect the DB
         if (strtotime($to) - strtotime($from) > 366 * 86400) {
-            $from = gmdate('Y-m-d', strtotime($to . ' -366 days'));
+            $from = (new \DateTimeImmutable($to))->modify('-366 days')->format('Y-m-d');
         }
         return [$from, $to];
+    }
+
+    /**
+     * Local Y-m-d range plus UTC SQL bounds for CDR/report queries.
+     *
+     * @return array{0:string,1:string,2:string,3:string} [fromYmd, toYmd, fromUtc, toUtcExclusive]
+     */
+    protected function dateRangeUtc(Request $r, int $defaultDays = 7): array
+    {
+        [$from, $to] = $this->dateRange($r, $defaultDays);
+        $tz = \Ownswitch\Support\Timezone::fromUser($this->user($r));
+        [$fromUtc, $toUtc] = \Ownswitch\Support\Timezone::localDayRangeToUtc($from, $to, $tz);
+        return [$from, $to, $fromUtc, $toUtc];
+    }
+
+    protected function userTimezone(Request $r): string
+    {
+        return \Ownswitch\Support\Timezone::fromUser($this->user($r));
     }
 }

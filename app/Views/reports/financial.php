@@ -6,7 +6,7 @@ $showCost = $res['show_cost'];
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title">Financial Report</h1>
-        <p class="os-page-sub">Revenue, cost and margin from settled answered calls</p>
+        <p class="os-page-sub">Revenue, cost and margin from settled answered calls · <?= e(tz_label()) ?></p>
     </div>
 </div>
 <form method="get" action="<?= e(url('/reports/financial')) ?>" class="os-toolbar mb-3">

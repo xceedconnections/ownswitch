@@ -13,7 +13,7 @@ final class UserRepository extends BaseRepository
         parent::__construct(
             $pdo,
             'users',
-            ['email', 'name', 'password_hash', 'role_id', 'reseller_id', 'customer_id', 'status', 'failed_logins', 'locked_until', 'last_login_at', 'last_login_ip'],
+            ['email', 'name', 'password_hash', 'role_id', 'reseller_id', 'customer_id', 'status', 'timezone', 'failed_logins', 'locked_until', 'last_login_at', 'last_login_ip'],
             'none',
             ['email', 'name'],
             ['id', 'email', 'name', 'created_at']

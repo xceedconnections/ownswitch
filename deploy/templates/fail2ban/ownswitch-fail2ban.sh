@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 # Privileged fail2ban helper for Ownswitch portal (run via sudo as ownswitch).
 # Usage:
-#   ownswitch-fail2ban status
-#   ownswitch-fail2ban banned
-#   ownswitch-fail2ban unban <ip>
-#   ownswitch-fail2ban ban <ip>
-#   ownswitch-fail2ban config
-#   ownswitch-fail2ban set-config maxretry=5 findtime=10m bantime=1h
+#   ownswitch-fail2ban status-all
+#   ownswitch-fail2ban status [jail]
+#   ownswitch-fail2ban banned [jail]
+#   ownswitch-fail2ban unban <ip> [jail]
+#   ownswitch-fail2ban ban <ip> [jail]
+#   ownswitch-fail2ban config [jail]
+#   ownswitch-fail2ban set-config [jail=NAME] maxretry=5 findtime=10m bantime=1h
 #   ownswitch-fail2ban reload
+#   ownswitch-fail2ban ip-log <ip>
+#   ownswitch-fail2ban geo <ip>
 set -euo pipefail
 
-JAIL="${OWNSWITCH_F2B_JAIL:-opensips-auth}"
+SIP_JAIL=opensips-auth
+PORTAL_JAIL=ownswitch-portal
+DEFAULT_JAIL="${OWNSWITCH_F2B_JAIL:-$SIP_JAIL}"
 SIP_JAIL_FILE=/etc/fail2ban/jail.d/ownswitch-sip.local
-FILTER_FILE=/etc/fail2ban/filter.d/opensips-auth.conf
+PORTAL_JAIL_FILE=/etc/fail2ban/jail.d/ownswitch-portal.local
+SIP_FILTER=/etc/fail2ban/filter.d/opensips-auth.conf
+PORTAL_FILTER=/etc/fail2ban/filter.d/ownswitch-portal.conf
 SIP_PORT="${SIP_PORT:-5060}"
 
 die() { echo "ERR:$1" >&2; exit 1; }
@@ -22,54 +29,25 @@ need_f2b() {
   systemctl is-active --quiet fail2ban 2>/dev/null || die "fail2ban service not active"
 }
 
-cmd_status() {
-  need_f2b
-  if ! fail2ban-client status "$JAIL" >/dev/null 2>&1; then
-    echo "jail=${JAIL}"
-    echo "enabled=0"
-    echo "detail=jail not loaded"
-    return 0
-  fi
-  local raw
-  raw="$(fail2ban-client status "$JAIL" 2>/dev/null || true)"
-  local currently currently_list total
-  currently="$(echo "$raw" | sed -n 's/.*Currently banned:\s*//p' | head -1 | tr -d '[:space:]')"
-  total="$(echo "$raw" | sed -n 's/.*Total banned:\s*//p' | head -1 | tr -d '[:space:]')"
-  currently_list="$(echo "$raw" | sed -n 's/.*Banned IP list:\s*//p' | head -1 | xargs || true)"
-  echo "jail=${JAIL}"
-  echo "enabled=1"
-  echo "currently_banned=${currently:-0}"
-  echo "total_banned=${total:-0}"
-  echo "banned_list=${currently_list}"
-  cmd_config
+jail_file() {
+  case "$1" in
+    opensips-auth) echo "$SIP_JAIL_FILE" ;;
+    ownswitch-portal) echo "$PORTAL_JAIL_FILE" ;;
+    *) echo "" ;;
+  esac
 }
 
-cmd_banned() {
-  need_f2b
-  if ! fail2ban-client status "$JAIL" >/dev/null 2>&1; then
-    return 0
-  fi
-  fail2ban-client status "$JAIL" 2>/dev/null \
-    | sed -n 's/.*Banned IP list:\s*//p' \
-    | head -1 \
-    | tr ' ' '\n' \
-    | sed '/^$/d'
+jail_label() {
+  case "$1" in
+    opensips-auth) echo "SIP auth" ;;
+    ownswitch-portal) echo "Portal login" ;;
+    *) echo "$1" ;;
+  esac
 }
 
-cmd_unban() {
-  local ip="${1:-}"
-  [[ -n "$ip" ]] || die "usage: unban <ip>"
-  need_f2b
-  fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null
-  echo "OK unbanned $ip"
-}
-
-cmd_ban() {
-  local ip="${1:-}"
-  [[ -n "$ip" ]] || die "usage: ban <ip>"
-  need_f2b
-  fail2ban-client set "$JAIL" banip "$ip" >/dev/null
-  echo "OK banned $ip"
+known_jails() {
+  echo "$SIP_JAIL"
+  echo "$PORTAL_JAIL"
 }
 
 read_kv() {
@@ -82,22 +60,6 @@ read_kv() {
   echo "$def"
 }
 
-cmd_config() {
-  local maxretry findtime bantime enabled
-  maxretry="$(read_kv maxretry "$SIP_JAIL_FILE" 5)"
-  findtime="$(read_kv findtime "$SIP_JAIL_FILE" 10m)"
-  bantime="$(read_kv bantime "$SIP_JAIL_FILE" 1h)"
-  enabled="$(read_kv enabled "$SIP_JAIL_FILE" true)"
-  echo "maxretry=${maxretry}"
-  echo "findtime=${findtime}"
-  echo "bantime=${bantime}"
-  echo "jail_enabled=${enabled}"
-  echo "sip_port=${SIP_PORT}"
-  echo "filter_present=$([ -f "$FILTER_FILE" ] && echo 1 || echo 0)"
-  echo "jail_file_present=$([ -f "$SIP_JAIL_FILE" ] && echo 1 || echo 0)"
-}
-
-# Convert 30s / 10m / 1h / 2d / bare seconds → integer seconds for fail2ban-client set
 to_seconds() {
   local v="$1" n u
   if [[ "$v" =~ ^([0-9]+)([smhd])?$ ]]; then
@@ -114,6 +76,128 @@ to_seconds() {
   return 1
 }
 
+emit_jail_status() {
+  local jail="$1"
+  local raw currently currently_list total
+  echo "jail=${jail}"
+  echo "label=$(jail_label "$jail")"
+  if ! fail2ban-client status "$jail" >/dev/null 2>&1; then
+    echo "enabled=0"
+    echo "currently_banned=0"
+    echo "total_banned=0"
+    echo "banned_list="
+    echo "detail=jail not loaded"
+    cmd_config_for "$jail"
+    return 0
+  fi
+  raw="$(fail2ban-client status "$jail" 2>/dev/null || true)"
+  currently="$(echo "$raw" | sed -n 's/.*Currently banned:\s*//p' | head -1 | tr -d '[:space:]')"
+  total="$(echo "$raw" | sed -n 's/.*Total banned:\s*//p' | head -1 | tr -d '[:space:]')"
+  currently_list="$(echo "$raw" | sed -n 's/.*Banned IP list:\s*//p' | head -1 | xargs || true)"
+  echo "enabled=1"
+  echo "currently_banned=${currently:-0}"
+  echo "total_banned=${total:-0}"
+  echo "banned_list=${currently_list}"
+  echo "detail=ok"
+  cmd_config_for "$jail"
+}
+
+cmd_status() {
+  need_f2b
+  local jail="${1:-$DEFAULT_JAIL}"
+  emit_jail_status "$jail"
+}
+
+cmd_status_all() {
+  need_f2b
+  local j
+  echo "jails=${SIP_JAIL},${PORTAL_JAIL}"
+  for j in $(known_jails); do
+    echo "---"
+    emit_jail_status "$j"
+  done
+}
+
+cmd_banned() {
+  need_f2b
+  local jail="${1:-}"
+  local j
+  if [[ -n "$jail" ]]; then
+    fail2ban-client status "$jail" 2>/dev/null \
+      | sed -n 's/.*Banned IP list:\s*//p' \
+      | head -1 \
+      | tr ' ' '\n' \
+      | sed '/^$/d' || true
+    return 0
+  fi
+  for j in $(known_jails); do
+    fail2ban-client status "$j" 2>/dev/null \
+      | sed -n 's/.*Banned IP list:\s*//p' \
+      | head -1 \
+      | tr ' ' '\n' \
+      | sed '/^$/d' \
+      | while read -r ip; do
+          [[ -n "$ip" ]] && echo "${ip}|${j}"
+        done || true
+  done
+}
+
+cmd_unban() {
+  local ip="${1:-}" jail="${2:-}"
+  [[ -n "$ip" ]] || die "usage: unban <ip> [jail]"
+  need_f2b
+  local j ok=0
+  if [[ -n "$jail" ]]; then
+    fail2ban-client set "$jail" unbanip "$ip" >/dev/null 2>&1 && ok=1
+  else
+    for j in $(known_jails); do
+      if fail2ban-client set "$j" unbanip "$ip" >/dev/null 2>&1; then
+        ok=1
+        echo "OK unbanned $ip from $j"
+      fi
+    done
+    [[ "$ok" -eq 1 ]] && return 0
+    die "IP not banned in known jails"
+  fi
+  [[ "$ok" -eq 1 ]] || die "unban failed"
+  echo "OK unbanned $ip"
+}
+
+cmd_ban() {
+  local ip="${1:-}" jail="${2:-$SIP_JAIL}"
+  [[ -n "$ip" ]] || die "usage: ban <ip> [jail]"
+  need_f2b
+  fail2ban-client set "$jail" banip "$ip" >/dev/null
+  echo "OK banned $ip in $jail"
+}
+
+cmd_config_for() {
+  local jail="$1"
+  local file maxretry findtime bantime enabled
+  file="$(jail_file "$jail")"
+  maxretry="$(read_kv maxretry "${file:-/dev/null}" 5)"
+  findtime="$(read_kv findtime "${file:-/dev/null}" 10m)"
+  bantime="$(read_kv bantime "${file:-/dev/null}" 1h)"
+  enabled="$(read_kv enabled "${file:-/dev/null}" true)"
+  echo "maxretry=${maxretry}"
+  echo "findtime=${findtime}"
+  echo "bantime=${bantime}"
+  echo "jail_enabled=${enabled}"
+  if [[ "$jail" == "$SIP_JAIL" ]]; then
+    echo "sip_port=${SIP_PORT}"
+    echo "filter_present=$([ -f "$SIP_FILTER" ] && echo 1 || echo 0)"
+  else
+    echo "filter_present=$([ -f "$PORTAL_FILTER" ] && echo 1 || echo 0)"
+  fi
+  echo "jail_file_present=$([ -n "$file" ] && [ -f "$file" ] && echo 1 || echo 0)"
+}
+
+cmd_config() {
+  local jail="${1:-$DEFAULT_JAIL}"
+  echo "jail=${jail}"
+  cmd_config_for "$jail"
+}
+
 write_sip_jail() {
   local maxretry="$1" findtime="$2" bantime="$3" enabled="$4"
   cat >"$SIP_JAIL_FILE" <<EOF
@@ -128,47 +212,75 @@ journalmatch = _SYSTEMD_UNIT=opensips.service
 maxretry = ${maxretry}
 findtime = ${findtime}
 bantime  = ${bantime}
-# Timed ban (not permanent): fail2ban auto-unbans after bantime
 action   = %(action_)s
 EOF
   chmod 0644 "$SIP_JAIL_FILE"
 }
 
-# Push live jail params so new bans expire; optionally refresh timers on currently banned IPs.
+write_portal_jail() {
+  local maxretry="$1" findtime="$2" bantime="$3" enabled="$4"
+  cat >"$PORTAL_JAIL_FILE" <<EOF
+# Managed by Ownswitch (portal Firewall / deploy)
+[ownswitch-portal]
+enabled  = ${enabled}
+filter   = ownswitch-portal
+port     = http,https
+protocol = tcp
+backend  = systemd
+journalmatch = SYSLOG_IDENTIFIER=ownswitch-portal
+maxretry = ${maxretry}
+findtime = ${findtime}
+bantime  = ${bantime}
+action   = %(action_)s
+EOF
+  chmod 0644 "$PORTAL_JAIL_FILE"
+}
+
 apply_live_jail() {
-  local maxretry="$1" findtime="$2" bantime="$3" refresh_bans="${4:-0}"
+  local jail="$1" maxretry="$2" findtime="$3" bantime="$4" refresh_bans="${5:-0}"
   need_f2b
   local ft_sec bt_sec
   ft_sec="$(to_seconds "$findtime")" || return 0
   bt_sec="$(to_seconds "$bantime")" || return 0
   (( bt_sec >= 60 )) || bt_sec=60
-  if fail2ban-client status "$JAIL" >/dev/null 2>&1; then
-    fail2ban-client set "$JAIL" maxretry "$maxretry" >/dev/null 2>&1 || true
-    fail2ban-client set "$JAIL" findtime "$ft_sec" >/dev/null 2>&1 || true
-    fail2ban-client set "$JAIL" bantime "$bt_sec" >/dev/null 2>&1 || true
+  if fail2ban-client status "$jail" >/dev/null 2>&1; then
+    fail2ban-client set "$jail" maxretry "$maxretry" >/dev/null 2>&1 || true
+    fail2ban-client set "$jail" findtime "$ft_sec" >/dev/null 2>&1 || true
+    fail2ban-client set "$jail" bantime "$bt_sec" >/dev/null 2>&1 || true
     if [[ "$refresh_bans" == "1" ]]; then
       local ip
-      local -a ips=()
-      mapfile -t ips < <(cmd_banned || true)
-      for ip in "${ips[@]}"; do
+      while read -r ip; do
         [[ -n "$ip" ]] || continue
-        fail2ban-client set "$JAIL" unbanip "$ip" >/dev/null 2>&1 || true
-        fail2ban-client set "$JAIL" banip "$ip" >/dev/null 2>&1 || true
-      done
+        fail2ban-client set "$jail" unbanip "$ip" >/dev/null 2>&1 || true
+        fail2ban-client set "$jail" banip "$ip" >/dev/null 2>&1 || true
+      done < <(cmd_banned "$jail" || true)
     fi
   fi
 }
 
 cmd_set_config() {
-  local maxretry findtime bantime enabled old_bantime
-  maxretry="$(read_kv maxretry "$SIP_JAIL_FILE" 5)"
-  findtime="$(read_kv findtime "$SIP_JAIL_FILE" 10m)"
-  bantime="$(read_kv bantime "$SIP_JAIL_FILE" 1h)"
-  old_bantime="$bantime"
-  enabled="$(read_kv enabled "$SIP_JAIL_FILE" true)"
+  local jail="$DEFAULT_JAIL"
+  local maxretry findtime bantime enabled old_bantime file
   local arg
+  # optional jail= first
   for arg in "$@"; do
     case "$arg" in
+      jail=*) jail="${arg#jail=}" ;;
+    esac
+  done
+  case "$jail" in
+    opensips-auth|ownswitch-portal) ;;
+    *) die "jail must be opensips-auth or ownswitch-portal" ;;
+  esac
+  file="$(jail_file "$jail")"
+  maxretry="$(read_kv maxretry "$file" 5)"
+  findtime="$(read_kv findtime "$file" 10m)"
+  bantime="$(read_kv bantime "$file" 1h)"
+  old_bantime="$bantime"
+  enabled="$(read_kv enabled "$file" true)"
+  for arg in "$@"; do
+    case "$arg" in
+      jail=*) ;;
       maxretry=*) maxretry="${arg#maxretry=}" ;;
       findtime=*) findtime="${arg#findtime=}" ;;
       bantime=*)  bantime="${arg#bantime=}" ;;
@@ -183,15 +295,20 @@ cmd_set_config() {
   bt_sec="$(to_seconds "$bantime")" || die "invalid bantime"
   (( bt_sec >= 60 && bt_sec <= 2592000 )) || die "bantime must be between 60s and 30d"
   case "$enabled" in true|false|1|0|yes|no) ;; *) die "enabled must be true/false" ;; esac
-  [[ -f "$FILTER_FILE" ]] || die "filter missing: $FILTER_FILE (run deploy/fix-sip-firewall.sh)"
-  write_sip_jail "$maxretry" "$findtime" "$bantime" "$enabled"
+  if [[ "$jail" == "$SIP_JAIL" ]]; then
+    [[ -f "$SIP_FILTER" ]] || die "filter missing: $SIP_FILTER"
+    write_sip_jail "$maxretry" "$findtime" "$bantime" "$enabled"
+  else
+    [[ -f "$PORTAL_FILTER" ]] || die "filter missing: $PORTAL_FILTER (run deploy/fix-portal-firewall.sh)"
+    write_portal_jail "$maxretry" "$findtime" "$bantime" "$enabled"
+  fi
   fail2ban-client reload >/dev/null 2>&1 || systemctl reload fail2ban >/dev/null 2>&1 || systemctl restart fail2ban
   sleep 1
   local refresh=0
   [[ "$bantime" != "$old_bantime" ]] && refresh=1
-  apply_live_jail "$maxretry" "$findtime" "$bantime" "$refresh"
-  echo "OK config saved (bantime=${bantime}, auto-unban enabled)"
-  cmd_config
+  apply_live_jail "$jail" "$maxretry" "$findtime" "$bantime" "$refresh"
+  echo "OK config saved jail=${jail} (bantime=${bantime}, auto-unban enabled)"
+  cmd_config "$jail"
 }
 
 cmd_reload() {
@@ -200,18 +317,23 @@ cmd_reload() {
   echo "OK reloaded"
 }
 
-# Recent OpenSIPS auth-fail lines for an IP (why it was banned)
 cmd_ip_log() {
   local ip="${1:-}"
   [[ -n "$ip" ]] || die "usage: ip-log <ip>"
-  # Prefer journald for opensips.service
-  journalctl -u opensips --no-pager -n 800 2>/dev/null \
-    | grep -F "$ip" \
-    | grep -iE 'auth failed|REGISTER|INVITE|Forbidden|Unauthorized' \
-    | tail -n 40 || true
+  {
+    journalctl -u opensips --no-pager -n 800 2>/dev/null \
+      | grep -F "$ip" \
+      | grep -iE 'auth failed|REGISTER|INVITE|Forbidden|Unauthorized' \
+      | tail -n 20 || true
+    journalctl -t ownswitch-portal --no-pager -n 400 2>/dev/null \
+      | grep -F "$ip" \
+      | tail -n 20 || true
+    journalctl --identifier=ownswitch-portal --no-pager -n 400 2>/dev/null \
+      | grep -F "$ip" \
+      | tail -n 20 || true
+  } | awk 'NF' | tail -n 40 || true
 }
 
-# Country / city / ISP for banned IP (used by portal Firewall page)
 cmd_geo() {
   local ip="${1:-}"
   [[ -n "$ip" ]] || die "usage: geo <ip>"
@@ -240,6 +362,7 @@ cmd_geo() {
 }
 
 case "${1:-}" in
+  status-all) shift; cmd_status_all "$@" ;;
   status)     shift; cmd_status "$@" ;;
   banned)     shift; cmd_banned "$@" ;;
   unban)      shift; cmd_unban "$@" ;;
@@ -250,7 +373,7 @@ case "${1:-}" in
   ip-log)     shift; cmd_ip_log "$@" ;;
   geo)        shift; cmd_geo "$@" ;;
   *)
-    echo "usage: $0 {status|banned|unban|ban|config|set-config|reload|ip-log|geo}" >&2
+    echo "usage: $0 {status-all|status|banned|unban|ban|config|set-config|reload|ip-log|geo}" >&2
     exit 2
     ;;
 esac

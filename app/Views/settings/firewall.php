@@ -2,13 +2,29 @@
 /** @var array $status @var bool $available @var string $helperPath */
 $s = $status;
 $available = !empty($available);
-$banned = $s['banned'] ?? [];
+$jails = $s['jails'] ?? [];
+$sip = $jails['opensips-auth'] ?? [
+    'label' => 'SIP auth', 'enabled' => !empty($s['enabled']), 'maxretry' => $s['maxretry'] ?? '5',
+    'findtime' => $s['findtime'] ?? '10m', 'bantime' => $s['bantime'] ?? '1h',
+    'jail_enabled' => $s['jail_enabled'] ?? 'true', 'sip_port' => $s['sip_port'] ?? '5060',
+    'currently_banned' => 0,
+];
+$portal = $jails['ownswitch-portal'] ?? [
+    'label' => 'Portal login', 'enabled' => false, 'maxretry' => '5',
+    'findtime' => '10m', 'bantime' => '1h', 'jail_enabled' => 'true', 'currently_banned' => 0,
+];
+$entries = $s['ban_entries'] ?? [];
 $details = $s['ban_details'] ?? [];
+if ($entries === [] && !empty($s['banned'])) {
+    foreach ($s['banned'] as $ip) {
+        $entries[] = ['ip' => $ip, 'jail' => 'opensips-auth', 'label' => 'SIP auth'];
+    }
+}
 ?>
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title">Firewall</h1>
-        <p class="os-page-sub">SIP fail2ban — block IPs after wrong password attempts on port 5060</p>
+        <p class="os-page-sub">Auto-block SIP and portal hacking attempts — banned IPs appear below</p>
     </div>
     <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/settings')) ?>"><i class="bi bi-gear me-1"></i>Settings</a>
 </div>
@@ -16,79 +32,101 @@ $details = $s['ban_details'] ?? [];
 <?php if (empty($s['ok'])): ?>
     <div class="alert alert-warning">
         <?= e((string) ($s['detail'] ?? 'fail2ban not available')) ?>
+        <div class="small mt-1">On the server: <code>sudo bash /opt/ownswitch-src/deploy/fix-portal-firewall.sh</code></div>
     </div>
 <?php else: ?>
     <div class="os-dash-grid os-dash-kpis mb-3">
-        <div class="os-kpi os-kpi--teal"><div class="lbl">Jail</div><div class="val"><?= !empty($s['enabled']) ? 'On' : 'Off' ?></div><div class="sub">opensips-auth</div></div>
-        <div class="os-kpi os-kpi--amber"><div class="lbl">Banned now</div><div class="val"><?= e((string) ($s['currently_banned'] ?? 0)) ?></div><div class="sub">active blocks</div></div>
-        <div class="os-kpi os-kpi--blue"><div class="lbl">Threshold</div><div class="val"><?= e((string) ($s['maxretry'] ?? '5')) ?></div><div class="sub">fails / <?= e((string) ($s['findtime'] ?? '10m')) ?></div></div>
-        <div class="os-kpi os-kpi--violet"><div class="lbl">Ban time</div><div class="val"><?= e((string) ($s['bantime'] ?? '1h')) ?></div><div class="sub">auto-unban · UDP/TCP <?= e((string) ($s['sip_port'] ?? '5060')) ?></div></div>
+        <div class="os-kpi os-kpi--teal"><div class="lbl">SIP jail</div><div class="val"><?= !empty($sip['enabled']) ? 'On' : 'Off' ?></div><div class="sub">opensips-auth · UDP/TCP <?= e((string) ($sip['sip_port'] ?? '5060')) ?></div></div>
+        <div class="os-kpi os-kpi--blue"><div class="lbl">Portal jail</div><div class="val"><?= !empty($portal['enabled']) ? 'On' : 'Off' ?></div><div class="sub">ownswitch-portal · HTTP/S</div></div>
+        <div class="os-kpi os-kpi--amber"><div class="lbl">Banned now</div><div class="val"><?= e((string) ($s['currently_banned'] ?? count($entries))) ?></div><div class="sub">active blocks</div></div>
+        <div class="os-kpi os-kpi--violet"><div class="lbl">Auto-unban</div><div class="val"><?= e((string) ($sip['bantime'] ?? '1h')) ?></div><div class="sub">after ban duration</div></div>
     </div>
 <?php endif; ?>
 
 <div class="row g-3">
     <div class="col-lg-4">
-        <div class="os-panel p-3">
-            <h2 class="h6 mb-3">Ban thresholds</h2>
-            <form method="post" action="<?= e(url('/settings/firewall/config')) ?>">
-                <?= csrf_field() ?>
-                <div class="form-check mb-3">
-                    <input class="form-check-input" type="checkbox" name="jail_enabled" id="jail_enabled" value="1"<?= (($s['jail_enabled'] ?? 'true') === 'true' || ($s['jail_enabled'] ?? '') === '1') ? ' checked' : '' ?><?= !$available ? ' disabled' : '' ?>>
-                    <label class="form-check-label" for="jail_enabled">Enable SIP auth jail</label>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label" for="maxretry">Wrong attempts before ban</label>
-                    <input class="form-control form-control-sm" type="number" min="1" max="100" id="maxretry" name="maxretry" value="<?= e((string) ($s['maxretry'] ?? '5')) ?>" required<?= !$available ? ' disabled' : '' ?>>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label" for="findtime">Window (findtime)</label>
-                    <input class="form-control form-control-sm" id="findtime" name="findtime" value="<?= e((string) ($s['findtime'] ?? '10m')) ?>" required<?= !$available ? ' disabled' : '' ?>>
-                    <div class="form-text">e.g. 10m, 1h</div>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label" for="bantime">Ban duration</label>
-                    <input class="form-control form-control-sm" id="bantime" name="bantime" value="<?= e((string) ($s['bantime'] ?? '1h')) ?>" required<?= !$available ? ' disabled' : '' ?>>
-                    <div class="form-text">e.g. 30m, 1h, 24h — IP is <strong>automatically unbanned</strong> after this time. Saving reapplies the timer to currently banned IPs.</div>
-                </div>
-                <button type="submit" class="btn btn-primary btn-sm" data-once<?= !$available ? ' disabled' : '' ?>>Save</button>
-            </form>
-        </div>
+        <?php foreach ([['key' => 'opensips-auth', 'cfg' => $sip, 'title' => 'SIP auth thresholds', 'hint' => 'Wrong REGISTER/INVITE password on 5060'], ['key' => 'ownswitch-portal', 'cfg' => $portal, 'title' => 'Portal login thresholds', 'hint' => 'Wrong password or CAPTCHA on web login']] as $block):
+            $cfg = $block['cfg'];
+            $jid = preg_replace('/[^a-z0-9]/', '', $block['key']);
+            ?>
+            <div class="os-panel p-3 mb-3">
+                <h2 class="h6 mb-1"><?= e($block['title']) ?></h2>
+                <p class="small text-muted mb-3"><?= e($block['hint']) ?></p>
+                <form method="post" action="<?= e(url('/settings/firewall/config')) ?>">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="jail" value="<?= e($block['key']) ?>">
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" name="jail_enabled" id="en_<?= e($jid) ?>" value="1"<?= (($cfg['jail_enabled'] ?? 'true') === 'true' || ($cfg['jail_enabled'] ?? '') === '1') ? ' checked' : '' ?><?= !$available ? ' disabled' : '' ?>>
+                        <label class="form-check-label" for="en_<?= e($jid) ?>">Enable jail</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="mr_<?= e($jid) ?>">Wrong attempts before ban</label>
+                        <input class="form-control form-control-sm" type="number" min="1" max="100" id="mr_<?= e($jid) ?>" name="maxretry" value="<?= e((string) ($cfg['maxretry'] ?? '5')) ?>" required<?= !$available ? ' disabled' : '' ?>>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="ft_<?= e($jid) ?>">Window (findtime)</label>
+                        <input class="form-control form-control-sm" id="ft_<?= e($jid) ?>" name="findtime" value="<?= e((string) ($cfg['findtime'] ?? '10m')) ?>" required<?= !$available ? ' disabled' : '' ?>>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="bt_<?= e($jid) ?>">Ban duration</label>
+                        <input class="form-control form-control-sm" id="bt_<?= e($jid) ?>" name="bantime" value="<?= e((string) ($cfg['bantime'] ?? '1h')) ?>" required<?= !$available ? ' disabled' : '' ?>>
+                        <div class="form-text">IP auto-unbans after this time.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm" data-once<?= !$available ? ' disabled' : '' ?>>Save</button>
+                </form>
+            </div>
+        <?php endforeach; ?>
 
-        <div class="os-panel p-3 mt-3">
+        <div class="os-panel p-3">
             <h2 class="h6 mb-3">Manual ban</h2>
             <form method="post" action="<?= e(url('/settings/firewall/ban')) ?>" class="row g-2 align-items-end">
                 <?= csrf_field() ?>
-                <div class="col">
+                <div class="col-12">
                     <label class="form-label" for="ban_ip">IP address</label>
                     <input class="form-control form-control-sm" id="ban_ip" name="ip" placeholder="1.2.3.4" required pattern="^[0-9a-fA-F:.]+$"<?= !$available ? ' disabled' : '' ?>>
                 </div>
+                <div class="col">
+                    <label class="form-label" for="ban_jail">Jail</label>
+                    <select class="form-select form-select-sm" id="ban_jail" name="jail"<?= !$available ? ' disabled' : '' ?>>
+                        <option value="opensips-auth">SIP auth</option>
+                        <option value="ownswitch-portal">Portal login</option>
+                    </select>
+                </div>
                 <div class="col-auto">
-                    <button type="submit" class="btn btn-outline-danger btn-sm" data-confirm="Ban this IP from SIP?" data-once<?= !$available ? ' disabled' : '' ?>>Ban</button>
+                    <button type="submit" class="btn btn-outline-danger btn-sm" data-confirm="Ban this IP?" data-once<?= !$available ? ' disabled' : '' ?>>Ban</button>
                 </div>
             </form>
-            <p class="form-text mb-0 mt-2">Manual bans also expire after the ban duration above.</p>
         </div>
     </div>
 
     <div class="col-lg-8">
         <div class="os-panel overflow-hidden">
             <div class="px-3 py-2 border-bottom d-flex justify-content-between align-items-center">
-                <span class="fw-semibold">Currently banned <span class="text-muted fw-normal">(<?= e((string) count($banned)) ?>)</span></span>
+                <span class="fw-semibold">Currently banned <span class="text-muted fw-normal">(<?= e((string) count($entries)) ?>)</span></span>
                 <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/settings/firewall')) ?>"><i class="bi bi-arrow-clockwise"></i></a>
             </div>
-            <?php if ($banned === []): ?>
-                <div class="os-empty py-4"><div class="os-empty-title">No banned IPs</div><div>Attackers with wrong SIP passwords appear here after <?= e((string) ($s['maxretry'] ?? '5')) ?> failures.</div></div>
+            <?php if ($entries === []): ?>
+                <div class="os-empty py-4">
+                    <div class="os-empty-title">No banned IPs</div>
+                    <div>SIP wrong-password attacks and portal login floods appear here automatically.</div>
+                </div>
             <?php else: ?>
                 <div class="list-group list-group-flush">
-                    <?php foreach ($banned as $i => $ip):
-                        $d = $details[$ip] ?? ['country' => '—', 'city' => '', 'isp' => '', 'reason' => '—', 'attempts' => []];
-                        $cid = 'ban-detail-' . preg_replace('/[^a-zA-Z0-9]/', '', $ip) . '-' . $i;
+                    <?php foreach ($entries as $i => $e):
+                        $ip = (string) $e['ip'];
+                        $jail = (string) ($e['jail'] ?? 'opensips-auth');
+                        $d = $details[$ip . '|' . $jail] ?? $details[$ip] ?? ['country' => '—', 'city' => '', 'isp' => '', 'reason' => '—', 'attempts' => []];
+                        $cid = 'ban-detail-' . preg_replace('/[^a-zA-Z0-9]/', '', $ip . $jail) . '-' . $i;
                         $attempts = $d['attempts'] ?? [];
+                        $badge = $jail === 'ownswitch-portal' ? 'bg-primary' : 'bg-secondary';
                         ?>
                         <div class="list-group-item px-3 py-3">
                             <div class="d-flex flex-wrap gap-2 justify-content-between align-items-start">
                                 <div class="me-auto" style="min-width:12rem">
-                                    <div class="os-mono fw-semibold"><?= e($ip) ?></div>
+                                    <div class="d-flex flex-wrap align-items-center gap-2">
+                                        <span class="os-mono fw-semibold"><?= e($ip) ?></span>
+                                        <span class="badge <?= e($badge) ?>"><?= e((string) ($e['label'] ?? $jail)) ?></span>
+                                    </div>
                                     <?php if (($d['isp'] ?? '') !== ''): ?>
                                         <div class="small text-muted"><?= e((string) $d['isp']) ?></div>
                                     <?php endif; ?>
@@ -110,13 +148,14 @@ $details = $s['ban_details'] ?? [];
                                 <form method="post" action="<?= e(url('/settings/firewall/unban')) ?>" class="flex-shrink-0" data-confirm="Unban <?= e($ip) ?>?">
                                     <?= csrf_field() ?>
                                     <input type="hidden" name="ip" value="<?= e($ip) ?>">
+                                    <input type="hidden" name="jail" value="<?= e($jail) ?>">
                                     <button type="submit" class="btn btn-outline-primary btn-sm" data-once>Unban</button>
                                 </form>
                             </div>
                             <?php if ($attempts !== []): ?>
                                 <div class="collapse mt-2" id="<?= e($cid) ?>">
                                     <div class="border rounded bg-light p-2">
-                                        <div class="small text-muted mb-1">Recent auth failures</div>
+                                        <div class="small text-muted mb-1">Recent failures</div>
                                         <ul class="mb-0 ps-3" style="max-height:10rem;overflow:auto">
                                             <?php foreach ($attempts as $line): ?>
                                                 <li class="os-mono" style="font-size:.72rem;word-break:break-all"><?= e($line) ?></li>
@@ -130,6 +169,6 @@ $details = $s['ban_details'] ?? [];
                 </div>
             <?php endif; ?>
         </div>
-        <p class="small text-muted mt-2 mb-0">Helper: <code><?= e($helperPath) ?></code> · Ban duration <?= e((string) ($s['bantime'] ?? '1h')) ?> then auto-unban</p>
+        <p class="small text-muted mt-2 mb-0">Helper: <code><?= e($helperPath) ?></code> · CAPTCHA + fail2ban protect portal login; SIP digest failures ban on 5060</p>
     </div>
 </div>

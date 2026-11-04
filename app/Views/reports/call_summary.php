@@ -12,7 +12,7 @@ $blurb = (string) ($res['meta']['blurb'] ?? '');
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title"><?= e($title) ?></h1>
-        <p class="os-page-sub"><?= e($blurb !== '' ? $blurb : 'Call summary from CDRs') ?></p>
+        <p class="os-page-sub"><?= e($blurb !== '' ? $blurb : 'Call summary from CDRs') ?> · <?= e(tz_label()) ?></p>
     </div>
 </div>
 

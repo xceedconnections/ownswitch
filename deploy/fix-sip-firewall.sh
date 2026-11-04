@@ -17,6 +17,9 @@ git reset --hard origin/main
 apt-get install -y fail2ban >/dev/null
 
 install -m 0644 "$SRC/deploy/templates/fail2ban/opensips-auth.conf" /etc/fail2ban/filter.d/opensips-auth.conf
+if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-portal.conf" ]]; then
+  install -m 0644 "$SRC/deploy/templates/fail2ban/ownswitch-portal.conf" /etc/fail2ban/filter.d/ownswitch-portal.conf
+fi
 install -m 0755 "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sh" /usr/local/sbin/ownswitch-fail2ban
 install -m 0440 "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sudoers" /etc/sudoers.d/ownswitch-fail2ban
 visudo -cf /etc/sudoers.d/ownswitch-fail2ban
@@ -56,16 +59,22 @@ fi
 # Do NOT patch opensips.cfg here — use deploy/fix-opensips-start-now.sh for SIP cfg/start.
 # Firewall install must not risk breaking REGISTER.
 
+if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-portal.local" && ! -f /etc/fail2ban/jail.d/ownswitch-portal.local ]]; then
+  install -m 0644 "$SRC/deploy/templates/fail2ban/ownswitch-portal.local" /etc/fail2ban/jail.d/ownswitch-portal.local
+fi
+
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban
 sleep 1
 fail2ban-client status opensips-auth || true
+fail2ban-client status ownswitch-portal || true
 
 bash "$SRC/deploy/refresh-ui.sh"
 
 echo
 echo "################################################################"
 echo " SIP firewall: fail2ban jail opensips-auth (5 fails / 10m / 1h)."
-echo " Portal: Settings → Firewall  (unban / thresholds / manual ban)."
-echo " Helper: /usr/local/sbin/ownswitch-fail2ban status"
+echo " Portal firewall: ownswitch-portal (login CAPTCHA + password fails)."
+echo " Portal UI: Settings → Firewall  (unban / thresholds / manual ban)."
+echo " Helper: /usr/local/sbin/ownswitch-fail2ban status-all"
 echo "################################################################"

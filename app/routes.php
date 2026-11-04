@@ -69,6 +69,8 @@ $router->group('', ['auth', 'tenant', 'csrf'], function (Router $r) use ($crud, 
     $r->get('/', [DashboardController::class, 'index']);
     $r->get('/account/password', [AuthController::class, 'passwordForm']);
     $r->post('/account/password', [AuthController::class, 'passwordChange']);
+    $r->get('/account/profile', [AuthController::class, 'profileForm']);
+    $r->post('/account/profile', [AuthController::class, 'profileSave']);
 
     // Live metrics (10s poll) — host for staff, concurrent for customers
     $live = new LiveMetricsController();

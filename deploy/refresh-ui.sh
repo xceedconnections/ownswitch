@@ -97,13 +97,25 @@ if [[ -f "$OWN_ETC/install.conf" ]]; then
   mv /tmp/ownswitch-ic.$$ "$OWN_ETC/install.conf"
 fi
 
-# Keep fail2ban portal helper in sync (ban duration / auto-unban)
+# Keep fail2ban helper + SIP/portal jails in sync
 if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sh" ]]; then
   install -m 0755 "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sh" /usr/local/sbin/ownswitch-fail2ban
   if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sudoers" ]]; then
     install -m 0440 "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sudoers" /etc/sudoers.d/ownswitch-fail2ban
     visudo -cf /etc/sudoers.d/ownswitch-fail2ban >/dev/null 2>&1 || true
   fi
+fi
+if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-portal.conf" ]]; then
+  install -m 0644 "$SRC/deploy/templates/fail2ban/ownswitch-portal.conf" /etc/fail2ban/filter.d/ownswitch-portal.conf
+fi
+if [[ -f "$SRC/deploy/templates/fail2ban/opensips-auth.conf" ]]; then
+  install -m 0644 "$SRC/deploy/templates/fail2ban/opensips-auth.conf" /etc/fail2ban/filter.d/opensips-auth.conf
+fi
+if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-portal.local" && ! -f /etc/fail2ban/jail.d/ownswitch-portal.local ]]; then
+  install -m 0644 "$SRC/deploy/templates/fail2ban/ownswitch-portal.local" /etc/fail2ban/jail.d/ownswitch-portal.local
+fi
+if command -v fail2ban-client >/dev/null 2>&1 && systemctl is-active --quiet fail2ban 2>/dev/null; then
+  fail2ban-client reload >/dev/null 2>&1 || systemctl reload fail2ban >/dev/null 2>&1 || true
 fi
 
 echo

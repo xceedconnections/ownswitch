@@ -19,8 +19,8 @@ return [
         'min_password_length'   => 12,
         'max_failed_logins'     => 5,
         'lockout_minutes'       => 15,
-        'ip_window_minutes'     => 15,
-        'ip_max_failures'       => 30,
+        'ip_window_minutes'     => 10,
+        'ip_max_failures'       => 8,
     ],
     // REMOTE_ADDR values allowed to supply X-Forwarded-For.
     'trusted_proxies' => [],

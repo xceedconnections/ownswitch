@@ -49,11 +49,11 @@
             <div class="os-empty"><div class="os-empty-title">No movements</div><div>No balance-affecting ledger entries in this range.</div></div>
         <?php else: ?>
             <div class="table-responsive"><table class="table table-sm mb-0 os-table">
-                <thead><tr><th>Time (UTC)</th><th>Type</th><th>Description</th><th class="os-num">Amount</th><th class="os-num">Balance</th></tr></thead>
+                <thead><tr><th>Time (<?= e(user_timezone()) ?>)</th><th>Type</th><th>Description</th><th class="os-num">Amount</th><th class="os-num">Balance</th></tr></thead>
                 <tbody>
                 <?php foreach ($statement['rows'] as $row): ?>
                     <tr>
-                        <td class="os-mono"><?= e(substr((string) $row['created_at'], 0, 19)) ?></td>
+                        <td class="os-mono"><?= e(fmt_local((string) $row['created_at'])) ?></td>
                         <td class="os-mono"><?= e((string) $row['entry_type']) ?></td>
                         <td><?= e((string) ($row['description'] ?? '—')) ?></td>
                         <td class="os-num os-mono"><?= e((string) $row['amount']) ?></td>

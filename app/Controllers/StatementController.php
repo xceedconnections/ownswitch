@@ -13,7 +13,7 @@ final class StatementController extends BaseController
 {
     public function index(Request $r, array $p = []): Response
     {
-        [$from, $to] = $this->dateRange($r, 30);
+        [$from, $to, $fromUtc, $toUtc] = $this->dateRangeUtc($r, 30);
         $scope = $this->scope($r);
         $cid = is_string($r->query('customer_id')) && ctype_digit((string) $r->query('customer_id'))
             ? (int) $r->query('customer_id') : null;
@@ -25,7 +25,7 @@ final class StatementController extends BaseController
             if ($cust === null) {
                 $error = 'User not found.';
             } else {
-                $statement = $this->build($cid, $from, $to, $cust);
+                $statement = $this->build($cid, $fromUtc, $toUtc, $cust);
             }
         }
         return $this->view('statements/index', [
@@ -43,15 +43,13 @@ final class StatementController extends BaseController
      * @param array<string,mixed> $cust
      * @return array<string,mixed>
      */
-    private function build(int $customerId, string $from, string $to, array $cust): array
+    private function build(int $customerId, string $fromUtc, string $toUtc, array $cust): array
     {
-        $fromTs = $from . ' 00:00:00';
-        $toTs = (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00');
         $openSt = $this->db()->prepare(
             "SELECT COALESCE(SUM(amount),0) FROM ledger_entries
              WHERE customer_id = ? AND affects_balance = 1 AND created_at < ?"
         );
-        $openSt->execute([$customerId, $fromTs]);
+        $openSt->execute([$customerId, $fromUtc]);
         $opening = (string) $openSt->fetchColumn();
 
         $st = $this->db()->prepare(
@@ -61,7 +59,7 @@ final class StatementController extends BaseController
                AND created_at >= ? AND created_at < ?
              ORDER BY created_at ASC, id ASC"
         );
-        $st->execute([$customerId, $fromTs, $toTs]);
+        $st->execute([$customerId, $fromUtc, $toUtc]);
         $rows = $st->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         $running = $opening;
         $out = [];
@@ -80,8 +78,8 @@ final class StatementController extends BaseController
             'closing' => $running,
             'live_balance' => $live,
             'rows' => $out,
-            'from' => $from,
-            'to' => $to,
+            'from' => $fromUtc,
+            'to' => $toUtc,
         ];
     }
 

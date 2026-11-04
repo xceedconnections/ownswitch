@@ -127,6 +127,7 @@ if ($user && in_array($user['role'] ?? '', ['customer_owner', 'customer_tech'], 
                         <div class="small text-muted"><?= e($roleLabels[$user['role']] ?? (string) $user['role']) ?></div>
                     </li>
                     <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="<?= e(url('/account/profile')) ?>"><i class="bi bi-person-gear me-2"></i>My profile</a></li>
                     <li><a class="dropdown-item" href="<?= e(url('/account/password')) ?>"><i class="bi bi-key me-2"></i>Change password</a></li>
                     <li>
                         <form method="post" action="<?= e(url('/logout')) ?>">

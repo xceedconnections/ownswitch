@@ -27,7 +27,7 @@ final class ReportController extends BaseController
         }
 
         [$from, $to] = $this->dateRange($r, $meta['bucket'] === 'month' ? 90 : 7);
-        $res = (new CallSummaryService($this->db()))->run($slug, $scope, $from, $to);
+        $res = (new CallSummaryService($this->db()))->run($slug, $scope, $from, $to, $this->userTimezone($r));
 
         $reportLinks = [];
         foreach (CallSummaryService::REPORTS as $key => $rep) {
@@ -57,7 +57,7 @@ final class ReportController extends BaseController
     {
         [$from, $to] = $this->dateRange($r, 30);
         $group = is_string($r->query('group')) ? (string) $r->query('group') : 'day';
-        $res = (new FinancialReportService($this->db()))->summary($this->scope($r), $from, $to, $group);
+        $res = (new FinancialReportService($this->db()))->summary($this->scope($r), $from, $to, $group, $this->userTimezone($r));
         return $this->view('reports/financial', [
             'title' => 'Financial Report', 'res' => $res, 'from' => $from, 'to' => $to, 'group' => $group, 'canCarrier' => $this->scope($r)->isGlobal(),
         ]);
@@ -76,11 +76,9 @@ final class ReportController extends BaseController
     /** Post-dial delay (setup → answer) for answered calls. */
     public function pdd(Request $r, array $p = []): Response
     {
-        [$from, $to] = $this->dateRange($r, 7);
+        [$from, $to, $fromTs, $toTs] = $this->dateRangeUtc($r, 7);
         $scope = $this->scope($r);
         [$tw, $tp] = $scope->where('owned', 'c');
-        $fromTs = $from . ' 00:00:00';
-        $toTs = (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00');
         $res = [
             'answered' => 0,
             'avg_pdd_ms' => '0',
@@ -140,15 +138,13 @@ final class ReportController extends BaseController
     /** Unrated / unattributed / rating-discrepancy CDRs. */
     public function cdrReconciliation(Request $r, array $p = []): Response
     {
-        [$from, $to] = $this->dateRange($r, 7);
+        [$from, $to, $fromTs, $toTs] = $this->dateRangeUtc($r, 7);
         $focus = is_string($r->query('focus')) ? (string) $r->query('focus') : 'all';
         if (!in_array($focus, ['all', 'unrated', 'unattributed', 'discrepancy'], true)) {
             $focus = 'all';
         }
         $scope = $this->scope($r);
         [$tw, $tp] = $scope->where('owned', 'c');
-        $fromTs = $from . ' 00:00:00';
-        $toTs = (new \DateTimeImmutable($to))->modify('+1 day')->format('Y-m-d 00:00:00');
         $page = max(1, (int) $r->query('page', 1));
         $per = 50;
         $issue = "(c.settlement_status IN ('unrated','unattributed') OR c.rating_discrepancy = 1)";

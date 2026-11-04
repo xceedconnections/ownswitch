@@ -9,7 +9,7 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
 <div class="os-page-head">
     <div>
         <h1 class="os-page-title"><?= $failedOnly ? 'Failed CDRs' : 'CDR Search' ?> <span class="os-count"><?= e($result['total']) ?></span></h1>
-        <p class="os-page-sub"><?= $failedOnly ? 'Non-answered calls (busy, cancel, fail, no answer)' : 'Filter, export, and manage call detail records' ?></p>
+        <p class="os-page-sub"><?= $failedOnly ? 'Non-answered calls (busy, cancel, fail, no answer)' : 'Filter, export, and manage call detail records' ?> · times in <?= e(tz_label()) ?></p>
     </div>
     <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/cdrs/export' . ($csvQs !== '' ? '?' . $csvQs : ''))) ?>"><i class="bi bi-download me-1"></i>CSV</a>
@@ -73,7 +73,7 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
     <table class="table table-sm table-hover mb-0 os-table os-cdr-table">
         <thead><tr>
             <?php if ($canDelete): ?><th style="width:2rem"><input type="checkbox" id="cdr-check-all" aria-label="Select all"></th><?php endif; ?>
-            <th>ID</th><th></th><th>Time (UTC)</th>
+            <th>ID</th><th></th><th>Time (<?= e(user_timezone()) ?>)</th>
             <?php if ($customers): ?><th>Customer</th><?php endif; ?>
             <th>SIP</th><th>CallerID</th><th>Destination</th><th>Description</th><th>Result</th><th>SIP code</th>
             <th class="os-num">Dur (s)</th><th class="os-num">Billable</th><th>I/S</th><th class="os-num">Charge</th>
@@ -104,7 +104,7 @@ $xlsQs = http_build_query($exportBase + ['format' => 'excel']);
                         <span class="text-muted">—</span>
                     <?php endif; ?>
                 </td>
-                <td class="os-mono"><?= e(substr((string) $c['setup_at'], 0, 19)) ?></td>
+                <td class="os-mono"><?= e(fmt_local((string) $c['setup_at'])) ?></td>
                 <?php if ($customers): ?><td><?= e($c['customer_name'] ?? '—') ?></td><?php endif; ?>
                 <td class="os-mono"><?= e($c['sip_username'] ?? '—') ?></td>
                 <td class="os-mono"><?= e($c['src'] ?? '—') ?></td>

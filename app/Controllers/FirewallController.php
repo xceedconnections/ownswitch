@@ -8,7 +8,7 @@ use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
 use Ownswitch\Services\System\Fail2banService;
 
-/** Settings → Firewall: SIP fail2ban bans + thresholds. */
+/** Settings → Firewall: SIP + portal fail2ban bans + thresholds. */
 final class FirewallController extends BaseController
 {
     public function index(Request $r, array $p = []): Response
@@ -25,22 +25,26 @@ final class FirewallController extends BaseController
     public function unban(Request $r, array $p = []): Response
     {
         $ip = trim((string) $r->input('ip', ''));
-        $res = (new Fail2banService())->unban($ip);
-        $this->audit($r, 'firewall_unban', 'firewall', null, null, ['ip' => $ip, 'ok' => $res['ok']]);
+        $jail = trim((string) $r->input('jail', ''));
+        $res = (new Fail2banService())->unban($ip, $jail !== '' ? $jail : null);
+        $this->audit($r, 'firewall_unban', 'firewall', null, null, ['ip' => $ip, 'jail' => $jail, 'ok' => $res['ok']]);
         return $this->redirect($r, '/settings/firewall', $res['detail'], $res['ok'] ? 'success' : 'danger');
     }
 
     public function ban(Request $r, array $p = []): Response
     {
         $ip = trim((string) $r->input('ip', ''));
-        $res = (new Fail2banService())->ban($ip);
-        $this->audit($r, 'firewall_ban', 'firewall', null, null, ['ip' => $ip, 'ok' => $res['ok']]);
+        $jail = trim((string) $r->input('jail', Fail2banService::JAIL_SIP));
+        $res = (new Fail2banService())->ban($ip, $jail);
+        $this->audit($r, 'firewall_ban', 'firewall', null, null, ['ip' => $ip, 'jail' => $jail, 'ok' => $res['ok']]);
         return $this->redirect($r, '/settings/firewall', $res['detail'], $res['ok'] ? 'success' : 'danger');
     }
 
     public function saveConfig(Request $r, array $p = []): Response
     {
+        $jail = trim((string) $r->input('jail', Fail2banService::JAIL_SIP));
         $cfg = [
+            'jail' => $jail,
             'maxretry' => trim((string) $r->input('maxretry', '')),
             'findtime' => trim((string) $r->input('findtime', '')),
             'bantime' => trim((string) $r->input('bantime', '')),
