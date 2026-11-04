@@ -238,8 +238,28 @@ final class DncService
             throw $e;
         }
         $this->bumpCount($groupId, 1);
-        $this->cacheAdd($groupId, [$digits]);
+        $this->cacheAdd($groupId, self::nanpAliases($digits));
         return $digits;
+    }
+
+    /**
+     * NANP dial variants so 13234462244 and 3234462244 both hit the same DNC entry.
+     *
+     * @return list<string>
+     */
+    public static function nanpAliases(string $digits): array
+    {
+        $digits = Destination::normalize($digits);
+        if ($digits === '') {
+            return [];
+        }
+        $out = [$digits];
+        if (strlen($digits) === 11 && str_starts_with($digits, '1')) {
+            $out[] = substr($digits, 1);
+        } elseif (strlen($digits) === 10) {
+            $out[] = '1' . $digits;
+        }
+        return array_values(array_unique($out));
     }
 
     /** @param list<int> $ids */
@@ -354,18 +374,25 @@ final class DncService
         if ($g === null || ($g['status'] ?? '') !== 'active') {
             return false;
         }
+        $aliases = self::nanpAliases($digits);
         $redis = RedisClient::fromConfig();
         if ($redis !== null) {
             try {
-                if ($redis->sismember(self::redisKey($groupId), $digits)) {
-                    return true;
+                $key = self::redisKey($groupId);
+                foreach ($aliases as $a) {
+                    if ($redis->sismember($key, $a)) {
+                        return true;
+                    }
                 }
                 // Fall through to MySQL if set missing (cold cache)
             } catch (\Throwable) {
             }
         }
-        $st = $this->pdo->prepare('SELECT 1 FROM dnc_numbers WHERE dnc_group_id = ? AND number_digits = ? LIMIT 1');
-        $st->execute([$groupId, $digits]);
+        $ph = implode(',', array_fill(0, count($aliases), '?'));
+        $st = $this->pdo->prepare(
+            "SELECT 1 FROM dnc_numbers WHERE dnc_group_id = ? AND number_digits IN ({$ph}) LIMIT 1"
+        );
+        $st->execute([$groupId, ...$aliases]);
         return (bool) $st->fetchColumn();
     }
 
@@ -385,6 +412,13 @@ final class DncService
             $st = $this->pdo->prepare('SELECT number_digits FROM dnc_numbers WHERE dnc_group_id = ?');
             $st->execute([$gid]);
             $nums = array_column($st->fetchAll(PDO::FETCH_ASSOC) ?: [], 'number_digits');
+            $expanded = [];
+            foreach ($nums as $n) {
+                foreach (self::nanpAliases((string) $n) as $a) {
+                    $expanded[$a] = true;
+                }
+            }
+            $nums = array_keys($expanded);
             $redis = RedisClient::fromConfig();
             if ($redis !== null) {
                 try {
@@ -421,6 +455,13 @@ final class DncService
         if ($g === null || ($g['status'] ?? '') !== 'active' || $digits === []) {
             return;
         }
+        $expanded = [];
+        foreach ($digits as $d) {
+            foreach (self::nanpAliases((string) $d) as $a) {
+                $expanded[$a] = true;
+            }
+        }
+        $digits = array_keys($expanded);
         $redis = RedisClient::fromConfig();
         if ($redis !== null) {
             try {
@@ -446,6 +487,13 @@ final class DncService
         if ($digits === []) {
             return;
         }
+        $expanded = [];
+        foreach ($digits as $d) {
+            foreach (self::nanpAliases((string) $d) as $a) {
+                $expanded[$a] = true;
+            }
+        }
+        $digits = array_keys($expanded);
         $redis = RedisClient::fromConfig();
         if ($redis !== null) {
             try {

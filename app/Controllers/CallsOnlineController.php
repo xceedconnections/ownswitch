@@ -164,13 +164,14 @@ final class CallsOnlineController extends BaseController
     {
         $fu = strtolower((string) $n['from_user']);
         $tu = strtolower((string) $n['to_user']);
+        $sip = strtolower((string) ($n['sip_user'] ?? ''));
         $from = strtolower((string) $n['from']);
         $to = strtolower((string) $n['to']);
         foreach ($users as $u) {
             if ($u === '' || $u === '__none__') {
                 continue;
             }
-            if ($fu === $u || $tu === $u || str_contains($from, $u) || str_contains($to, $u)) {
+            if ($sip === $u || $fu === $u || $tu === $u || str_contains($from, $u) || str_contains($to, $u)) {
                 return true;
             }
         }
@@ -180,27 +181,38 @@ final class CallsOnlineController extends BaseController
     /** @param array<string,mixed> $d */
     private static function normalize(array $d): array
     {
-        $from = (string) ($d['from_uri'] ?? $d['caller'] ?? $d['From'] ?? $d['from'] ?? $d['caller_uri'] ?? '');
-        $to = (string) ($d['to_uri'] ?? $d['callee'] ?? $d['To'] ?? $d['to'] ?? $d['callee_uri'] ?? '');
-        $stateRaw = $d['state'] ?? $d['State'] ?? $d['dialog_state'] ?? $d['dlg_state'] ?? $d['status'] ?? '';
-        $start = (int) ($d['start_time'] ?? $d['timestart'] ?? $d['start'] ?? $d['start_ts'] ?? 0);
-        $dur = (int) ($d['duration'] ?? $d['calltime'] ?? $d['Lifetime'] ?? 0);
+        $from = (string) ($d['from_uri'] ?? $d['caller'] ?? $d['From'] ?? $d['from'] ?? $d['caller_uri'] ?? $d['fromuri'] ?? '');
+        $to = (string) ($d['to_uri'] ?? $d['callee'] ?? $d['To'] ?? $d['to'] ?? $d['callee_uri'] ?? $d['touri'] ?? '');
+        $sipUser = self::dlgVal($d, 'os_src');
+        $dstDial = self::dlgVal($d, 'os_dst');
+        if ($to === '' && $dstDial !== '') {
+            $to = $dstDial;
+        }
+        $stateRaw = $d['state'] ?? $d['State'] ?? $d['dialog_state'] ?? $d['dlg_state'] ?? $d['status'] ?? $d['dlgstate'] ?? '';
+        $start = (int) ($d['start_time'] ?? $d['timestart'] ?? $d['start'] ?? $d['start_ts'] ?? $d['starttime'] ?? 0);
+        if ($start <= 0 && isset($d['start_time']) && is_string($d['start_time']) && strtotime($d['start_time']) !== false) {
+            $start = (int) strtotime($d['start_time']);
+        }
+        $dur = (int) ($d['duration'] ?? $d['calltime'] ?? $d['Duration'] ?? $d['lifetime'] ?? 0);
         if ($dur <= 0 && $start > 0) {
-            // OpenSIPS dialog.start_time is often a unix ts; some builds store relative
             $dur = $start > 1_000_000_000 ? max(0, time() - $start) : max(0, $start);
         }
         [$bucket, $stateLabel] = self::classifyState($stateRaw, $dur);
         $color = self::vicidialColor($bucket, $dur);
         $fromUser = self::userPart($from);
         $toUser = self::userPart($to);
-        $dlg = (string) ($d['dialog'] ?? $d['hash'] ?? $d['dlg_id'] ?? '');
-        $fromTag = (string) ($d['from_tag'] ?? $d['caller_tag'] ?? $d['ftag'] ?? '');
+        if ($sipUser === '') {
+            $sipUser = $fromUser;
+        }
+        $dlg = (string) ($d['dialog'] ?? $d['hash'] ?? $d['dlg_id'] ?? $d['ID'] ?? $d['id'] ?? '');
+        $fromTag = (string) ($d['from_tag'] ?? $d['caller_tag'] ?? $d['ftag'] ?? $d['fromtag'] ?? '');
         $callid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? $d['CallId'] ?? $d['ci'] ?? '');
         return [
-            'from' => $from !== '' ? $from : $fromUser,
+            'from' => $from !== '' ? $from : ($sipUser !== '' ? $sipUser : $fromUser),
             'to' => $to !== '' ? $to : $toUser,
             'from_user' => $fromUser,
             'to_user' => $toUser,
+            'sip_user' => $sipUser,
             'state' => $stateLabel,
             'state_raw' => (string) $stateRaw,
             'bucket' => $bucket,
@@ -210,6 +222,35 @@ final class CallsOnlineController extends BaseController
             'from_tag' => $fromTag,
             'dialog' => $dlg,
         ];
+    }
+
+    /** Read dialog context value (os_src / os_dst) from MI dlg_list_ctx shapes. */
+    private static function dlgVal(array $d, string $key): string
+    {
+        foreach (['values', 'Values', 'dlg_vals', 'context', 'vars'] as $bag) {
+            if (!isset($d[$bag]) || !is_array($d[$bag])) {
+                continue;
+            }
+            $vals = $d[$bag];
+            if (isset($vals[$key]) && (is_string($vals[$key]) || is_numeric($vals[$key]))) {
+                return trim((string) $vals[$key]);
+            }
+            if (array_is_list($vals)) {
+                foreach ($vals as $row) {
+                    if (!is_array($row)) {
+                        continue;
+                    }
+                    $n = (string) ($row['name'] ?? $row['Name'] ?? $row['key'] ?? '');
+                    if ($n === $key) {
+                        return trim((string) ($row['value'] ?? $row['Value'] ?? ''));
+                    }
+                }
+            }
+        }
+        if (isset($d[$key]) && (is_string($d[$key]) || is_numeric($d[$key]))) {
+            return trim((string) $d[$key]);
+        }
+        return '';
     }
 
     /** @return array{0:string,1:string} bucket, label */

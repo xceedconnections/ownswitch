@@ -55,20 +55,25 @@
     <div class="os-empty"><div class="os-empty-title">No active calls</div><div>Trying, ringing (180/183) and connected dialogs appear here.</div></div>
 <?php else: ?>
     <div class="table-responsive"><table class="table table-sm mb-0 os-table os-rt-table">
-        <thead><tr><th>From</th><th>To</th><th>Status</th><th class="os-num">MM:SS</th><th>Call-ID</th><?php if (!empty($canHangup)): ?><th></th><?php endif; ?></tr></thead>
+        <thead><tr><th>SIP</th><th>From</th><th>To</th><th>Status</th><th class="os-num">MM:SS</th><th>Call-ID</th><?php if (!empty($canHangup)): ?><th></th><?php endif; ?></tr></thead>
         <tbody>
-        <?php foreach ($calls as $c): ?>
+        <?php foreach ($calls as $c):
+            $sip = (string) ($c['sip_user'] ?? '');
+            $fromDisp = (string) (($c['from_user'] !== '' ? $c['from_user'] : $c['from']) ?? '');
+            $toDisp = (string) (($c['to_user'] !== '' ? $c['to_user'] : $c['to']) ?? '');
+            ?>
             <tr class="<?= e((string) ($c['color'] ?? '')) ?>">
-                <td class="os-mono"><?= e($c['from_user'] !== '' ? $c['from_user'] : $c['from']) ?></td>
-                <td class="os-mono"><?= e($c['to_user'] !== '' ? $c['to_user'] : $c['to']) ?></td>
-                <td><strong><?= e($c['state']) ?></strong></td>
-                <td class="os-num os-mono"><?= e(fmt_duration((int) $c['duration'])) ?></td>
-                <td class="os-mono small text-muted"><?= e(mb_substr((string) $c['callid'], 0, 40)) ?></td>
+                <td class="os-mono"><?= e($sip !== '' ? $sip : '—') ?></td>
+                <td class="os-mono"><?= e($fromDisp !== '' ? $fromDisp : '—') ?></td>
+                <td class="os-mono"><?= e($toDisp !== '' ? $toDisp : '—') ?></td>
+                <td><strong><?= e((string) ($c['state'] ?? '')) ?></strong></td>
+                <td class="os-num os-mono"><?= e(fmt_duration((int) ($c['duration'] ?? 0))) ?></td>
+                <td class="os-mono small text-muted"><?= e(mb_substr((string) ($c['callid'] ?? ''), 0, 40)) ?></td>
                 <?php if (!empty($canHangup)): ?>
                 <td class="text-end">
                     <form method="post" action="<?= e(url('/calls-online/hangup')) ?>" class="d-inline" data-confirm="Hang up this call?">
                         <?= csrf_field() ?>
-                        <input type="hidden" name="callid" value="<?= e((string) $c['callid']) ?>">
+                        <input type="hidden" name="callid" value="<?= e((string) ($c['callid'] ?? '')) ?>">
                         <input type="hidden" name="from_tag" value="<?= e((string) ($c['from_tag'] ?? '')) ?>">
                         <button type="submit" class="btn btn-outline-danger btn-sm" data-once><i class="bi bi-telephone-x"></i></button>
                     </form>

@@ -391,7 +391,10 @@ if [[ -s /etc/ownswitch/secrets/redis_password ]]; then
 fi
 REDIS_DB="${REDIS_PORTAL_DB:-1}"
 DNC_MODS=''
-DNC_ROUTE='route[check_dnc] {
+DNC_ROUTE='route[check_sip_dnc] {
+	return;
+}
+route[check_dnc] {
 	return;
 }'
 if [[ -f "${mod_dir}/cachedb_redis.so" ]]; then
@@ -403,14 +406,12 @@ if [[ -f "${mod_dir}/cachedb_redis.so" ]]; then
   DNC_MODS+="loadmodule \"cachedb_redis.so\"
 modparam(\"cachedb_redis\", \"cachedb_url\", \"redis:dnc=>${REDIS_CDB_URL}\")
 "
-  DNC_ROUTE='route[check_dnc] {
-	if ($avp(dr_gw_attrs) == NULL) {
+  # Shared DNC helpers: SIP-user list blocks before vendor; trunk list uses original dialled digits
+  DNC_ROUTE='route[check_sip_dnc] {
+	if ($avp(os_dncid) == NULL || $(avp(os_dncid){s.int}) <= 0) {
 		return;
 	}
-	$var(dncid) = $(avp(dr_gw_attrs){param.value,dncid});
-	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
-		return;
-	}
+	$var(dncid) = $avp(os_dncid);
 	$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;
@@ -418,32 +419,29 @@ modparam(\"cachedb_redis\", \"cachedb_url\", \"redis:dnc=>${REDIS_CDB_URL}\")
 	$var(dnc_key) = "ownswitch:dnc:" + $var(dncid);
 	$var(dnc_hit) = NULL;
 	if (cache_raw_query("redis:dnc", "SISMEMBER $var(dnc_key) $var(dnc_dst)", "$var(dnc_hit)") && $var(dnc_hit) != NULL && $(var(dnc_hit){s.int}) == 1) {
-		xlog("L_WARN", "DNC hit group=$var(dncid) dst=$var(dnc_dst)\n");
-		if ($var(dnc_tries) == NULL) {
-			$var(dnc_tries) = 0;
-		}
-		$var(dnc_tries) = $(var(dnc_tries){s.int}) + 1;
-		if ($(var(dnc_tries){s.int}) < 8 && use_next_gw()) {
-			route(apply_ruri_strip);
-			route(apply_sip_cid);
-			route(check_cid_len);
-			route(apply_trunk_attrs);
-			route(check_trunk_cid_len);
-			route(check_rate_cap);
-			route(check_dnc);
-			return;
-		}
+		xlog("L_WARN", "SIP DNC hit group=$var(dncid) dst=$var(dnc_dst) — block before trunk\n");
 		acc_db_request("403 Do Not Call", "acc");
 		send_reply(403, "Do Not Call");
 		exit;
 	}
-}'
-elif [[ -f "${mod_dir}/sqlops.so" ]]; then
-  # OpenSIPS 3.6 sqlops: db_url without name=>; sql_query_one(query, "$var(x)")
-  DNC_MODS+="loadmodule \"sqlops.so\"
-modparam(\"sqlops\", \"db_url\", \"@@OPENSIPS_DB_URL@@\")
-"
-  DNC_ROUTE='route[check_dnc] {
+	# NANP alias: 11-digit 1NPANXX… ↔ 10-digit NPANXX…
+	$var(dnc_alt) = NULL;
+	if ($(var(dnc_dst){s.len}) == 11 && $(var(dnc_dst){s.substr,0,1}) == "1") {
+		$var(dnc_alt) = $(var(dnc_dst){s.substr,1,0});
+	} else if ($(var(dnc_dst){s.len}) == 10) {
+		$var(dnc_alt) = "1" + $var(dnc_dst);
+	}
+	if ($var(dnc_alt) != NULL && $(var(dnc_alt){s.len}) >= 3) {
+		$var(dnc_hit) = NULL;
+		if (cache_raw_query("redis:dnc", "SISMEMBER $var(dnc_key) $var(dnc_alt)", "$var(dnc_hit)") && $var(dnc_hit) != NULL && $(var(dnc_hit){s.int}) == 1) {
+			xlog("L_WARN", "SIP DNC hit (NANP alt) group=$var(dncid) dst=$var(dnc_dst) alt=$var(dnc_alt) — block before trunk\n");
+			acc_db_request("403 Do Not Call", "acc");
+			send_reply(403, "Do Not Call");
+			exit;
+		}
+	}
+}
+route[check_dnc] {
 	if ($avp(dr_gw_attrs) == NULL) {
 		return;
 	}
@@ -451,34 +449,120 @@ modparam(\"sqlops\", \"db_url\", \"@@OPENSIPS_DB_URL@@\")
 	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
 		return;
 	}
+	$var(dnc_dst) = $(dlg_val(os_dst){re.subst,/[^0-9]//g});
+	if ($var(dnc_dst) == NULL || $(var(dnc_dst){s.len}) < 3) {
+		$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
+	}
+	if ($(var(dnc_dst){s.len}) < 3) {
+		return;
+	}
+	$var(dnc_key) = "ownswitch:dnc:" + $var(dncid);
+	$var(dnc_hit) = NULL;
+	if (cache_raw_query("redis:dnc", "SISMEMBER $var(dnc_key) $var(dnc_dst)", "$var(dnc_hit)") && $var(dnc_hit) != NULL && $(var(dnc_hit){s.int}) == 1) {
+		xlog("L_WARN", "Trunk DNC hit group=$var(dncid) dst=$var(dnc_dst) — instant block (no vendor)\n");
+		acc_db_request("403 Do Not Call", "acc");
+		send_reply(403, "Do Not Call");
+		exit;
+	}
+	$var(dnc_alt) = NULL;
+	if ($(var(dnc_dst){s.len}) == 11 && $(var(dnc_dst){s.substr,0,1}) == "1") {
+		$var(dnc_alt) = $(var(dnc_dst){s.substr,1,0});
+	} else if ($(var(dnc_dst){s.len}) == 10) {
+		$var(dnc_alt) = "1" + $var(dnc_dst);
+	}
+	if ($var(dnc_alt) != NULL && $(var(dnc_alt){s.len}) >= 3) {
+		$var(dnc_hit) = NULL;
+		if (cache_raw_query("redis:dnc", "SISMEMBER $var(dnc_key) $var(dnc_alt)", "$var(dnc_hit)") && $var(dnc_hit) != NULL && $(var(dnc_hit){s.int}) == 1) {
+			xlog("L_WARN", "Trunk DNC hit (NANP alt) group=$var(dncid) dst=$var(dnc_dst) alt=$var(dnc_alt) — instant block\n");
+			acc_db_request("403 Do Not Call", "acc");
+			send_reply(403, "Do Not Call");
+			exit;
+		}
+	}
+}'
+elif [[ -f "${mod_dir}/sqlops.so" ]]; then
+  # OpenSIPS 3.6 sqlops: db_url without name=>; sql_query_one(query, "$var(x)")
+  DNC_MODS+="loadmodule \"sqlops.so\"
+modparam(\"sqlops\", \"db_url\", \"@@OPENSIPS_DB_URL@@\")
+"
+  DNC_ROUTE='route[check_sip_dnc] {
+	if ($avp(os_dncid) == NULL || $(avp(os_dncid){s.int}) <= 0) {
+		return;
+	}
+	$var(dncid) = $avp(os_dncid);
 	$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;
 	}
 	$var(dnc_hit) = NULL;
 	if (sql_query_one("select 1 from dnc_cache where group_id=$var(dncid) and number_digits='\''$var(dnc_dst)'\'' limit 1", "$var(dnc_hit)") && $var(dnc_hit) != NULL) {
-		xlog("L_WARN", "DNC hit (sql) group=$var(dncid) dst=$var(dnc_dst)\n");
-		if ($var(dnc_tries) == NULL) {
-			$var(dnc_tries) = 0;
-		}
-		$var(dnc_tries) = $(var(dnc_tries){s.int}) + 1;
-		if ($(var(dnc_tries){s.int}) < 8 && use_next_gw()) {
-			route(apply_ruri_strip);
-			route(apply_sip_cid);
-			route(check_cid_len);
-			route(apply_trunk_attrs);
-			route(check_trunk_cid_len);
-			route(check_rate_cap);
-			route(check_dnc);
-			return;
-		}
+		xlog("L_WARN", "SIP DNC hit (sql) group=$var(dncid) dst=$var(dnc_dst) — block before trunk\n");
 		acc_db_request("403 Do Not Call", "acc");
 		send_reply(403, "Do Not Call");
 		exit;
 	}
+	$var(dnc_alt) = NULL;
+	if ($(var(dnc_dst){s.len}) == 11 && $(var(dnc_dst){s.substr,0,1}) == "1") {
+		$var(dnc_alt) = $(var(dnc_dst){s.substr,1,0});
+	} else if ($(var(dnc_dst){s.len}) == 10) {
+		$var(dnc_alt) = "1" + $var(dnc_dst);
+	}
+	if ($var(dnc_alt) != NULL && $(var(dnc_alt){s.len}) >= 3) {
+		$var(dnc_hit) = NULL;
+		if (sql_query_one("select 1 from dnc_cache where group_id=$var(dncid) and number_digits='\''$var(dnc_alt)'\'' limit 1", "$var(dnc_hit)") && $var(dnc_hit) != NULL) {
+			xlog("L_WARN", "SIP DNC hit (sql NANP alt) group=$var(dncid) dst=$var(dnc_dst) alt=$var(dnc_alt)\n");
+			acc_db_request("403 Do Not Call", "acc");
+			send_reply(403, "Do Not Call");
+			exit;
+		}
+	}
+}
+route[check_dnc] {
+	if ($avp(dr_gw_attrs) == NULL) {
+		return;
+	}
+	$var(dncid) = $(avp(dr_gw_attrs){param.value,dncid});
+	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
+		return;
+	}
+	$var(dnc_dst) = $(dlg_val(os_dst){re.subst,/[^0-9]//g});
+	if ($var(dnc_dst) == NULL || $(var(dnc_dst){s.len}) < 3) {
+		$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
+	}
+	if ($(var(dnc_dst){s.len}) < 3) {
+		return;
+	}
+	$var(dnc_hit) = NULL;
+	if (sql_query_one("select 1 from dnc_cache where group_id=$var(dncid) and number_digits='\''$var(dnc_dst)'\'' limit 1", "$var(dnc_hit)") && $var(dnc_hit) != NULL) {
+		xlog("L_WARN", "Trunk DNC hit (sql) group=$var(dncid) dst=$var(dnc_dst) — instant block (no vendor)\n");
+		acc_db_request("403 Do Not Call", "acc");
+		send_reply(403, "Do Not Call");
+		exit;
+	}
+	$var(dnc_alt) = NULL;
+	if ($(var(dnc_dst){s.len}) == 11 && $(var(dnc_dst){s.substr,0,1}) == "1") {
+		$var(dnc_alt) = $(var(dnc_dst){s.substr,1,0});
+	} else if ($(var(dnc_dst){s.len}) == 10) {
+		$var(dnc_alt) = "1" + $var(dnc_dst);
+	}
+	if ($var(dnc_alt) != NULL && $(var(dnc_alt){s.len}) >= 3) {
+		$var(dnc_hit) = NULL;
+		if (sql_query_one("select 1 from dnc_cache where group_id=$var(dncid) and number_digits='\''$var(dnc_alt)'\'' limit 1", "$var(dnc_hit)") && $var(dnc_hit) != NULL) {
+			xlog("L_WARN", "Trunk DNC hit (sql NANP alt) group=$var(dncid) dst=$var(dnc_dst) alt=$var(dnc_alt)\n");
+			acc_db_request("403 Do Not Call", "acc");
+			send_reply(403, "Do Not Call");
+			exit;
+		}
+	}
 }'
 else
   DNC_MODS='# DNC modules missing — install opensips-module-cachedb-redis or opensips-module-sqlops'
+  DNC_ROUTE='route[check_sip_dnc] {
+	return;
+}
+route[check_dnc] {
+	return;
+}'
 fi
 export OPENSIPS_DNC_MODULES="${DNC_MODS}"
 export OPENSIPS_DNC_ROUTE="${DNC_ROUTE}"

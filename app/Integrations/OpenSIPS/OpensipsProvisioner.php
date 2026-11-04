@@ -176,6 +176,9 @@ final class OpensipsProvisioner
                     (string) ($account['dst_format'] ?? 'as_is')
                 );
             }
+            if (in_array('dnc_group_id', $cols, true)) {
+                $set['dnc_group_id'] = max(0, (int) ($account['dnc_group_id'] ?? 0));
+            }
         }
 
         if ($id) {
@@ -701,12 +704,19 @@ final class OpensipsProvisioner
     /** @return list<array<string,mixed>> */
     private function listDialogsMi(): array
     {
-        foreach (['dlg_list', 'dlg_list_ctx'] as $method) {
+        // Prefer dlg_list_ctx so os_src / os_dst dlg_vals are available for live display
+        foreach (['dlg_list_ctx', 'dlg_list'] as $method) {
             $r = $this->miCall($method);
-            if ($r === null || isset($r['error'])) {
+            if ($r === null) {
                 continue;
             }
-            $result = $r['result'] ?? null;
+            if (isset($r['error'])) {
+                continue;
+            }
+            $result = $r['result'] ?? $r['Result'] ?? null;
+            if ($result === null && isset($r['Dialogs'])) {
+                $result = $r;
+            }
             if (!is_array($result)) {
                 continue;
             }
@@ -724,10 +734,53 @@ final class OpensipsProvisioner
      */
     private function extractDialogList(array $result): array
     {
+        $found = [];
+        $seen = [];
+        $walk = static function ($node) use (&$walk, &$found, &$seen): void {
+            if (!is_array($node)) {
+                return;
+            }
+            $cid = (string) ($node['callid'] ?? $node['Call-ID'] ?? $node['call_id']
+                ?? $node['CallId'] ?? $node['ci'] ?? '');
+            $hasUri = isset($node['from_uri']) || isset($node['caller']) || isset($node['From'])
+                || isset($node['to_uri']) || isset($node['callee']) || isset($node['fromuri'])
+                || isset($node['touri']) || isset($node['from']) || isset($node['to']);
+            $hasState = isset($node['state']) || isset($node['State']) || isset($node['dlg_state'])
+                || isset($node['dlgstate']) || isset($node['status']);
+            // Accept any dialog-shaped node with a Call-ID (early/ringing may lack full URIs in some builds)
+            if ($cid !== '' && ($hasUri || $hasState || isset($node['start_time']) || isset($node['values']))) {
+                if (!isset($seen[$cid])) {
+                    $seen[$cid] = true;
+                    $found[] = $node;
+                }
+                return;
+            }
+            foreach (['Dialogs', 'Dialog', 'dialogs', 'dialog', 'result', 'Result', 'Values', 'values'] as $k) {
+                if (isset($node[$k]) && is_array($node[$k]) && $k !== 'Values' && $k !== 'values') {
+                    $walk($node[$k]);
+                }
+            }
+            if (array_is_list($node)) {
+                foreach ($node as $child) {
+                    $walk($child);
+                }
+                return;
+            }
+            foreach ($node as $k => $child) {
+                if (is_array($child) && !in_array((string) $k, ['Dialogs', 'Dialog', 'dialogs', 'dialog', 'result', 'Result', 'values', 'Values'], true)) {
+                    $walk($child);
+                }
+            }
+        };
+        $walk($result);
+        if ($found !== []) {
+            return $found;
+        }
+        // Legacy shapes
         foreach (['Dialogs', 'Dialog', 'dialogs', 'dialog'] as $k) {
             if (isset($result[$k]) && is_array($result[$k])) {
                 $v = $result[$k];
-                if ($v !== [] && !array_is_list($v) && isset($v['callid'])) {
+                if ($v !== [] && !array_is_list($v) && (isset($v['callid']) || isset($v['Call-ID']))) {
                     return [$v];
                 }
                 if (array_is_list($v)) {
@@ -737,16 +790,6 @@ final class OpensipsProvisioner
         }
         if (array_is_list($result)) {
             return array_values(array_filter($result, 'is_array'));
-        }
-        // Sometimes MI wraps as { "0": {...}, "1": {...} }
-        $vals = array_values($result);
-        if ($vals !== [] && is_array($vals[0] ?? null) && isset($vals[0]['callid'])) {
-            return array_values(array_filter($vals, 'is_array'));
-        }
-        foreach ($result as $v) {
-            if (is_array($v) && array_is_list($v)) {
-                return array_values(array_filter($v, 'is_array'));
-            }
         }
         return [];
     }
@@ -760,20 +803,34 @@ final class OpensipsProvisioner
                 return [];
             }
             $cols = $this->columns('dialog');
-            $need = ['callid', 'from_uri', 'to_uri'];
-            foreach ($need as $c) {
-                if (!in_array($c, $cols, true)) {
-                    return [];
+            if (!in_array('callid', $cols, true)) {
+                return [];
+            }
+            $select = ['callid'];
+            foreach (['from_uri', 'to_uri', 'from_tag', 'to_tag'] as $c) {
+                if (in_array($c, $cols, true)) {
+                    $select[] = $c;
                 }
             }
             $stateCol = in_array('state', $cols, true) ? 'state' : (in_array('dlg_state', $cols, true) ? 'dlg_state' : null);
+            if ($stateCol !== null) {
+                $select[] = "`{$stateCol}` AS state";
+            }
             $startCol = in_array('start_time', $cols, true) ? 'start_time' : null;
-            $sql = 'SELECT callid, from_uri, to_uri'
-                . ($stateCol ? ", `{$stateCol}` AS state" : '')
-                . ($startCol ? ", `{$startCol}` AS start_time" : '')
-                . (in_array('from_tag', $cols, true) ? ', from_tag' : '')
+            if ($startCol !== null) {
+                $select[] = "`{$startCol}` AS start_time";
+            }
+            $sql = 'SELECT ' . implode(', ', $select)
                 . ' FROM dialog ORDER BY ' . ($startCol ? "`{$startCol}`" : 'callid') . ' DESC LIMIT 500';
-            return $db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $rows = $db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            // Attach dlg_vals (os_src / os_dst) when dialog_vars table exists
+            if ($rows !== [] && $this->tableExists('dialog_vars')) {
+                $vcols = $this->columns('dialog_vars');
+                if (in_array('hash_entry', $vcols, true) || in_array('dlg_id', $vcols, true)) {
+                    // Best-effort: some schemas store dlg_id as callid-like key; skip if unusable
+                }
+            }
+            return $rows;
         } catch (\Throwable $e) {
             error_log('[ownswitch] listDialogsDb: ' . $e->getMessage());
             return [];
@@ -984,6 +1041,7 @@ final class OpensipsProvisioner
             'cid_max_len INT UNSIGNED NOT NULL DEFAULT 0',
             'allow_calls TINYINT(1) NOT NULL DEFAULT 1',
             'dst_format VARCHAR(16) NOT NULL DEFAULT \'as_is\'',
+            'dnc_group_id INT UNSIGNED NOT NULL DEFAULT 0',
         ] as $colDef) {
             $col = explode(' ', $colDef, 2)[0];
             $cols = $this->columns('subscriber');

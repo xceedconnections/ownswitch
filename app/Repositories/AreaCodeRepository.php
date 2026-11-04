@@ -120,13 +120,46 @@ final class AreaCodeRepository extends BaseRepository
         if ($rows === []) {
             return [];
         }
-        usort($rows, static fn ($a, $b) => strlen((string) $b['code']) <=> strlen((string) $a['code']));
+        $codes = [];
+        foreach ($rows as $r) {
+            $code = preg_replace('/\D+/', '', (string) ($r['code'] ?? '')) ?? '';
+            $name = trim((string) ($r['name'] ?? ''));
+            if ($code === '' || $name === '') {
+                continue;
+            }
+            // Keep longest name if duplicate codes
+            if (!isset($codes[$code]) || strlen($name) > strlen($codes[$code])) {
+                $codes[$code] = $name;
+            }
+            // NANP: also index NPA without leading country 1 (323 ↔ 1323)
+            if (strlen($code) >= 4 && str_starts_with($code, '1')) {
+                $short = substr($code, 1);
+                if ($short !== '' && !isset($codes[$short])) {
+                    $codes[$short] = $name;
+                }
+            } elseif (strlen($code) === 3) {
+                $long = '1' . $code;
+                if (!isset($codes[$long])) {
+                    $codes[$long] = $name;
+                }
+            }
+        }
+        uksort($codes, static fn ($a, $b) => strlen((string) $b) <=> strlen((string) $a));
         foreach (array_keys($uniq) as $dst) {
-            foreach ($rows as $r) {
-                $code = (string) $r['code'];
-                if ($code !== '' && str_starts_with($dst, $code)) {
-                    $out[$dst] = (string) $r['name'];
+            foreach ($codes as $code => $name) {
+                if (str_starts_with($dst, (string) $code)) {
+                    $out[$dst] = $name;
                     break;
+                }
+            }
+            // Fallback: strip leading 1 on 11-digit NANP and retry
+            if (!isset($out[$dst]) && strlen($dst) === 11 && str_starts_with($dst, '1')) {
+                $rest = substr($dst, 1);
+                foreach ($codes as $code => $name) {
+                    if (str_starts_with($rest, (string) $code)) {
+                        $out[$dst] = $name;
+                        break;
+                    }
                 }
             }
         }

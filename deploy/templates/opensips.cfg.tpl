@@ -70,7 +70,7 @@ modparam("auth_db", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("auth_db", "calculate_ha1", 1)
 modparam("auth_db", "password_column", "password")
 # Load SIP Directmedia / DTMF pass / CallerID mode from subscriber into AVPs
-modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid;$avp(os_cid_min)=cid_min_len;$avp(os_cid_max)=cid_max_len;$avp(os_allow)=allow_calls;$avp(os_dstfmt)=dst_format")
+modparam("auth_db", "load_credentials", "$avp(os_media)=media_policy;$avp(os_dtmf)=dtmf_pass;$avp(os_cid_mode)=cid_mode;$avp(os_cid)=rpid;$avp(os_cid_min)=cid_min_len;$avp(os_cid_max)=cid_max_len;$avp(os_allow)=allow_calls;$avp(os_dstfmt)=dst_format;$avp(os_dncid)=dnc_group_id")
 # Username-only match (ignore Domain in subscriber row)
 modparam("auth_db", "use_domain", 0)
 
@@ -309,6 +309,9 @@ route {
 	t_on_reply("handle_reply");
 	t_on_failure("carrier_failover");
 
+	# SIP-user DNC: block before any trunk/vendor is contacted (uses original dialled $rU)
+	route(check_sip_dnc);
+
 	# Group "1" is filled by Ownswitch (php bin/sync-opensips-trunks.php / trunk+route save)
 	# 5th arg = gw attrs pvar (fu=/fd=/rstrip= from trunk sync). strip/pri_prefix via DR.
 	if (!do_routing(1, , , , $avp(dr_gw_attrs))) {
@@ -318,13 +321,14 @@ route {
 		exit;
 	}
 
+	# Trunk DNC uses original dialled digits ($dlg_val(os_dst)) — before strip so list matches portal
+	route(check_dnc);
 	route(apply_ruri_strip);
 	route(apply_sip_cid);
 	route(check_cid_len);
 	route(apply_trunk_attrs);
 	route(check_trunk_cid_len);
 	route(check_rate_cap);
-	route(check_dnc);
 	route(apply_sip_dst_format);
 	route(apply_trunk_dst_format);
 	route(acc_cli_gw);
@@ -602,13 +606,13 @@ failure_route[carrier_failover] {
 	xlog("L_WARN", "failover after code=$T_reply_code trying next trunk\n");
 	# try next gateway of the selected route
 	if (use_next_gw()) {
+		route(check_dnc);
 		route(apply_ruri_strip);
 		route(apply_sip_cid);
 		route(check_cid_len);
 		route(apply_trunk_attrs);
 		route(check_trunk_cid_len);
 		route(check_rate_cap);
-		route(check_dnc);
 		route(apply_sip_dst_format);
 		route(apply_trunk_dst_format);
 		route(acc_cli_gw);

@@ -115,6 +115,9 @@ final class CdrSearchService
                 $callIds[] = (string) $r['sip_call_id'];
             }
             $dsts[] = (string) ($r['dst_normalized'] ?? '');
+            if (!empty($r['dst_raw'])) {
+                $dsts[] = (string) $r['dst_raw'];
+            }
         }
         unset($r);
         $areaNames = $this->areaNames($dsts);
@@ -124,7 +127,11 @@ final class CdrSearchService
             $r['attempt_legs'] = $legsByCall[$cid] ?? [];
             $r['has_sip_trace'] = ($r['attempt_legs'] !== []);
             $dn = Destination::normalize((string) ($r['dst_normalized'] ?? ''));
-            $r['area_description'] = $areaNames[$dn] ?? null;
+            $rawDn = Destination::normalize((string) ($r['dst_raw'] ?? ''));
+            $r['area_description'] = $areaNames[$dn] ?? $areaNames[$rawDn] ?? null;
+            if ($r['area_description'] === null && ($dn !== '' || $rawDn !== '')) {
+                $r['area_description'] = $this->areaNameOne($dn !== '' ? $dn : $rawDn);
+            }
         }
         unset($r);
 
@@ -159,8 +166,12 @@ final class CdrSearchService
         }
         $row = self::normalizeRowDisplay($row);
         $dn = Destination::normalize((string) ($row['dst_normalized'] ?? ''));
-        $names = $this->areaNames([$dn]);
-        $row['area_description'] = $names[$dn] ?? null;
+        $rawDn = Destination::normalize((string) ($row['dst_raw'] ?? ''));
+        $names = $this->areaNames(array_values(array_filter([$dn, $rawDn])));
+        $row['area_description'] = $names[$dn] ?? $names[$rawDn] ?? null;
+        if ($row['area_description'] === null && ($dn !== '' || $rawDn !== '')) {
+            $row['area_description'] = $this->areaNameOne($dn !== '' ? $dn : $rawDn);
+        }
         if (!$scope->isGlobal()) {
             foreach (['carrier_cost', 'carrier_rate', 'carrier_connect_fee', 'gross_margin', 'carrier_id', 'carrier_name', 'carrier_trunk_id', 'carrier_initial', 'carrier_subsequent', 'duration_billable_carrier', 'cgrates_cost', 'rating_discrepancy', 'trunk_name'] as $k) {
                 unset($row[$k]);
@@ -174,8 +185,19 @@ final class CdrSearchService
     {
         try {
             return (new AreaCodeRepository($this->pdo))->namesForNumbers($destinations);
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] CDR areaNames: ' . $e->getMessage());
             return [];
+        }
+    }
+
+    private function areaNameOne(string $destination): ?string
+    {
+        try {
+            return (new AreaCodeRepository($this->pdo))->nameForNumber($destination);
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] CDR areaNameOne: ' . $e->getMessage());
+            return null;
         }
     }
 

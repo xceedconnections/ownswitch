@@ -9,8 +9,10 @@ use Ownswitch\Http\Request;
 use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\SipAccountRepository;
+use Ownswitch\Services\Dnc\DncService;
 use Ownswitch\Services\Sip\SipOptionsProbe;
 use Ownswitch\Support\Crypto;
+use Ownswitch\Support\DstFormat;
 use Ownswitch\Support\MediaPolicy;
 use Ownswitch\Support\SipPeerOptions;
 
@@ -38,9 +40,37 @@ final class SipUserController extends CrudController
         return ['customer_id', 'status'];
     }
 
+    /** @return array<string,string> */
+    private function dncGroupOptions(): array
+    {
+        try {
+            return (new DncService($this->db()))->groupOptions(false);
+        } catch (\Throwable) {
+            return ['' => '— None —'];
+        }
+    }
+
+    private function ensureSipDncColumn(): void
+    {
+        try {
+            $st = $this->db()->query(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sip_accounts' AND COLUMN_NAME = 'dnc_group_id'"
+            );
+            if ((int) $st->fetchColumn() === 0) {
+                $this->db()->exec(
+                    'ALTER TABLE sip_accounts ADD COLUMN dnc_group_id BIGINT UNSIGNED NULL DEFAULT NULL, ADD KEY idx_sip_accounts_dnc (dnc_group_id)'
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] sip dnc_group_id ensure: ' . $e->getMessage());
+        }
+    }
+
     protected function fields(Request $r): array
     {
-        \Ownswitch\Support\DstFormat::ensureColumns($this->db());
+        DstFormat::ensureColumns($this->db());
+        $this->ensureSipDncColumn();
         $f = [];
         if (!$this->scope($r)->isCustomerRole()) {
             $f[] = [
@@ -90,12 +120,22 @@ final class SipUserController extends CrudController
                 'section' => 'Account',
             ],
             [
+                'name' => 'status',
+                'label' => 'Status',
+                'type' => 'select',
+                'required' => true,
+                'options' => ['active' => 'Active', 'disabled' => 'Inactive'],
+                'list' => true,
+                'default' => 'active',
+                'section' => 'Account',
+            ],
+            [
                 'name' => 'caller_id',
                 'label' => 'CallerID number',
                 'max' => 32,
                 'pattern' => '/^\+?[0-9]{3,30}$/',
                 'help' => 'Leave blank for passthrough (ViciDial / softphone From goes out). Used when mode = Fixed. Trunk From user still wins if set.',
-                'section' => 'Account',
+                'section' => 'CLI and dial format',
             ],
             [
                 'name' => 'caller_id_mode',
@@ -104,7 +144,7 @@ final class SipUserController extends CrudController
                 'options' => SipPeerOptions::CALLER_ID_MODE,
                 'default' => 'passthrough',
                 'help' => 'Passthrough = whatever ViciDial/Eyebeam sends. Fixed = portal CallerID number. Display Name = use softphone Display Name as CLI (digits).',
-                'section' => 'Account',
+                'section' => 'CLI and dial format',
             ],
             [
                 'name' => 'cid_min_len',
@@ -114,7 +154,7 @@ final class SipUserController extends CrudController
                 'max' => 32,
                 'placeholder' => '11',
                 'help' => 'USA with country code = 11. Blank/0 = off. Shorter CLI → 484 Wrong CallerID Length.',
-                'section' => 'CallerID length',
+                'section' => 'CLI and dial format',
             ],
             [
                 'name' => 'cid_max_len',
@@ -124,17 +164,17 @@ final class SipUserController extends CrudController
                 'max' => 32,
                 'placeholder' => '11',
                 'help' => 'USA = 11. Blank/0 = off. Longer CLI → 484 Wrong CallerID Length.',
-                'section' => 'CallerID length',
+                'section' => 'CLI and dial format',
             ],
             [
-                'name' => 'status',
-                'label' => 'Status',
+                'name' => 'dst_format',
+                'label' => 'Destination format',
                 'type' => 'select',
-                'required' => true,
-                'options' => ['active' => 'Active', 'disabled' => 'Inactive'],
+                'options' => \Ownswitch\Support\DstFormat::OPTIONS,
+                'default' => \Ownswitch\Support\DstFormat::AS_IS,
                 'list' => true,
-                'default' => 'active',
-                'section' => 'Account',
+                'help' => 'Rewrite the dialled number before the trunk. E.164 with + : 12135550123 → +12135550123. Trunk Destination format is applied after this.',
+                'section' => 'CLI and dial format',
             ],
             [
                 'name' => 'notes',
@@ -209,13 +249,12 @@ final class SipUserController extends CrudController
                 'section' => 'Routing & media',
             ],
             [
-                'name' => 'dst_format',
-                'label' => 'Destination format',
+                'name' => 'dnc_group_id',
+                'label' => 'DNC group',
                 'type' => 'select',
-                'options' => \Ownswitch\Support\DstFormat::OPTIONS,
-                'default' => \Ownswitch\Support\DstFormat::AS_IS,
+                'options' => $this->dncGroupOptions(),
                 'list' => true,
-                'help' => 'Rewrite the dialled number before it reaches the trunk. E.164 with + : 12135550123 → +12135550123. Trunk Destination format is applied after this.',
+                'help' => 'Block destinations in this Do Not Call list before any trunk/vendor is contacted (403). Trunk DNC is an extra check after routing.',
                 'section' => 'Routing & media',
             ],
             [
@@ -512,11 +551,24 @@ final class SipUserController extends CrudController
                 isset($data['media_policy']) ? (string) $data['media_policy'] : null
             );
         }
-        $data['dst_format'] = \Ownswitch\Support\DstFormat::normalize(
+        $data['dst_format'] = DstFormat::normalize(
             isset($data['dst_format']) ? (string) $data['dst_format'] : null
         );
         $tg = $data['routing_plan_id'] ?? null;
         $data['routing_plan_id'] = ($tg === null || $tg === '') ? null : (int) $tg;
+        if (!array_key_exists('dnc_group_id', $data) || $data['dnc_group_id'] === '' || $data['dnc_group_id'] === null) {
+            $data['dnc_group_id'] = null;
+        } else {
+            $data['dnc_group_id'] = (int) $data['dnc_group_id'];
+            if ($data['dnc_group_id'] <= 0) {
+                $data['dnc_group_id'] = null;
+            } else {
+                $opts = $this->dncGroupOptions();
+                if (!isset($opts[(string) $data['dnc_group_id']])) {
+                    throw new \DomainException('Select a valid DNC group.');
+                }
+            }
+        }
 
         if (isset($data['codecs']) && is_string($data['codecs']) && $data['codecs'] !== '') {
             $data['disallow'] = 'all';
