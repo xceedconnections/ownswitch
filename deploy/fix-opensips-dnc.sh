@@ -109,22 +109,35 @@ if "route(check_dnc);" not in text:
     if not inserted:
         print("WARN: could not find outbound relay anchor for check_dnc — manual cfg edit needed")
 
-# Always pin check_dnc on the live outbound path (CLI fix must not orphan DNC).
+# Always pin check_dnc on the live outbound path AFTER CID rewrite when possible.
+# Prefer acc_cli_gw / ACC markers — do NOT prefer apply_sip_cid (runs before os_cli is set).
 for anchor in (
     "route(acc_cli_gw);",
     'xlog("L_INFO", "OWNSWITCH acc_extra before relay',
     'xlog("L_INFO", "ACC cli=',
-    "route(apply_sip_cid);",
-    "route(apply_outbound_cid);",
+    "route(apply_trunk_attrs);",
+    "route(apply_sip_dst_format);",
+    "route(relay);",
 ):
     if anchor not in text:
         continue
     pinned = "route(check_dnc);\n\t" + anchor
-    # Avoid double-pin if already immediately before this anchor
     if pinned in text:
-        continue
+        break
     text = text.replace(anchor, pinned, 1)
     print("pinned route(check_dnc); before:", anchor[:48])
+    break
+
+# Preserve CLI ACC semantics (DNC must not leave cli=$fU)
+if "$acc_extra(cli) = $fU;" in text:
+    text = text.replace(
+        "$acc_extra(cli) = $fU;",
+        "if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) { $acc_extra(cli) = $dlg_val(os_cli); } else { $acc_extra(cli) = $fU; }",
+    )
+    print("preserved CLI: rewrote acc_extra(cli)=$fU → os_cli")
+if "$acc_extra(src) = $fU;" in text and "OWNSWITCH acc_extra before relay" in text:
+    text = text.replace("$acc_extra(src) = $fU;", "$acc_extra(src) = $dlg_val(os_src);")
+    print("preserved CLI: before-relay src=$fU → os_src")
 
 redis_so = os.path.isfile(os.path.join(mod_dir, "cachedb_redis.so"))
 sql_so = os.path.isfile(os.path.join(mod_dir, "sqlops.so"))
