@@ -94,10 +94,17 @@ final class DashboardController extends BaseController
                 $runwayDays = (float) bcdiv($available, $daySpend, 2);
             }
             $sipCount = 0;
+            $ipCount = 0;
             try {
                 $sip = $pdo->prepare("SELECT COUNT(*) FROM sip_accounts WHERE customer_id = ? AND status = 'active'");
                 $sip->execute([$scope->customerId]);
                 $sipCount = (int) $sip->fetchColumn();
+            } catch (\Throwable) {
+            }
+            try {
+                $ip = $pdo->prepare("SELECT COUNT(*) FROM ip_endpoints WHERE customer_id = ? AND status = 'active'");
+                $ip->execute([$scope->customerId]);
+                $ipCount = (int) $ip->fetchColumn();
             } catch (\Throwable) {
             }
             $cc = ['label' => '— / —', 'allowed' => 0, 'using' => 0, 'unlimited' => false];
@@ -125,11 +132,38 @@ final class DashboardController extends BaseController
                 }
             } catch (\Throwable) {
             }
+            $billingMode = strtolower((string) ($cust['billing_mode'] ?? 'prepaid'));
+            $status = strtolower((string) ($cust['status'] ?? 'active'));
+            $callsPaused = $status !== 'active'
+                || ($billingMode === 'prepaid' && bccomp($available, '0', 6) <= 0);
+            $lowRunway = !$callsPaused && $runwayDays !== null && $runwayDays < 2;
+
+            $attention = [];
+            if ($callsPaused) {
+                $attention[] = [
+                    'level' => 'critical',
+                    'title' => 'Calling is paused',
+                    'body' => $status !== 'active'
+                        ? 'Your account is not active. New calls may be refused until support reactivates it.'
+                        : ('Your available balance is below the level needed to place calls. Your balance is '
+                            . fmt_money($available, 2) . ' ' . (string) ($cust['currency'] ?? '') . '.'),
+                ];
+            } elseif ($lowRunway) {
+                $attention[] = [
+                    'level' => 'warn',
+                    'title' => 'Low runway',
+                    'body' => 'At today’s spend pace you have about '
+                        . number_format((float) $runwayDays, 1) . ' days of calling left. Add funds to avoid a pause.',
+                ];
+            }
+
+            $data['title'] = 'Mission Control';
             $data['customer'] = $cust;
             $data['balance'] = $balance;
             $data['available'] = $available;
             $data['runwayDays'] = $runwayDays;
             $data['sipCount'] = $sipCount;
+            $data['ipCount'] = $ipCount;
             $data['ccLabel'] = $cc['label'] ?? '— / —';
             $data['ccAllowed'] = $cc['allowed'] ?? 0;
             $data['ccUsing'] = $cc['using'] ?? 0;
@@ -137,6 +171,9 @@ final class DashboardController extends BaseController
             $data['cpsAllowed'] = $cpsAllowed;
             $data['cpsUnlimited'] = $cpsUnlimited;
             $data['sipLimits'] = $sipLimits;
+            $data['callsPaused'] = $callsPaused;
+            $data['lowRunway'] = $lowRunway;
+            $data['attention'] = $attention;
             return $this->view('dashboard/customer', $data);
         }
 

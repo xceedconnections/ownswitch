@@ -22,6 +22,10 @@ final class DashboardMetricsService
             'window60' => $zero,
             'today' => $zero,
             'yesterday_pace' => '0',
+            'asr7' => '0',
+            'spend30' => '0',
+            'peakPerMin' => 0,
+            'lastCdrAt' => null,
             'traffic60' => [],
             'daily7' => [],
             'failed24' => ['total' => 0, 'attempts' => 0, 'pct' => '0', 'reasons' => []],
@@ -50,12 +54,23 @@ final class DashboardMetricsService
 
             $window60 = $this->aggregate($tw, $tp, $since60);
             $window60['last_min'] = $this->countAttempts($tw, $tp, gmdate('Y-m-d H:i:s', time() - 60));
+            $traffic60 = $this->trafficBuckets($tw, $tp, $since60);
+            $peakPerMin = 0;
+            foreach ($traffic60 as $b) {
+                $peakPerMin = max($peakPerMin, (int) $b['answered'] + (int) $b['failed']);
+            }
+            $agg7 = $this->aggregate($tw, $tp, $since7);
+            $since30 = gmdate('Y-m-d 00:00:00', strtotime('-29 days'));
 
             return [
                 'window60' => $window60,
                 'today' => $this->aggregate($tw, $tp, $todayStart),
                 'yesterday_pace' => $this->aggregate($tw, $tp, $yStart, $yNow)['spend'],
-                'traffic60' => $this->trafficBuckets($tw, $tp, $since60),
+                'asr7' => (string) ($agg7['asr'] ?? '0'),
+                'spend30' => $this->aggregate($tw, $tp, $since30)['spend'],
+                'peakPerMin' => $peakPerMin,
+                'lastCdrAt' => $this->lastCdrAt($tw, $tp),
+                'traffic60' => $traffic60,
                 'daily7' => $this->dailyUsage($tw, $tp, $since7),
                 'failed24' => $this->failedBreakdown($tw, $tp, $since24),
                 'routes' => $this->routeHealth($scope),
@@ -92,6 +107,18 @@ final class DashboardMetricsService
         $st = $this->pdo->prepare("SELECT COUNT(*) FROM cdrs c WHERE ({$tw}) AND c.setup_at >= ?");
         $st->execute([...$tp, $from]);
         return (int) $st->fetchColumn();
+    }
+
+    private function lastCdrAt(string $tw, array $tp): ?string
+    {
+        try {
+            $st = $this->pdo->prepare("SELECT MAX(c.setup_at) FROM cdrs c WHERE ({$tw})");
+            $st->execute($tp);
+            $v = $st->fetchColumn();
+            return $v ? (string) $v : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /** @return list<array{minute:string,answered:int,failed:int}> */
