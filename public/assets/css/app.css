@@ -966,6 +966,7 @@ body.os-body > .os-main-top { flex: 1 0 auto; }
   border-radius: 999px; background: #dc2626; color: #fff;
   font-size: .75rem; font-weight: 800;
 }
+.mc-attn-badge.is-warn { background: #d97706; }
 .mc-attn-empty { color: #7b8a9b; font-size: .9rem; padding: .35rem 0 .5rem; }
 .mc-attn {
   border-radius: 10px; padding: .85rem .95rem; margin-bottom: .65rem;
@@ -1003,3 +1004,26 @@ body.os-body > .os-main-top { flex: 1 0 auto; }
   color: #0b5f8a;
 }
 .mc-sys-link:hover { color: #094e72; text-decoration: underline; }
+
+.mc-live-dot.is-warn { background: #d97706; box-shadow: 0 0 0 2px rgba(217,119,6,.18); }
+.mc-low-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+  background: #fff6e5; border: 1px solid #f0d48a;
+  border-radius: 12px; padding: 1rem 1.15rem; margin-bottom: 1rem;
+}
+.mc-low-title {
+  display: flex; align-items: center; gap: .5rem;
+  font-size: 1.15rem; font-weight: 800; color: #9a5b00;
+}
+.mc-low-dot {
+  width: .65rem; height: .65rem; border-radius: 50%; background: #d97706;
+  box-shadow: 0 0 0 3px rgba(217,119,6,.18);
+}
+.mc-low-sub { color: #8a5a12; margin-top: .2rem; font-size: .92rem; }
+.mc-kpi .val.is-warn-val {
+  color: #c2410c;
+  text-decoration: underline; text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+.mc-kpi.is-warn { background: #fffdf7; }

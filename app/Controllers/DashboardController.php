@@ -132,11 +132,19 @@ final class DashboardController extends BaseController
                 }
             } catch (\Throwable) {
             }
-            $billingMode = strtolower((string) ($cust['billing_mode'] ?? 'prepaid'));
-            $status = strtolower((string) ($cust['status'] ?? 'active'));
-            $callsPaused = $status !== 'active'
-                || ($billingMode === 'prepaid' && bccomp($available, '0', 6) <= 0);
-            $lowRunway = !$callsPaused && $runwayDays !== null && $runwayDays < 2;
+            $billingMode = strtolower(trim((string) ($cust['billing_mode'] ?? 'prepaid')));
+            $status = strtolower(trim((string) ($cust['status'] ?? 'active')));
+            $currency = strtoupper(trim((string) ($cust['currency'] ?? 'USD')));
+            // Normalize money strings for reliable bccomp (null/empty → 0)
+            $balance = bcadd((string) ($balance !== '' ? $balance : '0'), '0', 6);
+            $available = bcadd((string) ($available !== '' ? $available : '0'), '0', 6);
+            // Prepaid: pause when available OR ledger balance is 0 or negative (matches OpenSIPS allow_calls)
+            $fundsEmpty = bccomp($available, '0', 6) <= 0 || bccomp($balance, '0', 6) <= 0;
+            $callsPaused = $status !== 'active' || ($billingMode !== 'postpaid' && $fundsEmpty);
+            // Orange warning: still callable but under $10 (or 10 units of account currency)
+            $lowBalanceWarn = !$callsPaused && $billingMode !== 'postpaid'
+                && bccomp($available, '0', 6) > 0 && bccomp($available, '10', 6) < 0;
+            $lowRunway = !$callsPaused && !$lowBalanceWarn && $runwayDays !== null && $runwayDays < 2;
 
             $attention = [];
             if ($callsPaused) {
@@ -146,7 +154,15 @@ final class DashboardController extends BaseController
                     'body' => $status !== 'active'
                         ? 'Your account is not active. New calls may be refused until support reactivates it.'
                         : ('Your available balance is below the level needed to place calls. Your balance is '
-                            . fmt_money($available, 2) . ' ' . (string) ($cust['currency'] ?? '') . '.'),
+                            . fmt_money($available, 2) . ($currency !== '' ? ' ' . $currency : '') . '.'),
+                ];
+            } elseif ($lowBalanceWarn) {
+                $attention[] = [
+                    'level' => 'warn',
+                    'title' => 'Low balance',
+                    'body' => 'Your available balance is '
+                        . fmt_money($available, 2) . ($currency !== '' ? ' ' . $currency : '')
+                        . '. Add funds before it reaches zero so calling is not paused.',
                 ];
             } elseif ($lowRunway) {
                 $attention[] = [
@@ -172,6 +188,7 @@ final class DashboardController extends BaseController
             $data['cpsUnlimited'] = $cpsUnlimited;
             $data['sipLimits'] = $sipLimits;
             $data['callsPaused'] = $callsPaused;
+            $data['lowBalanceWarn'] = $lowBalanceWarn;
             $data['lowRunway'] = $lowRunway;
             $data['attention'] = $attention;
             return $this->view('dashboard/customer', $data);

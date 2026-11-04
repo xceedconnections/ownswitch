@@ -6,8 +6,8 @@
  * @var int $sipCount @var int $ipCount @var array $metrics
  * @var int $ccAllowed @var int $ccUsing @var bool $ccUnlimited
  * @var int $cpsAllowed @var bool $cpsUnlimited @var list<array> $sipLimits
- * @var bool $callsPaused @var bool $lowRunway @var list<array> $attention
- * @var string $ccLabel
+ * @var bool $callsPaused @var bool $lowBalanceWarn @var bool $lowRunway @var list<array> $attention
+ * @var string $ccLabel @var string $balance @var string $available
  */
 $ccAllowed = $ccAllowed ?? 0;
 $ccUsing = $ccUsing ?? 0;
@@ -17,9 +17,47 @@ $cpsUnlimited = !empty($cpsUnlimited);
 $sipLimits = $sipLimits ?? [];
 $sipCount = (int) ($sipCount ?? 0);
 $ipCount = (int) ($ipCount ?? 0);
-$callsPaused = !empty($callsPaused);
-$lowRunway = !empty($lowRunway);
 $attention = $attention ?? [];
+$balance = bcadd((string) ($balance ?? '0'), '0', 6);
+$available = bcadd((string) ($available ?? '0'), '0', 6);
+// Recompute in the view so pause/low always match ledger (even if flags were missed)
+$modeRaw = strtolower(trim((string) ($customer['billing_mode'] ?? 'prepaid')));
+$isPrepaidLike = $modeRaw !== 'postpaid';
+$fundsEmpty = bccomp($available, '0', 6) <= 0 || bccomp($balance, '0', 6) <= 0;
+$statusRaw = strtolower(trim((string) ($customer['status'] ?? 'active')));
+$callsPaused = $statusRaw !== 'active' || ($isPrepaidLike && $fundsEmpty);
+$lowBalanceWarn = !$callsPaused && $isPrepaidLike
+    && bccomp($available, '0', 6) > 0 && bccomp($available, '10', 6) < 0;
+$lowRunway = !empty($lowRunway) && !$callsPaused && !$lowBalanceWarn;
+// Ensure attention cards exist for pause / low balance even if controller omitted them
+$hasCritical = false;
+$hasLowBal = false;
+foreach ($attention as $a) {
+    if (($a['level'] ?? '') === 'critical') {
+        $hasCritical = true;
+    }
+    if (($a['title'] ?? '') === 'Low balance') {
+        $hasLowBal = true;
+    }
+}
+if ($callsPaused && !$hasCritical) {
+    array_unshift($attention, [
+        'level' => 'critical',
+        'title' => 'Calling is paused',
+        'body' => $statusRaw !== 'active'
+            ? 'Your account is not active. New calls may be refused until support reactivates it.'
+            : ('Your available balance is below the level needed to place calls. Your balance is '
+                . fmt_money($available, 2) . '.'),
+    ]);
+} elseif ($lowBalanceWarn && !$hasLowBal) {
+    array_unshift($attention, [
+        'level' => 'warn',
+        'title' => 'Low balance',
+        'body' => 'Your available balance is ' . fmt_money($available, 2)
+            . '. Add funds before it reaches zero so calling is not paused.',
+    ]);
+}
+$attnCount = count($attention);
 $limLabel = static function (int $n, bool $unlimited): string {
     return $unlimited || $n < 0 ? '∞' : (string) $n;
 };
@@ -62,7 +100,6 @@ if ($maxBar <= 5) {
         $yTicks[] = $i * $step;
     }
 }
-$attnCount = count($attention);
 $connected = $sipCount > 0 || $ipCount > 0;
 $cdrFresh = false;
 $cdrHint = 'No call records yet';
@@ -89,8 +126,15 @@ if ($lastCdrAt) {
         <span class="mc-badge"><?= e($billingMode) ?></span>
     </div>
     <div class="mc-head-right text-muted small">
-        <span class="mc-live-dot<?= $callsPaused ? ' is-paused' : '' ?>"></span>
-        <?= $callsPaused ? 'Calling paused' : 'Completed calls' ?> · updated just now
+        <span class="mc-live-dot<?= $callsPaused ? ' is-paused' : ($lowBalanceWarn ? ' is-warn' : '') ?>"></span>
+        <?php if ($callsPaused): ?>
+            Calling paused
+        <?php elseif ($lowBalanceWarn): ?>
+            Low balance
+        <?php else: ?>
+            Completed calls
+        <?php endif; ?>
+        · updated just now
     </div>
 </div>
 
@@ -110,6 +154,25 @@ if ($lastCdrAt) {
     </div>
     <div class="mc-pause-actions">
         <a class="btn btn-primary btn-sm" href="<?= e(url('/payments')) ?>">Add funds</a>
+        <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/sip-users')) ?>">View connection</a>
+    </div>
+</div>
+<?php elseif ($lowBalanceWarn): ?>
+<div class="mc-low-banner">
+    <div class="mc-low-copy">
+        <div class="mc-low-title">
+            <span class="mc-low-dot"></span>
+            Low balance
+        </div>
+        <div class="mc-low-sub">
+            Available <?= e($money($available, $cur)) ?> — under $10. Add funds soon so calling is not paused
+            <?php if ($attnCount > 0): ?>
+                · <strong><?= e((string) $attnCount) ?> item<?= $attnCount === 1 ? '' : 's' ?> needs attention</strong>
+            <?php endif; ?>
+        </div>
+    </div>
+    <div class="mc-pause-actions">
+        <a class="btn btn-warning btn-sm text-dark" href="<?= e(url('/payments')) ?>">Add funds</a>
         <a class="btn btn-outline-secondary btn-sm" href="<?= e(url('/sip-users')) ?>">View connection</a>
     </div>
 </div>
@@ -157,14 +220,14 @@ if ($lastCdrAt) {
         <div class="val os-mono"><?= e($money($w['spend'], $cur)) ?></div>
         <div class="sub"><?= e($money($t['spend'], $cur)) ?> today</div>
     </div>
-    <div class="mc-kpi<?= $callsPaused ? ' is-critical' : '' ?>">
+    <div class="mc-kpi<?= $callsPaused ? ' is-critical' : ($lowBalanceWarn ? ' is-warn' : '') ?>">
         <div class="lbl">Available balance</div>
-        <div class="val os-mono<?= $callsPaused || bccomp($available, '0', 6) < 0 ? ' is-crit' : '' ?>"><?= e($money($available, $cur)) ?></div>
-        <div class="sub"><?= $callsPaused ? 'Calls paused' : ('Ledger ' . e($money($balance, $cur))) ?></div>
+        <div class="val os-mono<?= $callsPaused || bccomp($available, '0', 6) <= 0 ? ' is-crit' : ($lowBalanceWarn ? ' is-warn-val' : '') ?>"><?= e($money($available, $cur)) ?></div>
+        <div class="sub"><?= $callsPaused ? 'Calls paused' : ($lowBalanceWarn ? 'Under $10 — top up soon' : ('Ledger ' . e($money($balance, $cur)))) ?></div>
     </div>
-    <div class="mc-kpi<?= $callsPaused ? ' is-critical' : ($lowRunway ? ' is-warn' : '') ?>">
+    <div class="mc-kpi<?= $callsPaused ? ' is-critical' : ($lowBalanceWarn || $lowRunway ? ' is-warn' : '') ?>">
         <div class="lbl">Runway</div>
-        <div class="val<?= $callsPaused ? ' is-crit' : '' ?>">
+        <div class="val<?= $callsPaused ? ' is-crit' : ($lowBalanceWarn ? ' is-warn-val' : '') ?>">
             <?php if ($callsPaused): ?>
                 Paused
             <?php elseif ($runwayDays === null): ?>
@@ -173,7 +236,7 @@ if ($lastCdrAt) {
                 ≈ <?= e(number_format($runwayDays, 1)) ?> d
             <?php endif; ?>
         </div>
-        <div class="sub"><?= $callsPaused ? 'Calls refused until funded' : ('Today pace ' . e($money($t['spend'], $cur))) ?></div>
+        <div class="sub"><?= $callsPaused ? 'Calls refused until funded' : ($lowBalanceWarn ? 'Fund before balance hits zero' : ('Today pace ' . e($money($t['spend'], $cur)))) ?></div>
     </div>
     <div class="mc-kpi">
         <div class="lbl">Routing</div>
@@ -277,7 +340,7 @@ if ($lastCdrAt) {
             <div class="mc-card-h">
                 <h2 class="mc-card-title">Needs attention</h2>
                 <?php if ($attnCount > 0): ?>
-                    <span class="mc-attn-badge"><?= e((string) $attnCount) ?></span>
+                    <span class="mc-attn-badge<?= $callsPaused ? '' : ' is-warn' ?>"><?= e((string) $attnCount) ?></span>
                 <?php endif; ?>
             </div>
             <?php if ($attnCount === 0): ?>
@@ -290,6 +353,8 @@ if ($lastCdrAt) {
                         <div class="mc-attn-body"><?= e((string) ($item['body'] ?? '')) ?></div>
                         <?php if (($item['level'] ?? '') === 'critical'): ?>
                             <a class="btn btn-primary btn-sm mt-2" href="<?= e(url('/payments')) ?>">Add funds</a>
+                        <?php elseif (($item['level'] ?? '') === 'warn'): ?>
+                            <a class="btn btn-warning btn-sm text-dark mt-2" href="<?= e(url('/payments')) ?>">Add funds</a>
                         <?php endif; ?>
                     </div>
                 <?php endforeach; ?>
