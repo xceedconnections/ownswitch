@@ -16,7 +16,7 @@ final class SipAccountRepository extends BaseRepository
             [
                 'reseller_id', 'customer_id', 'username', 'domain', 'ha1', 'ha1b', 'password_enc',
                 'caller_id', 'caller_id_mode', 'cid_min_len', 'cid_max_len',
-                'sip_host', 'sip_port', 'codecs', 'disallow', 'nat', 'directmedia', 'qualify',
+                'sip_host', 'connection_mode', 'sip_port', 'codecs', 'disallow', 'nat', 'directmedia', 'qualify',
                 'routing_plan_id', 'dtmfmode', 'dtmf_pass', 'insecure', 'peer_type', 'allowtransfer',
                 'max_channels', 'max_cps', 'rate_cap', 'media_policy', 'status', 'notes', 'password_changed_at',
             ],

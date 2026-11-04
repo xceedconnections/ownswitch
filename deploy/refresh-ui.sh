@@ -105,6 +105,16 @@ if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-fail2ban.sh" ]]; then
     visudo -cf /etc/sudoers.d/ownswitch-fail2ban >/dev/null 2>&1 || true
   fi
 fi
+# IP-based SIP peer firewall (firewalld or ufw)
+if [[ -f "$SRC/deploy/templates/firewall/ownswitch-sip-peer-fw.sh" ]]; then
+  install -m 0755 "$SRC/deploy/templates/firewall/ownswitch-sip-peer-fw.sh" /usr/local/sbin/ownswitch-sip-peer-fw
+  if [[ -f "$SRC/deploy/templates/firewall/ownswitch-sip-peer-fw.sudoers" ]]; then
+    install -m 0440 "$SRC/deploy/templates/firewall/ownswitch-sip-peer-fw.sudoers" /etc/sudoers.d/ownswitch-sip-peer-fw
+    visudo -cf /etc/sudoers.d/ownswitch-sip-peer-fw >/dev/null 2>&1 || true
+  fi
+  mkdir -p /var/lib/ownswitch/sip-peer-fw
+  chmod 0750 /var/lib/ownswitch/sip-peer-fw 2>/dev/null || true
+fi
 if [[ -f "$SRC/deploy/templates/fail2ban/ownswitch-portal.conf" ]]; then
   install -m 0644 "$SRC/deploy/templates/fail2ban/ownswitch-portal.conf" /etc/fail2ban/filter.d/ownswitch-portal.conf
 fi

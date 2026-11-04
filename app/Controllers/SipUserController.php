@@ -77,7 +77,16 @@ final class SipUserController extends CrudController
                 'label' => 'SIP password',
                 'type' => 'password',
                 'max' => 128,
-                'help' => 'Blank = auto-generate (create) or keep current (edit). Min 12 if typed.',
+                'help' => 'Required for Dynamic mode. Blank = auto-generate (create) or keep current (edit). Min 12 if typed. Hidden for IP based.',
+                'section' => 'Account',
+            ],
+            [
+                'name' => 'sip_host',
+                'label' => 'Host',
+                'max' => 190,
+                'default' => 'dynamic',
+                'list' => true,
+                'help' => 'Dynamic mode uses “dynamic” (REGISTER from any IP). IP based: enter the PBX IP (e.g. ViciDial 192.131.111.144) — OpenSIPS ACL + firewall auto-update.',
                 'section' => 'Account',
             ],
             [
@@ -135,12 +144,13 @@ final class SipUserController extends CrudController
             ],
 
             [
-                'name' => 'sip_host',
-                'label' => 'Host',
-                'max' => 190,
+                'name' => 'connection_mode',
+                'label' => 'Type',
+                'type' => 'select',
+                'options' => SipPeerOptions::CONNECTION_MODE,
                 'default' => 'dynamic',
                 'list' => true,
-                'help' => 'dynamic = REGISTER from any IP. Fixed IP → OpenSIPS address ACL (IP peer / vendor PBX).',
+                'help' => 'Dynamic = username/password REGISTER. IP based = fixed IP peer (no digest); Host IP + port go to OpenSIPS ACL and firewall automatically.',
                 'section' => 'Network',
             ],
             [
@@ -150,16 +160,16 @@ final class SipUserController extends CrudController
                 'min' => 0,
                 'max' => 65535,
                 'default' => '5060',
-                'help' => 'For fixed Host: match this signalling port in OpenSIPS address (0 = any port). Use when the vendor PBX uses a non-5060 port.',
+                'help' => 'IP based: peer signalling port (e.g. 7777 for ViciDial). Matched in OpenSIPS address ACL and opened on the firewall for that IP. 0 = any port (ACL only).',
                 'section' => 'Network',
             ],
             [
                 'name' => 'peer_type',
-                'label' => 'Type',
+                'label' => 'Peer style',
                 'type' => 'select',
                 'options' => SipPeerOptions::PEER_TYPE,
                 'default' => 'friend',
-                'help' => 'friend = softphone (register + call). peer = IP/PBX trunk style. user = register-oriented only. Softphones: use friend.',
+                'help' => 'friend = softphone (register + call). peer = IP/PBX trunk style. Softphones: friend. IP based defaults to peer.',
                 'section' => 'Network',
             ],
             [
@@ -386,45 +396,95 @@ final class SipUserController extends CrudController
         $this->plainPassword = null;
         $pw = $data['password'] ?? null;
         unset($data['password']);
-        if ($pw !== null && $pw !== '' && mb_strlen((string) $pw) < 12) {
-            throw new \DomainException('SIP password must be at least 12 characters.');
+
+        $prevMode = $this->resolveConnectionMode($existing ?? []);
+        $mode = strtolower(trim((string) ($data['connection_mode'] ?? '')));
+        if (!isset(SipPeerOptions::CONNECTION_MODE[$mode])) {
+            $hostGuess = trim((string) ($data['sip_host'] ?? ($existing['sip_host'] ?? 'dynamic')));
+            $mode = ($hostGuess !== '' && strtolower($hostGuess) !== 'dynamic' && filter_var($hostGuess, FILTER_VALIDATE_IP))
+                ? 'ip' : 'dynamic';
         }
-        if ($existing === null) {
-            $data['domain'] = $domain;
-            $pw = ($pw === null || $pw === '') ? self::generatePassword() : $pw;
-            $username = (string) $data['username'];
+        $data['connection_mode'] = $mode;
+
+        if (array_key_exists('sip_port', $data)) {
+            $p = (int) $data['sip_port'];
+            $data['sip_port'] = ($p < 0 || $p > 65535) ? 5060 : $p;
+        }
+
+        if ($mode === 'ip') {
+            $host = trim((string) ($data['sip_host'] ?? ''));
+            if ($host === '' || strtolower($host) === 'dynamic' || !filter_var($host, FILTER_VALIDATE_IP)) {
+                throw new \DomainException('IP based Type requires a valid Host IP on the Account tab (e.g. 192.131.111.144).');
+            }
+            $data['sip_host'] = $host;
+            $port = (int) ($data['sip_port'] ?? ($existing['sip_port'] ?? 5060));
+            if ($port < 0 || $port > 65535) {
+                throw new \DomainException('SIP port must be 0–65535 (0 = any port in OpenSIPS ACL).');
+            }
+            $data['sip_port'] = $port;
+            // IP peers: clear digest secrets from portal + OpenSIPS
+            $data['password_enc'] = null;
+            $data['ha1'] = str_repeat('0', 32);
+            $data['ha1b'] = str_repeat('0', 32);
+            $data['password_changed_at'] = gmdate('Y-m-d H:i:s');
+            $data['_clear_sip_secret'] = true;
+            // IP PBX peers: trust address ACL, no REGISTER
+            if (($prevMode !== 'ip' && (string) ($data['peer_type'] ?? '') === 'friend')
+                || (string) ($data['peer_type'] ?? '') === '') {
+                $data['peer_type'] = 'peer';
+            }
+            if (($prevMode !== 'ip' && (string) ($data['insecure'] ?? 'no') === 'no')
+                || (string) ($data['insecure'] ?? '') === '') {
+                $data['insecure'] = 'port,invite';
+            }
+            $pw = null; // ignore any posted password in IP mode
         } else {
-            $username = (string) $existing['username'];
+            $data['sip_host'] = 'dynamic';
+            $switchingFromIp = $existing !== null && $prevMode === 'ip';
+            if ($pw !== null && $pw !== '' && mb_strlen((string) $pw) < 12) {
+                throw new \DomainException('SIP password must be at least 12 characters.');
+            }
+            if ($switchingFromIp && ($pw === null || $pw === '')) {
+                throw new \DomainException('Switching to Dynamic mode requires a new SIP password (min 12 characters).');
+            }
+            if ($existing === null) {
+                $data['domain'] = $domain;
+                $pw = ($pw === null || $pw === '') ? self::generatePassword() : $pw;
+                $username = (string) $data['username'];
+            } else {
+                $username = (string) $existing['username'];
+                if ($pw !== null && $pw !== '') {
+                    $data['domain'] = $domain;
+                } else {
+                    $domain = (string) $existing['domain'];
+                }
+            }
             if ($pw !== null && $pw !== '') {
+                [$ha1, $ha1b] = OpensipsProvisioner::ha1($username, $domain, (string) $pw);
+                $data['ha1'] = $ha1;
+                $data['ha1b'] = $ha1b;
+                $data['password_changed_at'] = gmdate('Y-m-d H:i:s');
+                $this->plainPassword = (string) $pw;
+                try {
+                    $data['password_enc'] = Crypto::encrypt((string) $pw);
+                } catch (\Throwable $e) {
+                    throw new \DomainException('Could not store SIP password: ' . $e->getMessage());
+                }
+            }
+        }
+
+        if ($mode === 'ip') {
+            if ($existing === null) {
                 $data['domain'] = $domain;
             } else {
-                $domain = (string) $existing['domain'];
+                $data['domain'] = (string) ($existing['domain'] ?? $domain);
             }
         }
-        if ($pw !== null && $pw !== '') {
-            [$ha1, $ha1b] = OpensipsProvisioner::ha1($username, $domain, (string) $pw);
-            $data['ha1'] = $ha1;
-            $data['ha1b'] = $ha1b;
-            $data['password_changed_at'] = gmdate('Y-m-d H:i:s');
-            $this->plainPassword = (string) $pw;
-            try {
-                $data['password_enc'] = Crypto::encrypt((string) $pw);
-            } catch (\Throwable $e) {
-                throw new \DomainException('Could not store SIP password: ' . $e->getMessage());
-            }
-        }
+
         if (array_key_exists('media_policy', $data)) {
             $data['media_policy'] = MediaPolicy::normalizeStored(
                 isset($data['media_policy']) ? (string) $data['media_policy'] : null
             );
-        }
-        if (isset($data['sip_host'])) {
-            $host = trim((string) $data['sip_host']);
-            $data['sip_host'] = $host === '' ? 'dynamic' : $host;
-        }
-        if (array_key_exists('sip_port', $data)) {
-            $p = (int) $data['sip_port'];
-            $data['sip_port'] = ($p < 0 || $p > 65535) ? 5060 : $p;
         }
         $tg = $data['routing_plan_id'] ?? null;
         $data['routing_plan_id'] = ($tg === null || $tg === '') ? null : (int) $tg;
@@ -434,15 +494,15 @@ final class SipUserController extends CrudController
         }
         $cid = trim((string) ($data['caller_id'] ?? ''));
         $data['caller_id'] = $cid !== '' ? $cid : null;
-        $mode = strtolower(trim((string) ($data['caller_id_mode'] ?? 'passthrough')));
-        if (!isset(SipPeerOptions::CALLER_ID_MODE[$mode])) {
-            $mode = $cid !== '' ? 'fixed' : 'passthrough';
+        $cidMode = strtolower(trim((string) ($data['caller_id_mode'] ?? 'passthrough')));
+        if (!isset(SipPeerOptions::CALLER_ID_MODE[$cidMode])) {
+            $cidMode = $cid !== '' ? 'fixed' : 'passthrough';
         }
         // Fixed mode with empty number → treat as passthrough so ViciDial CLI is kept
-        if ($mode === 'fixed' && $cid === '') {
-            $mode = 'passthrough';
+        if ($cidMode === 'fixed' && $cid === '') {
+            $cidMode = 'passthrough';
         }
-        $data['caller_id_mode'] = $mode;
+        $data['caller_id_mode'] = $cidMode;
         $dp = strtolower(trim((string) ($data['dtmf_pass'] ?? 'yes')));
         $data['dtmf_pass'] = $dp === 'no' ? 'no' : 'yes';
         foreach (['cid_min_len', 'cid_max_len'] as $k) {
@@ -478,6 +538,8 @@ final class SipUserController extends CrudController
     {
         $row = $this->repo()->findInternal($id);
         $prov = OpensipsProvisioner::fromConfig();
+        $fw = new \Ownswitch\Services\System\SipPeerFirewallService();
+        $connMode = $this->resolveConnectionMode($row ?? $data);
         if ($row) {
             if (!$prov->enabled()) {
                 App::session()->flash('warning', 'Saved in portal, but OpenSIPS provisioning is not available: '
@@ -489,9 +551,11 @@ final class SipUserController extends CrudController
                             isset($row['media_policy']) ? (string) $row['media_policy'] : null,
                             $this->db()
                         );
-                        // record stays record for OpenSIPS rtpengine recording path
                         $row['_effective_media'] = $effective;
-                        if ($this->plainPassword !== null) {
+                        if ($connMode === 'ip') {
+                            $row['_clear_sip_secret'] = true;
+                            $row['connection_mode'] = 'ip';
+                        } elseif ($this->plainPassword !== null) {
                             $row['_plain_password'] = $this->plainPassword;
                         }
                         $prov->upsertSubscriber(
@@ -507,17 +571,36 @@ final class SipUserController extends CrudController
                             (int) ($row['max_channels'] ?? 2),
                             $row
                         );
+                        $prov->reloadAddresses();
                     } else {
                         $prov->removeSubscriber((string) $row['username'], (string) $row['domain']);
                         $prov->removeSipPeerProfile((string) $row['username']);
+                        $prov->reloadAddresses();
                     }
                 } catch (\Throwable $e) {
                     error_log('[ownswitch] OpenSIPS provision SIP user: ' . $e->getMessage());
                     App::session()->flash('warning', 'Saved, but OpenSIPS provisioning failed: ' . mb_substr($e->getMessage(), 0, 240));
                 }
             }
+
+            // Firewall: IP peers get allow rules; dynamic / disabled remove them
+            try {
+                if ($row['status'] === 'active' && $connMode === 'ip') {
+                    $ip = trim((string) ($row['sip_host'] ?? ''));
+                    $peerPort = (int) ($row['sip_port'] ?? 5060);
+                    $res = $fw->sync((string) $row['username'], $ip, $peerPort);
+                    if (!$res['ok']) {
+                        App::session()->flash('warning', 'SIP saved, but firewall sync failed: ' . mb_substr($res['detail'], 0, 200));
+                    }
+                } else {
+                    $fw->remove((string) $row['username']);
+                }
+            } catch (\Throwable $e) {
+                error_log('[ownswitch] SIP peer firewall: ' . $e->getMessage());
+                App::session()->flash('warning', 'SIP saved, but firewall update failed.');
+            }
         }
-        if ($this->plainPassword !== null && $row) {
+        if ($this->plainPassword !== null && $row && $connMode === 'dynamic') {
             $realm = (string) App::config('app.integrations.opensips.sip_domain', (string) $row['domain']);
             $proxy = trim((string) App::config('app.integrations.opensips.public_ip', ''));
             if ($proxy === '') {
@@ -531,7 +614,12 @@ final class SipUserController extends CrudController
                 . "Domain={$proxy} OR {$realm} OR any FQDN→{$proxy}  Port={$port} UDP. "
                 . "Magnus-style: username+password+IP/FQDN — leave Outbound Proxy blank.";
         }
-        if ($row && empty($row['password_enc'])) {
+        if ($row && $connMode === 'ip' && $row['status'] === 'active') {
+            $ip = (string) ($row['sip_host'] ?? '');
+            $peerPort = (int) ($row['sip_port'] ?? 5060);
+            return "IP based SIP peer saved. Host={$ip} port={$peerPort} — OpenSIPS ACL + firewall updated (old IP/port removed).";
+        }
+        if ($row && $connMode === 'dynamic' && empty($row['password_enc'])) {
             App::session()->flash(
                 'warning',
                 'Re-save this SIP user with a password once so OpenSIPS can accept Domain=FQDN and Domain=IP (plaintext digest).'
@@ -547,9 +635,14 @@ final class SipUserController extends CrudController
             try {
                 $prov->removeSubscriber((string) $row['username'], (string) $row['domain']);
                 $prov->removeSipPeerProfile((string) $row['username']);
+                $prov->reloadAddresses();
             } catch (\Throwable) {
                 App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
             }
+        }
+        try {
+            (new \Ownswitch\Services\System\SipPeerFirewallService())->remove((string) $row['username']);
+        } catch (\Throwable) {
         }
     }
 
@@ -558,7 +651,25 @@ final class SipUserController extends CrudController
         if (MediaPolicy::isDefault(isset($values['media_policy']) ? (string) $values['media_policy'] : null)) {
             $values['media_policy'] = '';
         }
+        $values['connection_mode'] = $this->resolveConnectionMode($values + ($existing ?? []));
+        if (($values['connection_mode'] ?? '') === 'dynamic') {
+            $values['sip_host'] = 'dynamic';
+        }
         return $values;
+    }
+
+    /** @param array<string,mixed> $row */
+    private function resolveConnectionMode(array $row): string
+    {
+        $mode = strtolower(trim((string) ($row['connection_mode'] ?? '')));
+        if (isset(SipPeerOptions::CONNECTION_MODE[$mode])) {
+            return $mode;
+        }
+        $host = trim((string) ($row['sip_host'] ?? 'dynamic'));
+        if ($host !== '' && strtolower($host) !== 'dynamic' && filter_var($host, FILTER_VALIDATE_IP)) {
+            return 'ip';
+        }
+        return 'dynamic';
     }
 
     public static function generatePassword(int $bytes = 15): string

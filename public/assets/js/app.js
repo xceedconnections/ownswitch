@@ -437,4 +437,59 @@
         tick();
         window.setInterval(tick, 10000);
     });
+
+    // SIP Users: Dynamic vs IP based — toggle password / host fields
+    document.querySelectorAll('[data-os-sip-auth]').forEach(function (root) {
+        var modeEl = root.querySelector('#f_connection_mode');
+        var hostEl = root.querySelector('#f_sip_host');
+        var passWrap = root.querySelector('#f_password');
+        var hostWrap = hostEl ? hostEl.closest('.col-12, .col-md-6') : null;
+        var passCol = passWrap ? passWrap.closest('.col-12, .col-md-6') : null;
+        var portEl = root.querySelector('#f_sip_port');
+        if (!modeEl) { return; }
+
+        var apply = function () {
+            var mode = String(modeEl.value || 'dynamic');
+            var ip = mode === 'ip';
+            if (passCol) {
+                passCol.classList.toggle('d-none', ip);
+                if (passWrap) {
+                    passWrap.required = !ip && passWrap.hasAttribute('data-force-required');
+                    if (ip) { passWrap.value = ''; }
+                }
+            }
+            if (hostEl) {
+                hostEl.readOnly = !ip;
+                if (!ip) {
+                    hostEl.value = 'dynamic';
+                    hostEl.placeholder = 'dynamic';
+                } else if (String(hostEl.value).toLowerCase() === 'dynamic') {
+                    hostEl.value = '';
+                    hostEl.placeholder = 'e.g. 192.131.111.144';
+                }
+            }
+            if (hostWrap) {
+                var label = hostWrap.querySelector('label');
+                if (label && ip) {
+                    /* keep label */
+                }
+            }
+            if (portEl) {
+                var portCol = portEl.closest('.col-12, .col-md-6');
+                if (portCol) { portCol.classList.toggle('opacity-75', !ip); }
+            }
+        };
+
+        modeEl.addEventListener('change', function () {
+            if (String(modeEl.value) === 'dynamic' && String(hostEl && hostEl.value || '').toLowerCase() !== 'dynamic') {
+                if (passWrap) {
+                    passWrap.setAttribute('data-force-required', '1');
+                    passWrap.required = true;
+                    window.alert('Dynamic mode needs a new SIP password. Enter one on the Account tab before saving.');
+                }
+            }
+            apply();
+        });
+        apply();
+    });
 })();

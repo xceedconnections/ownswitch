@@ -37,6 +37,12 @@ final class SipPeerOptions
         'user' => 'user (register only)',
     ];
 
+    /** How the endpoint authenticates to Ownswitch / OpenSIPS. */
+    public const CONNECTION_MODE = [
+        'dynamic' => 'Dynamic (REGISTER + username/password)',
+        'ip' => 'IP based (fixed IP peer / PBX)',
+    ];
+
     public const PROVIDER_TECH = [
         'sip' => 'sip',
         'iax2' => 'iax2',

@@ -103,29 +103,37 @@ final class OpensipsProvisioner
             }
         }
 
+        $ipAuth = $account !== null && (
+            !empty($account['_clear_sip_secret'])
+            || strtolower(trim((string) ($account['connection_mode'] ?? ''))) === 'ip'
+        );
         $set = [
             'domain' => $domain,
-            'ha1' => $ha1,
+            'ha1' => $ipAuth ? str_repeat('0', 32) : $ha1,
         ];
         if (in_array('ha1b', $cols, true)) {
-            $set['ha1b'] = $ha1b;
+            $set['ha1b'] = $ipAuth ? str_repeat('0', 32) : $ha1b;
         }
         if (in_array('password', $cols, true)) {
-            $plain = '';
-            if ($account !== null) {
-                $plain = (string) ($account['_plain_password'] ?? '');
-                if ($plain === '' && !empty($account['password_enc'])) {
-                    try {
-                        $plain = Crypto::decrypt((string) $account['password_enc']);
-                    } catch (\Throwable) {
-                        $plain = '';
+            if ($ipAuth) {
+                $set['password'] = '';
+            } else {
+                $plain = '';
+                if ($account !== null) {
+                    $plain = (string) ($account['_plain_password'] ?? '');
+                    if ($plain === '' && !empty($account['password_enc'])) {
+                        try {
+                            $plain = Crypto::decrypt((string) $account['password_enc']);
+                        } catch (\Throwable) {
+                            $plain = '';
+                        }
                     }
                 }
-            }
-            if ($plain !== '') {
-                $set['password'] = $plain;
-            } elseif (!$id) {
-                $set['password'] = '';
+                if ($plain !== '') {
+                    $set['password'] = $plain;
+                } elseif (!$id) {
+                    $set['password'] = '';
+                }
             }
         }
         if ($account !== null && in_array('rpid', $cols, true)) {
