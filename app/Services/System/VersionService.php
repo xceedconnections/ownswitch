@@ -13,16 +13,18 @@ final class VersionService
     private const REPO = 'xceedconnections/ownswitch';
     private const SRC = '/opt/ownswitch-src';
     private const CURRENT = '/opt/ownswitch/current';
+    private const REFRESH = '/opt/ownswitch-src/deploy/refresh-ui.sh';
 
-    /** @return array{ok:bool,current_sha:string,current_short:string,current_date:string,remote_sha:string,remote_short:string,remote_date:string,remote_message:string,update_available:bool,detail:string,helper:bool} */
+    /** @return array{ok:bool,current_sha:string,current_short:string,current_date:string,remote_sha:string,remote_short:string,remote_date:string,remote_message:string,update_available:bool,detail:string,helper:bool,can_update:bool} */
     public function status(): array
     {
         $cur = $this->localHead();
         $remote = $this->githubHead();
         $update = false;
-        if ($cur['sha'] !== '' && $remote['sha'] !== '' && !hash_equals($cur['sha'], $remote['sha'])) {
+        if ($cur['sha'] !== '' && $remote['sha'] !== '' && !$this->sameCommit($cur['sha'], $remote['sha'])) {
             $update = true;
         }
+        $can = $this->canUpdate();
         return [
             'ok' => $cur['sha'] !== '' || $remote['sha'] !== '',
             'current_sha' => $cur['sha'],
@@ -34,7 +36,8 @@ final class VersionService
             'remote_message' => $remote['message'],
             'update_available' => $update,
             'detail' => $remote['error'] !== '' ? $remote['error'] : ($cur['sha'] === '' ? 'Local git SHA not found' : 'ok'),
-            'helper' => is_file(self::HELPER) && is_executable(self::HELPER),
+            'helper' => $can,
+            'can_update' => $can,
             'repo' => self::REPO,
             'branch' => 'main',
         ];
@@ -43,13 +46,19 @@ final class VersionService
     /** @return array{ok:bool,detail:string} */
     public function updateNow(): array
     {
-        if (!is_file(self::HELPER) || !is_executable(self::HELPER)) {
-            return ['ok' => false, 'detail' => 'Update helper missing. On the server run refresh-ui once as root, then try again.'];
+        $cmd = $this->updateCommand();
+        if ($cmd === null) {
+            return [
+                'ok' => false,
+                'detail' => 'Update helper not installed. As root run once: '
+                    . 'sudo bash /opt/ownswitch-src/deploy/install-update-helper.sh '
+                    . 'then click Update now again.',
+            ];
         }
-        $cmd = 'sudo -n ' . escapeshellarg(self::HELPER) . ' 2>&1';
+        $full = 'sudo -n ' . $cmd . ' 2>&1';
         $out = [];
         $code = 0;
-        exec($cmd, $out, $code);
+        exec($full, $out, $code);
         $text = trim(implode("\n", $out));
         if (mb_strlen($text) > 4000) {
             $text = mb_substr($text, -4000);
@@ -57,33 +66,62 @@ final class VersionService
         return ['ok' => $code === 0, 'detail' => $text !== '' ? $text : ($code === 0 ? 'Updated.' : 'Update failed')];
     }
 
+    public function canUpdate(): bool
+    {
+        return $this->updateCommand() !== null;
+    }
+
+    /** Shell fragment after `sudo -n` (already escaped), or null. */
+    private function updateCommand(): ?string
+    {
+        if (is_file(self::HELPER) && is_executable(self::HELPER)) {
+            return escapeshellarg(self::HELPER);
+        }
+        if (is_file(self::REFRESH) && is_readable(self::REFRESH)) {
+            $bash = is_file('/usr/bin/bash') ? '/usr/bin/bash' : '/bin/bash';
+            return escapeshellarg($bash) . ' ' . escapeshellarg(self::REFRESH);
+        }
+        return null;
+    }
+
+    private function sameCommit(string $a, string $b): bool
+    {
+        $a = strtolower(trim($a));
+        $b = strtolower(trim($b));
+        if ($a === '' || $b === '') {
+            return false;
+        }
+        if (hash_equals($a, $b)) {
+            return true;
+        }
+        $len = min(strlen($a), strlen($b));
+        if ($len < 7) {
+            return false;
+        }
+        return hash_equals(substr($a, 0, $len), substr($b, 0, $len));
+    }
+
     /** @return array{sha:string,short:string,date:string} */
     private function localHead(): array
     {
         $sha = '';
         $date = '';
-        foreach ([self::SRC, self::CURRENT] as $dir) {
-            if (!is_dir($dir . '/.git') && $dir === self::CURRENT) {
-                // release dir may not be a git repo — parse symlink name ui-YYYY…-HASH
-                $link = @readlink(self::CURRENT);
-                if (is_string($link) && preg_match('/-([0-9a-f]{7,40})$/i', basename($link), $m)) {
-                    $sha = strtolower($m[1]);
-                    break;
-                }
-                continue;
-            }
-            if (!is_dir($dir)) {
-                continue;
-            }
+        // Prefer full git SHA from source checkout
+        if (is_dir(self::SRC . '/.git')) {
             $out = [];
             $code = 0;
-            exec('git -C ' . escapeshellarg($dir) . ' rev-parse HEAD 2>/dev/null', $out, $code);
+            exec('git -C ' . escapeshellarg(self::SRC) . ' rev-parse HEAD 2>/dev/null', $out, $code);
             if ($code === 0 && isset($out[0]) && preg_match('/^[0-9a-f]{7,40}$/i', trim($out[0]))) {
                 $sha = strtolower(trim($out[0]));
                 $dout = [];
-                exec('git -C ' . escapeshellarg($dir) . ' show -s --format=%ci HEAD 2>/dev/null', $dout);
+                exec('git -C ' . escapeshellarg(self::SRC) . ' show -s --format=%ci HEAD 2>/dev/null', $dout);
                 $date = trim($dout[0] ?? '');
-                break;
+            }
+        }
+        if ($sha === '') {
+            $link = @readlink(self::CURRENT);
+            if (is_string($link) && preg_match('/-([0-9a-f]{7,40})$/i', basename($link), $m)) {
+                $sha = strtolower($m[1]);
             }
         }
         return [

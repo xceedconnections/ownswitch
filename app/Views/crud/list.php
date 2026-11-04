@@ -22,8 +22,15 @@ $cell = static function (array $f, mixed $v): string {
     if (($f['name'] ?? '') === 'trunks') {
         return '<span class="os-trunk-chain">' . e((string) $v) . '</span>';
     }
-    if (($f['name'] ?? '') === 'media_policy' && ($v === null || $v === '')) {
-        return e((string) ($f['options'][''] ?? 'Default'));
+    if (($f['name'] ?? '') === 'media_policy') {
+        $key = ($v === null || $v === '') ? '' : (string) $v;
+        $labels = $f['list_options'] ?? [
+            '' => 'Default',
+            'direct' => 'Direct',
+            'relay' => 'Relay',
+            'record' => 'Record',
+        ];
+        return e((string) ($labels[$key] ?? ($f['options'][$key] ?? $key)));
     }
     if (($f['name'] ?? '') === 'balance') {
         return '<span class="os-mono">' . e(function_exists('fmt_money') ? fmt_money((string) $v, 2) : (string) $v) . '</span>';
