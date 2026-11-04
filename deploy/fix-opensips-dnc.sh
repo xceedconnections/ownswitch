@@ -26,19 +26,33 @@ mysql -uroot opensips -e \
     number_digits VARCHAR(32) NOT NULL,
     PRIMARY KEY (group_id, number_digits)
   ) ENGINE=InnoDB DEFAULT CHARSET=latin1" 2>/dev/null || true
-mysql -uroot opensips -e \
-  "ALTER TABLE subscriber ADD COLUMN dnc_group_id INT UNSIGNED NOT NULL DEFAULT 0" 2>/dev/null || true
+
+# MUST succeed before touching load_credentials — missing column breaks Eyebeam REGISTER
+ensure_sub_col() {
+  local col="$1" def="$2"
+  local n
+  n="$(mysql -Nuroot opensips -e "SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA='opensips' AND TABLE_NAME='subscriber' AND COLUMN_NAME='${col}'" 2>/dev/null || echo 0)"
+  if [[ "${n:-0}" -eq 0 ]]; then
+    echo "ADD subscriber.${col}"
+    mysql -uroot opensips -e "ALTER TABLE subscriber ADD COLUMN ${def}"
+  else
+    echo "OK subscriber.${col}"
+  fi
+}
+ensure_sub_col dnc_group_id "dnc_group_id INT UNSIGNED NOT NULL DEFAULT 0"
+ensure_sub_col dst_format "dst_format VARCHAR(16) NOT NULL DEFAULT 'as_is'"
 
 BAK="${CFG}.bak-dnc-$(date +%Y%m%d%H%M%S)"
 cp -a "$CFG" "$BAK"
 echo "Backup: $BAK"
 
 python3 - "$CFG" "$mod_dir" "$REDIS_PASS" "$REDIS_DB" "$DB_URL" <<'PY'
-import os, re, sys
+import os, re, sys, urllib.parse
 cfg, mod_dir, redis_pass, redis_db, db_url = sys.argv[1:6]
 text = open(cfg, encoding="utf-8", errors="replace").read()
 
-# load_credentials: os_dncid
+# load_credentials: os_dncid — only if column exists (verified above)
 lc = re.search(r'modparam\("auth_db",\s*"load_credentials",\s*"([^"]*)"\)', text)
 if lc and "os_dncid" not in lc.group(1):
     creds = lc.group(1)
@@ -46,6 +60,7 @@ if lc and "os_dncid" not in lc.group(1):
         creds += ";"
     creds += "$avp(os_dncid)=dnc_group_id"
     text = text[: lc.start(1)] + creds + text[lc.end(1) :]
+    print("load_credentials: added os_dncid")
 
 # Ensure route(check_sip_dnc) before do_routing
 if "route(check_sip_dnc)" not in text:
@@ -67,7 +82,12 @@ sql_so = os.path.isfile(os.path.join(mod_dir, "sqlops.so"))
 
 mods = ""
 if redis_so:
-    url = f"redis://:{redis_pass}@127.0.0.1:6379/{redis_db}" if redis_pass else f"redis://127.0.0.1:6379/{redis_db}"
+    # URL-encode password — raw @ : / # in secrets break redis:// and can stop OpenSIPS start
+    if redis_pass:
+        enc = urllib.parse.quote(redis_pass, safe="")
+        url = f"redis://:{enc}@127.0.0.1:6379/{redis_db}"
+    else:
+        url = f"redis://127.0.0.1:6379/{redis_db}"
     mods = f'''loadmodule "cachedb_redis.so"
 modparam("cachedb_redis", "cachedb_url", "redis:dnc=>{url}")
 '''
@@ -258,6 +278,15 @@ if ! opensips -c -f "$CFG"; then
 fi
 
 systemctl restart opensips
-echo "DNC OpenSIPS check OK (instant 403, no vendor hit, NANP aliases)."
+sleep 1
+if ! systemctl is-active --quiet opensips; then
+  echo "FATAL: opensips not active — restoring $BAK (REGISTER would fail)" >&2
+  journalctl -u opensips -n 40 --no-pager >&2 || true
+  cp -a "$BAK" "$CFG"
+  systemctl restart opensips || true
+  exit 1
+fi
+echo "DNC OpenSIPS check OK (instant 403, no vendor hit, NANP aliases). opensips=$(systemctl is-active opensips)"
+echo "If REGISTER broken: sudo bash /opt/ownswitch-src/deploy/fix-opensips-register.sh"
 echo "Rebuild cache: sudo -u ownswitch env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env php /opt/ownswitch/current/bin/sync-dnc-cache.php"
 echo "Re-save SIP users / trunks so dncid attrs sync."
