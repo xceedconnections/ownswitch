@@ -73,16 +73,17 @@ if [[ "$disable_uac" -eq 1 ]]; then
   strip_optional
 fi
 
-# Last-resort strip if still failing
+# Last-resort: strip UAC/dialog ping only (do NOT strip exec.so — leaves exec() in routes and breaks opensips -c)
 if ! timeout 8 opensips -f "$CFG" -D -E -n 1 >/tmp/opensips-init2.log 2>&1; then
   if grep -qiE 'fail to initialize|ERROR' /tmp/opensips-init2.log; then
-    echo "Still failing — stripping UAC/dialog ping and exec DNC extras..."
+    echo "Still failing — stripping UAC / dialog ping..."
     strip_optional
-    sed -i \
-      -e 's/^[[:space:]]*loadmodule "exec.so"/# loadmodule "exec.so"/' \
-      -e 's/^[[:space:]]*loadmodule "cachedb_redis.so"/# loadmodule "cachedb_redis.so"/' \
-      "$CFG" || true
   fi
+fi
+# Ensure opensips -c still passes after edits
+if ! opensips -c -f "$CFG" >/tmp/opensips-c-check.log 2>&1; then
+  echo "opensips -c FAILED after strip — see /tmp/opensips-c-check.log"
+  grep -E 'ERROR|CRITICAL|parse' /tmp/opensips-c-check.log | tail -n 20 || true
 fi
 
 systemctl reset-failed opensips >/dev/null 2>&1 || true

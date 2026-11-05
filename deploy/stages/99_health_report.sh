@@ -85,8 +85,15 @@ fi
 pong="$(curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"method":"CoreSv1.Ping","params":[{}],"id":1}' "http://${CGR_HTTP_ADDR}/jsonrpc" 2>/dev/null || true)"
 [[ "$pong" == *Pong* ]] && add OK "CGRateS JSON-RPC" "CoreSv1.Ping -> Pong" || add FAIL "CGRateS JSON-RPC" "no Pong (${pong:-empty})"
 
-if opensips -c -f /etc/opensips/opensips.cfg >/dev/null 2>&1; then add OK "OpenSIPS config" "opensips -c passed"
-else add FAIL "OpenSIPS config" "opensips -c failed"; fi
+_os_c_err="$(opensips -c -f /etc/opensips/opensips.cfg 2>&1 || true)"
+if echo "${_os_c_err}" | grep -qiE 'config file OK|Listening on|config file successfully'; then
+  add OK "OpenSIPS config" "opensips -c passed"
+elif opensips -c -f /etc/opensips/opensips.cfg >/dev/null 2>&1; then
+  add OK "OpenSIPS config" "opensips -c passed"
+else
+  _snip="$(echo "${_os_c_err}" | grep -E 'ERROR|CRITICAL|parse error|failed' | tail -n 3 | tr '\n' ' ' | cut -c1-220)"
+  add FAIL "OpenSIPS config" "opensips -c failed${_snip:+: ${_snip}}"
+fi
 if nginx -t >/dev/null 2>&1; then add OK "nginx config" "nginx -t passed"; else add FAIL "nginx config" "nginx -t failed"; fi
 
 code="$(curl -ks -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${OWNSWITCH_DOMAIN}:443:127.0.0.1" "https://${OWNSWITCH_DOMAIN}/" || true)"
@@ -222,6 +229,18 @@ echo
 log_info "Report saved: ${REPORT}"
 
 if (( n_fail > 0 )); then
+  echo
+  echo "======== FAILED CHECKS (${n_fail}) ========"
+  for c in "${CHECKS[@]}"; do
+    IFS='|' read -r s n d <<<"$c"
+    [[ "$s" == "FAIL" ]] || continue
+    echo "  FAIL  ${n}: ${d}"
+    log_error "FAIL  ${n}: ${d}"
+  done
+  echo "=========================================="
+  echo "Full report: ${REPORT}"
+  echo "Re-check:    sudo bash ${DEPLOY_DIR}/install.sh --only 99"
+  echo
   log_error "${n_fail} health check(s) FAILED"
   is_true "${HEALTH_FAIL_EXIT}" && exit 1
 fi
