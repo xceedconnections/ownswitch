@@ -449,7 +449,7 @@ modparam(\"cachedb_redis\", \"cachedb_url\", \"redis:dnc=>${REDIS_CDB_URL}\")
 		return;
 	}
 	$var(dncid) = $avp(os_dncid);
-	$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
+	$var(dnc_dst) = $(rU{re.subst,#[^0-9]##g});
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;
 	}
@@ -486,9 +486,9 @@ route[check_dnc] {
 	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
 		return;
 	}
-	$var(dnc_dst) = $(dlg_val(os_dst){re.subst,/[^0-9]//g});
+	$var(dnc_dst) = $(dlg_val(os_dst){re.subst,#[^0-9]##g});
 	if ($var(dnc_dst) == NULL || $(var(dnc_dst){s.len}) < 3) {
-		$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
+		$var(dnc_dst) = $(rU{re.subst,#[^0-9]##g});
 	}
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;
@@ -527,7 +527,7 @@ modparam(\"sqlops\", \"db_url\", \"@@OPENSIPS_DB_URL@@\")
 		return;
 	}
 	$var(dncid) = $avp(os_dncid);
-	$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
+	$var(dnc_dst) = $(rU{re.subst,#[^0-9]##g});
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;
 	}
@@ -562,9 +562,9 @@ route[check_dnc] {
 	if ($var(dncid) == NULL || $(var(dncid){s.len}) == 0 || $(var(dncid){s.int}) <= 0) {
 		return;
 	}
-	$var(dnc_dst) = $(dlg_val(os_dst){re.subst,/[^0-9]//g});
+	$var(dnc_dst) = $(dlg_val(os_dst){re.subst,#[^0-9]##g});
 	if ($var(dnc_dst) == NULL || $(var(dnc_dst){s.len}) < 3) {
-		$var(dnc_dst) = $(rU{re.subst,/[^0-9]//g});
+		$var(dnc_dst) = $(rU{re.subst,#[^0-9]##g});
 	}
 	if ($(var(dnc_dst){s.len}) < 3) {
 		return;

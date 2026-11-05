@@ -477,16 +477,16 @@ route[apply_sip_cid] {
 
 	$var(dn_digits) = "";
 	if ($var(dn) != NULL && $(var(dn){s.len}) > 0) {
-		$var(dn_digits) = $(var(dn){re.subst,/[^0-9+]//g});
+		$var(dn_digits) = $(var(dn){re.subst,#[^0-9+]##g});
 	}
 	if (($var(dn_digits) == NULL || $(var(dn_digits){s.len}) < 3) && $var(pai_u) != NULL) {
-		$var(dn_digits) = $(var(pai_u){re.subst,/[^0-9+]//g});
+		$var(dn_digits) = $(var(pai_u){re.subst,#[^0-9+]##g});
 	}
 	if (($var(dn_digits) == NULL || $(var(dn_digits){s.len}) < 3) && $var(rpid_u) != NULL) {
-		$var(dn_digits) = $(var(rpid_u){re.subst,/[^0-9+]//g});
+		$var(dn_digits) = $(var(rpid_u){re.subst,#[^0-9+]##g});
 	}
 	if (($var(dn_digits) == NULL || $(var(dn_digits){s.len}) < 3) && $var(ppi_u) != NULL) {
-		$var(dn_digits) = $(var(ppi_u){re.subst,/[^0-9+]//g});
+		$var(dn_digits) = $(var(ppi_u){re.subst,#[^0-9+]##g});
 	}
 
 	xlog("L_INFO", "SIP CID probe mode='$var(mode)' fn='$fn' dn='$var(dn)' digits='$var(dn_digits)' FromUser=$fU auth=$au\n");
@@ -515,7 +515,7 @@ route[apply_sip_cid] {
 	}
 
 	if ($var(mode) == "fixed" && $avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
-		$var(user) = $(avp(os_cid){re.subst,/[^0-9+]//g});
+		$var(user) = $(avp(os_cid){re.subst,#[^0-9+]##g});
 	} else if ($var(mode) == "display_name") {
 		if ($(var(dn_digits){s.len}) >= 3 && $(var(dn_digits){s.len}) <= 30
 			&& ($var(dn_digits) =~ "^[+0-9]{3,30}$")) {
@@ -529,7 +529,7 @@ route[apply_sip_cid] {
 			return;
 		} else if ($avp(os_cid) != NULL && $(avp(os_cid){s.len}) > 0) {
 			# Fallback: portal CallerID number when Eyebeam did not send Display Name on INVITE
-			$var(user) = $(avp(os_cid){re.subst,/[^0-9+]//g});
+			$var(user) = $(avp(os_cid){re.subst,#[^0-9+]##g});
 			xlog("L_WARN", "SIP CID display_name missing on INVITE — using portal CallerID '$var(user)'\n");
 		} else {
 			xlog("L_WARN", "SIP CID display_name empty fn='$fn' dn='$var(dn)' From=$fU — set Eyebeam Display Name to digits\n");
@@ -632,7 +632,7 @@ route[apply_trunk_attrs] {
 		$var(user) = $(var(fu){s.unescape.param});
 	}
 	# Never send quoted/display junk as SIP user part toward the vendor
-	$var(user) = $(var(user){re.subst,/[^0-9A-Za-z+_-]//g});
+	$var(user) = $(var(user){re.subst,#[^0-9A-Za-z+_-]##g});
 	$var(dom) = $fd;
 	if ($var(fd) != NULL && $(var(fd){s.len}) > 0) {
 		$var(dom) = $(var(fd){s.unescape.param});
@@ -652,9 +652,9 @@ route[apply_trunk_attrs] {
 # Use os_cli (presented CLI) — $fU is still the SIP username after From rewrite.
 route[check_cid_len] {
 	if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {
-		$var(clid) = $(dlg_val(os_cli){re.subst,/[^0-9]//g});
+		$var(clid) = $(dlg_val(os_cli){re.subst,#[^0-9]##g});
 	} else {
-		$var(clid) = $(fU{re.subst,/[^0-9]//g});
+		$var(clid) = $(fU{re.subst,#[^0-9]##g});
 	}
 	$var(clen) = $(var(clid){s.len});
 	if ($avp(os_cid_min) != NULL && $(avp(os_cid_min){s.int}) > 0 && $var(clen) < $(avp(os_cid_min){s.int})) {
@@ -681,7 +681,7 @@ route[apply_sip_dst_format] {
 	if ($avp(os_dstfmt) == NULL || $(avp(os_dstfmt){s.len}) == 0 || $avp(os_dstfmt) == "as_is") {
 		return;
 	}
-	$var(d) = $(rU{re.subst,/[^0-9]//g});
+	$var(d) = $(rU{re.subst,#[^0-9]##g});
 	if ($(var(d){s.len}) < 3) {
 		return;
 	}
@@ -705,7 +705,7 @@ route[apply_trunk_dst_format] {
 	if ($var(df) == NULL || $(var(df){s.len}) == 0 || $var(df) == "as_is") {
 		return;
 	}
-	$var(d) = $(rU{re.subst,/[^0-9]//g});
+	$var(d) = $(rU{re.subst,#[^0-9]##g});
 	if ($(var(d){s.len}) < 3) {
 		return;
 	}
@@ -730,9 +730,9 @@ route[check_trunk_cid_len] {
 	$var(cmax) = $(var(attrs){param.value,cidmax});
 	# Use presented CLI (os_cli) — $fU stays SIP username after From rewrite
 	if ($dlg_val(os_cli) != NULL && $(dlg_val(os_cli){s.len}) > 0) {
-		$var(clid) = $(dlg_val(os_cli){re.subst,/[^0-9]//g});
+		$var(clid) = $(dlg_val(os_cli){re.subst,#[^0-9]##g});
 	} else {
-		$var(clid) = $(fU{re.subst,/[^0-9]//g});
+		$var(clid) = $(fU{re.subst,#[^0-9]##g});
 	}
 	$var(clen) = $(var(clid){s.len});
 	if ($var(cmin) != NULL && $(var(cmin){s.int}) > 0 && $var(clen) < $(var(cmin){s.int})) {
