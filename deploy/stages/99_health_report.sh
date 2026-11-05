@@ -69,7 +69,7 @@ cv_="$(cat /usr/share/cgrates/.installed-version 2>/dev/null || true)"
 # ---------------------------------------------------------------------------
 # functional probes
 # ---------------------------------------------------------------------------
-for db in "${DB_OWNSWITCH}" "${DB_CGRATES}"; do
+for db in "${DB_OWNSWITCH}" "${DB_OPENSIPS}" "${DB_CGRATES}"; do
   cnt="$(mysql_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${db}'" 2>/dev/null || echo ERR)"
   if [[ "$cnt" == "ERR" ]]; then add FAIL "database ${db}" "not reachable"
   else add OK "database ${db}" "${cnt} tables"; fi
@@ -168,6 +168,7 @@ else add OK "secret leakage" "no DB password found under ${OWN_OPT}/current"; fi
   echo "DATABASES (separate by design)"
   echo "------------------------------"
   echo "  ownswitch (portal)  user: ownswitch      -> .env DB_*"
+  echo "  opensips            user: opensips       -> .env OPENSIPS_DB_*"
   echo "  cgrates (StorDB)    user: cgrates (+ cgrates_ro read-only for the portal)"
   echo "  Redis DataDB index  : ${REDIS_CGR_DB} (CGRateS), ${REDIS_PORTAL_DB} (portal cache)"
   echo
