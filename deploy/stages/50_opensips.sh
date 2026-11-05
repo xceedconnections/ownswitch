@@ -296,8 +296,11 @@ mysql_root "${DB_OPENSIPS}" -e \
 mysql_root "${DB_OPENSIPS}" -e \
   "UPDATE version SET table_version=3 WHERE table_name='registrant'" 2>/dev/null || true
 
-# Only enable UAC when BOTH .so files exist (registrant calls load_uac_auth_api at init)
-if [[ -f "${mod_dir}/uac_registrant.so" && -f "${mod_dir}/uac_auth.so" ]]; then
+# UAC registrant is OPTIONAL — enable via enable-trunk-register.sh after version schema is verified.
+# Loading it in stage 50 was crashing OpenSIPS init ("failed to initialize modules") on several hosts.
+# IP peer trunks (Auth mode=IP) do not need UAC. Register-mode trunks need the enable script.
+if [[ -f "${mod_dir}/uac_registrant.so" && -f "${mod_dir}/uac_auth.so" ]] \
+  && [[ "${OWNSWITCH_ENABLE_UAC_REGISTRANT:-0}" == "1" ]]; then
   export OPENSIPS_UAC_BLOCK="loadmodule \"uac_auth.so\"
 loadmodule \"uac_registrant.so\"
 modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
@@ -305,22 +308,10 @@ modparam(\"uac_registrant\", \"table_name\", \"registrant\")
 modparam(\"uac_registrant\", \"timer_interval\", 20)
 modparam(\"uac_registrant\", \"hash_size\", 2)
 modparam(\"uac_registrant\", \"failure_retry_interval\", 60)"
-  log_info "UAC registrant enabled (uac_auth + uac_registrant)"
+  log_info "UAC registrant ENABLED (OWNSWITCH_ENABLE_UAC_REGISTRANT=1)"
 else
-  mod_dir="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -n1)")"
-  export OPENSIPS_MPATH="${mod_dir}/"
-  if [[ -f "${mod_dir}/uac_registrant.so" && -f "${mod_dir}/uac_auth.so" ]]; then
-    export OPENSIPS_UAC_BLOCK="loadmodule \"uac_auth.so\"
-loadmodule \"uac_registrant.so\"
-modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
-modparam(\"uac_registrant\", \"table_name\", \"registrant\")
-modparam(\"uac_registrant\", \"timer_interval\", 20)
-modparam(\"uac_registrant\", \"hash_size\", 2)"
-    log_info "UAC registrant enabled (refreshed mod_dir)"
-  else
-    export OPENSIPS_UAC_BLOCK='# uac_auth.so / uac_registrant.so missing — IP peer trunks OK; Register-mode needs opensips-uac-module'
-    log_warn "UAC registrant disabled — IP trunks still work"
-  fi
+  export OPENSIPS_UAC_BLOCK='# UAC registrant deferred — IP trunks OK. For Register trunks: sudo bash deploy/enable-trunk-register.sh'
+  log_info "UAC registrant deferred (set OWNSWITCH_ENABLE_UAC_REGISTRANT=1 or run enable-trunk-register.sh)"
 fi
 
 # Softphones without Outbound Proxy need nathelper (rport + received)
@@ -664,47 +655,29 @@ sleep 1
 
 _start_opensips() {
   systemctl reset-failed opensips >/dev/null 2>&1 || true
-  systemctl start opensips
-  sleep 2
-  systemctl is-active --quiet opensips
+  systemctl start opensips || true
+  local i
+  for i in $(seq 1 20); do
+    if systemctl is-active --quiet opensips; then
+      return 0
+    fi
+    # Still starting / crash-looping — wait
+    sleep 1
+  done
+  return 1
 }
 
 if ! _start_opensips; then
-  log_warn "OpenSIPS failed to start — last errors:"
-  journalctl -u opensips -n 60 --no-pager >&2 || true
-  # Retry 1: disable UAC (common: version/schema / missing uac_auth API)
-  if grep -q 'loadmodule "uac_registrant.so"' /etc/opensips/opensips.cfg; then
-    log_warn "Retrying without uac_registrant (IP peer trunks still work)"
-    sed -i \
-      -e 's/^loadmodule "uac_auth.so"/# loadmodule "uac_auth.so"/' \
-      -e 's/^loadmodule "uac_registrant.so"/# loadmodule "uac_registrant.so"/' \
-      -e 's/^modparam("uac_registrant"/# modparam("uac_registrant"/' \
-      /etc/opensips/opensips.cfg
-    systemctl stop opensips >/dev/null 2>&1 || true
-    if _start_opensips; then
-      log_warn "OpenSIPS started WITHOUT UAC registrant — Register-mode trunks disabled until schema/modules fixed"
-    fi
-  fi
-fi
-
-if ! systemctl is-active --quiet opensips; then
-  # Retry 2: drop dialog OPTIONS ping params (older builds)
-  if grep -q 'options_ping_interval' /etc/opensips/opensips.cfg; then
-    log_warn "Retrying without dialog options_ping_interval / delete_delay"
-    sed -i \
-      -e 's/^modparam("dialog", "options_ping_interval"/# modparam("dialog", "options_ping_interval"/' \
-      -e 's/^modparam("dialog", "delete_delay"/# modparam("dialog", "delete_delay"/' \
-      /etc/opensips/opensips.cfg
-    # Also soften create_dialog flags if BPp unsupported
-    sed -i 's/create_dialog("BPp")/create_dialog("B")/g' /etc/opensips/opensips.cfg
-    systemctl stop opensips >/dev/null 2>&1 || true
-    _start_opensips || true
-  fi
+  log_warn "OpenSIPS failed to start — module errors:"
+  journalctl -u opensips -n 80 --no-pager 2>/dev/null | grep -E 'ERROR|CRITICAL|fail to initialize|Failed to load' | tail -n 40 >&2 || true
+  journalctl -u opensips -n 40 --no-pager >&2 || true
+  # Recovery: strip optional modules (UAC / dialog ping) then retry
+  bash "${DEPLOY_DIR}/fix-opensips-module-init.sh" || true
 fi
 
 if ! systemctl is-active --quiet opensips; then
   journalctl -u opensips -n 80 --no-pager >&2 || true
-  die "opensips is not active"
+  die "opensips is not active — run: sudo bash ${DEPLOY_DIR}/fix-opensips-module-init.sh"
 fi
 log_ok "opensips active"
 systemctl enable opensips >/dev/null 2>&1 || true

@@ -40,8 +40,13 @@ if ! mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tabl
   fi
 fi
 
-# Re-run OpenSIPS stage to render UAC block (uac_auth + registrant table) + do_routing("1")
+# Re-run OpenSIPS stage WITH UAC registrant enabled
+export OWNSWITCH_ENABLE_UAC_REGISTRANT=1
 bash "$SRC/deploy/install.sh" --only 50 --yes --non-interactive || true
+# If still down, diagnose module init
+if ! systemctl is-active --quiet opensips; then
+  bash "$SRC/deploy/fix-opensips-module-init.sh" || true
+fi
 
 # Portal release with new PHP sync code
 bash "$SRC/deploy/refresh-ui.sh"

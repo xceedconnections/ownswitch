@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace Ownswitch\Services\Sip;
 
 /**
- * Lightweight SIP OPTIONS RTT probe (Magnus-style “latency” for trunks / registered contacts).
+ * Lightweight latency probe for Live column (Magnus-style ms).
+ * Prefers SIP OPTIONS; falls back to ICMP ping when Asterisk/ViciDial ignore OPTIONS.
  */
 final class SipOptionsProbe
 {
@@ -22,13 +23,12 @@ final class SipOptionsProbe
         if ($host === '') {
             return null;
         }
-        // Strip brackets from IPv6
         if (str_starts_with($host, '[') && str_ends_with($host, ']')) {
             $host = substr($host, 1, -1);
         }
         $key = strtolower($host) . ':' . $port;
         $now = microtime(true);
-        if (isset(self::$cache[$key]) && ($now - self::$cache[$key]['at']) < 20.0) {
+        if (isset(self::$cache[$key]) && ($now - self::$cache[$key]['at']) < 15.0) {
             return self::$cache[$key]['ms'];
         }
 
@@ -43,6 +43,16 @@ final class SipOptionsProbe
             $ip = $resolved;
         }
 
+        $ms = self::sipOptionsRtt($ip, $host, $port, $timeoutSec);
+        if ($ms === null) {
+            $ms = self::icmpPingMs($ip);
+        }
+        self::$cache[$key] = ['ms' => $ms, 'at' => $now];
+        return $ms;
+    }
+
+    private static function sipOptionsRtt(string $ip, string $host, int $port, float $timeoutSec): ?int
+    {
         $sock = @stream_socket_client(
             'udp://' . (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? "[{$ip}]" : $ip) . ':' . $port,
             $errno,
@@ -50,7 +60,6 @@ final class SipOptionsProbe
             $timeoutSec
         );
         if ($sock === false) {
-            self::$cache[$key] = ['ms' => null, 'at' => $now];
             return null;
         }
         stream_set_timeout($sock, (int) floor($timeoutSec), (int) (($timeoutSec - floor($timeoutSec)) * 1_000_000));
@@ -77,10 +86,38 @@ final class SipOptionsProbe
         $elapsedMs = (int) max(1, (int) round((hrtime(true) - $t0) / 1_000_000));
         fclose($sock);
 
-        $ok = is_string($resp) && $resp !== '' && str_starts_with($resp, 'SIP/2.0');
-        $ms = $ok ? $elapsedMs : null;
-        self::$cache[$key] = ['ms' => $ms, 'at' => $now];
-        return $ms;
+        // Any SIP reply counts (200/404/405/501) — Asterisk often answers OPTIONS with 404/501
+        if (is_string($resp) && $resp !== '' && str_starts_with($resp, 'SIP/2.0')) {
+            return $elapsedMs;
+        }
+        return null;
+    }
+
+    /** ICMP ping fallback (Linux) when peer ignores SIP OPTIONS. */
+    private static function icmpPingMs(string $ip): ?int
+    {
+        if (!filter_var($ip, FILTER_VALIDATE_IP) || str_contains($ip, "'") || str_contains($ip, ' ')) {
+            return null;
+        }
+        // Windows (local xampp) vs Linux (switch)
+        if (PHP_OS_FAMILY === 'Windows') {
+            $cmd = 'ping -n 1 -w 800 ' . escapeshellarg($ip) . ' 2>NUL';
+        } else {
+            $cmd = 'ping -c 1 -W 1 ' . escapeshellarg($ip) . ' 2>/dev/null';
+        }
+        $out = [];
+        $code = 1;
+        @exec($cmd, $out, $code);
+        if ($code !== 0) {
+            return null;
+        }
+        $blob = implode("\n", $out);
+        // Linux: time=12.3 ms   Windows: time=12ms / time<1ms
+        if (preg_match('/time[=<]([\d.]+)\s*ms/i', $blob, $m)) {
+            $n = (int) max(1, (int) round((float) $m[1]));
+            return min(9999, $n);
+        }
+        return null;
     }
 
     /** Parse host + port from a SIP Contact / received URI. */
@@ -90,7 +127,6 @@ final class SipOptionsProbe
         if ($uri === '') {
             return null;
         }
-        // received=sip:1.2.3.4:5060 or sip:user@host:port;params
         if (preg_match('#(?:sip:)?(?:[^@;>\s]+@)?(\[[0-9a-fA-F:]+\]|[^:;>\s]+)(?::(\d+))?#', $uri, $m)) {
             $host = $m[1];
             $port = isset($m[2]) && $m[2] !== '' ? (int) $m[2] : 5060;
