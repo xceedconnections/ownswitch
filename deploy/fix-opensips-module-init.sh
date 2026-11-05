@@ -86,10 +86,35 @@ if ! opensips -c -f "$CFG" >/tmp/opensips-c-check.log 2>&1; then
   grep -E 'ERROR|CRITICAL|parse' /tmp/opensips-c-check.log | tail -n 20 || true
 fi
 
+# Fix Type=forking + -F mismatch that leaves unit stuck in "activating"
+install -d /etc/systemd/system/opensips.service.d
+cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<'EOF'
+[Service]
+Type=simple
+ExecStart=
+ExecStart=/usr/sbin/opensips -F -f /etc/opensips/opensips.cfg
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+EOF
+systemctl daemon-reload
+systemctl stop opensips >/dev/null 2>&1 || true
+pkill -9 -x opensips >/dev/null 2>&1 || true
+sleep 1
+
 systemctl reset-failed opensips >/dev/null 2>&1 || true
 systemctl start opensips
-for i in $(seq 1 15); do
+for i in $(seq 1 20); do
   systemctl is-active --quiet opensips && break
+  state="$(systemctl is-active opensips 2>/dev/null || true)"
+  if [[ "$state" == "activating" && "$i" -ge 12 ]]; then
+    echo "Still activating — killing orphans and retrying once..."
+    systemctl kill -s SIGKILL opensips >/dev/null 2>&1 || true
+    pkill -9 -x opensips >/dev/null 2>&1 || true
+    sleep 1
+    systemctl reset-failed opensips >/dev/null 2>&1 || true
+    systemctl start opensips || true
+  fi
   sleep 1
 done
 
@@ -98,6 +123,7 @@ if systemctl is-active --quiet opensips; then
   systemctl --no-pager --full status opensips | head -n 20 || true
 else
   echo "FAILED — full log:"
+  systemctl --no-pager --full status opensips | head -n 30 || true
   journalctl -u opensips -n 80 --no-pager || true
   cat /tmp/opensips-init-probe.log 2>/dev/null | tail -n 40 || true
   exit 1

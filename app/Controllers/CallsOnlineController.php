@@ -67,19 +67,23 @@ final class CallsOnlineController extends BaseController
         [$calls] = $this->loadCalls($r, null);
         $allowed = false;
         foreach ($calls as $c) {
-            if (($callId !== '' && ($c['callid'] ?? '') === $callId)
-                || ($dialogId !== '' && ($c['dialog'] ?? '') === $dialogId)) {
+            if (($callId !== '' && strcasecmp((string) ($c['callid'] ?? ''), $callId) === 0)
+                || ($dialogId !== '' && (string) ($c['dialog'] ?? '') === $dialogId)) {
                 $allowed = true;
-                // Prefer live internal ID from current list
-                if ($dialogId === '' && trim((string) ($c['dialog'] ?? '')) !== '') {
+                // Prefer live internal ID from current list (required by dlg_end_dlg)
+                if (trim((string) ($c['dialog'] ?? '')) !== '') {
                     $dialogId = trim((string) $c['dialog']);
                 }
                 if ($fromTag === '' && trim((string) ($c['from_tag'] ?? '')) !== '') {
                     $fromTag = trim((string) $c['from_tag']);
                 }
+                if ($callId === '' && trim((string) ($c['callid'] ?? '')) !== '') {
+                    $callId = trim((string) $c['callid']);
+                }
                 break;
             }
         }
+        // Staff/global may hang up even if the row raced off the list (refresh vs click)
         if (!$allowed && !$this->scope($r)->isGlobal() && !$this->scope($r)->isStaff()) {
             return $this->redirect($r, '/calls-online', 'You can only hang up your own calls.', 'danger');
         }

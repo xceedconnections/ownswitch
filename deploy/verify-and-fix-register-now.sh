@@ -75,8 +75,12 @@ grep -q 'www_authorize' "$CFG" || { echo "FATAL: stage 50 left cfg without www_a
 install -d /etc/systemd/system/opensips.service.d
 cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<EOF
 [Service]
+Type=simple
 ExecStart=
 ExecStart=/usr/sbin/opensips -F -f /etc/opensips/opensips.cfg
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
 EOF
 systemctl daemon-reload
 

@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Ownswitch\Services\Sip;
 
 /**
- * Lightweight latency probe for Live column (Magnus-style ms).
- * Prefers SIP OPTIONS; falls back to ICMP ping when Asterisk/ViciDial ignore OPTIONS.
+ * VoIP signalling latency via SIP OPTIONS RTT (Magnus-style Live ms).
+ * No ICMP — ping latency is not SIP latency.
  */
 final class SipOptionsProbe
 {
@@ -14,9 +14,9 @@ final class SipOptionsProbe
     private static array $cache = [];
 
     /**
-     * @return int|null Round-trip milliseconds, or null if unreachable / timed out
+     * @return int|null Round-trip milliseconds from a SIP reply, or null if no SIP response
      */
-    public static function rttMs(string $host, int $port = 5060, float $timeoutSec = 1.2): ?int
+    public static function rttMs(string $host, int $port = 5060, float $timeoutSec = 1.5, ?string $user = null): ?int
     {
         $host = trim($host);
         $port = $port > 0 && $port <= 65535 ? $port : 5060;
@@ -26,7 +26,8 @@ final class SipOptionsProbe
         if (str_starts_with($host, '[') && str_ends_with($host, ']')) {
             $host = substr($host, 1, -1);
         }
-        $key = strtolower($host) . ':' . $port;
+        $user = $user !== null ? trim($user) : '';
+        $key = strtolower($host) . ':' . $port . ':' . strtolower($user);
         $now = microtime(true);
         if (isset(self::$cache[$key]) && ($now - self::$cache[$key]['at']) < 15.0) {
             return self::$cache[$key]['ms'];
@@ -43,18 +44,20 @@ final class SipOptionsProbe
             $ip = $resolved;
         }
 
-        $ms = self::sipOptionsRtt($ip, $host, $port, $timeoutSec);
-        if ($ms === null) {
-            $ms = self::icmpPingMs($ip);
+        // Prefer AOR username in R-URI (Asterisk/softphones often ignore sip:ping@…)
+        $ms = self::sipOptionsRtt($ip, $host, $port, $timeoutSec, $user !== '' ? $user : null);
+        if ($ms === null && $user !== '') {
+            $ms = self::sipOptionsRtt($ip, $host, $port, $timeoutSec, null);
         }
         self::$cache[$key] = ['ms' => $ms, 'at' => $now];
         return $ms;
     }
 
-    private static function sipOptionsRtt(string $ip, string $host, int $port, float $timeoutSec): ?int
+    private static function sipOptionsRtt(string $ip, string $host, int $port, float $timeoutSec, ?string $user): ?int
     {
+        $target = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? "[{$ip}]" : $ip;
         $sock = @stream_socket_client(
-            'udp://' . (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? "[{$ip}]" : $ip) . ':' . $port,
+            'udp://' . $target . ':' . $port,
             $errno,
             $errstr,
             $timeoutSec
@@ -67,15 +70,20 @@ final class SipOptionsProbe
         $branch = 'z9hG4bK' . bin2hex(random_bytes(6));
         $callId = bin2hex(random_bytes(8)) . '@ownswitch';
         $tag = bin2hex(random_bytes(4));
-        $fromHost = 'ownswitch.local';
-        $msg = "OPTIONS sip:ping@{$host}:{$port} SIP/2.0\r\n"
+        // Via/Contact must be a routable IP so peers that validate Via still reply
+        $fromHost = $ip;
+        $ruriUser = ($user !== null && $user !== '' && preg_match('/^[A-Za-z0-9._\-+=]+$/', $user))
+            ? $user
+            : 'options';
+        $msg = "OPTIONS sip:{$ruriUser}@{$host}:{$port} SIP/2.0\r\n"
             . "Via: SIP/2.0/UDP {$fromHost}:5060;branch={$branch};rport\r\n"
             . "Max-Forwards: 70\r\n"
-            . "From: <sip:ping@{$fromHost}>;tag={$tag}\r\n"
-            . "To: <sip:ping@{$host}:{$port}>\r\n"
+            . "From: <sip:options@{$fromHost}>;tag={$tag}\r\n"
+            . "To: <sip:{$ruriUser}@{$host}:{$port}>\r\n"
             . "Call-ID: {$callId}\r\n"
             . "CSeq: 1 OPTIONS\r\n"
-            . "Contact: <sip:ping@{$fromHost}:5060>\r\n"
+            . "Contact: <sip:options@{$fromHost}:5060>\r\n"
+            . "User-Agent: Ownswitch\r\n"
             . "Accept: application/sdp\r\n"
             . "Content-Length: 0\r\n"
             . "\r\n";
@@ -86,51 +94,29 @@ final class SipOptionsProbe
         $elapsedMs = (int) max(1, (int) round((hrtime(true) - $t0) / 1_000_000));
         fclose($sock);
 
-        // Any SIP reply counts (200/404/405/501) — Asterisk often answers OPTIONS with 404/501
+        // Any SIP reply counts (200/404/405/480/501) — that RTT is VoIP signalling latency
         if (is_string($resp) && $resp !== '' && str_starts_with($resp, 'SIP/2.0')) {
-            return $elapsedMs;
+            return min(9999, $elapsedMs);
         }
         return null;
     }
 
-    /** ICMP ping fallback (Linux) when peer ignores SIP OPTIONS. */
-    private static function icmpPingMs(string $ip): ?int
-    {
-        if (!filter_var($ip, FILTER_VALIDATE_IP) || str_contains($ip, "'") || str_contains($ip, ' ')) {
-            return null;
-        }
-        // Windows (local xampp) vs Linux (switch)
-        if (PHP_OS_FAMILY === 'Windows') {
-            $cmd = 'ping -n 1 -w 800 ' . escapeshellarg($ip) . ' 2>NUL';
-        } else {
-            $cmd = 'ping -c 1 -W 1 ' . escapeshellarg($ip) . ' 2>/dev/null';
-        }
-        $out = [];
-        $code = 1;
-        @exec($cmd, $out, $code);
-        if ($code !== 0) {
-            return null;
-        }
-        $blob = implode("\n", $out);
-        // Linux: time=12.3 ms   Windows: time=12ms / time<1ms
-        if (preg_match('/time[=<]([\d.]+)\s*ms/i', $blob, $m)) {
-            $n = (int) max(1, (int) round((float) $m[1]));
-            return min(9999, $n);
-        }
-        return null;
-    }
-
-    /** Parse host + port from a SIP Contact / received URI. */
+    /**
+     * Parse host + port (+ optional user) from a SIP Contact / received URI.
+     *
+     * @return array{host:string,port:int,user:string}|null
+     */
     public static function endpointFromUri(string $uri): ?array
     {
         $uri = trim($uri);
         if ($uri === '') {
             return null;
         }
-        if (preg_match('#(?:sip:)?(?:[^@;>\s]+@)?(\[[0-9a-fA-F:]+\]|[^:;>\s]+)(?::(\d+))?#', $uri, $m)) {
-            $host = $m[1];
-            $port = isset($m[2]) && $m[2] !== '' ? (int) $m[2] : 5060;
-            return ['host' => $host, 'port' => $port];
+        if (preg_match('#(?:sip:)?(?:([^@;>\s]+)@)?(\[[0-9a-fA-F:]+\]|[^:;>\s]+)(?::(\d+))?#', $uri, $m)) {
+            $host = $m[2];
+            $port = isset($m[3]) && $m[3] !== '' ? (int) $m[3] : 5060;
+            $user = isset($m[1]) ? trim((string) $m[1]) : '';
+            return ['host' => $host, 'port' => $port, 'user' => $user];
         }
         return null;
     }

@@ -183,8 +183,12 @@ install -d -m 0750 -o opensips -g opensips /run/opensips
 install -d /etc/systemd/system/opensips.service.d
 cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<EOF
 [Service]
+Type=simple
 ExecStart=
 ExecStart=/usr/sbin/opensips -F -f ${CFG}
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
 EOF
 systemctl daemon-reload
 

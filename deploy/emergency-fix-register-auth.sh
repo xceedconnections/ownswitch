@@ -96,8 +96,12 @@ if systemctl cat opensips 2>/dev/null | grep -qE 'ExecStart=.*opensips'; then
   install -d /etc/systemd/system/opensips.service.d
   cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<EOF
 [Service]
+Type=simple
 ExecStart=
 ExecStart=/usr/sbin/opensips -F -f ${CFG}
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
 EOF
   systemctl daemon-reload
 fi

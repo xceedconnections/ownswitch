@@ -871,6 +871,9 @@ final class OpensipsProvisioner
     public function miCall(string $method, array $params = []): ?array
     {
         $this->lastMiReachable = false;
+        if (!is_string($method) || !preg_match('/^[a-zA-Z0-9_]+$/', $method)) {
+            return null;
+        }
         $body = ['jsonrpc' => '2.0', 'method' => $method, 'id' => 1];
         if ($params !== []) {
             $body['params'] = $params;
@@ -880,8 +883,10 @@ final class OpensipsProvisioner
         if ($this->miUrl !== '') {
             $urls[] = $this->miUrl;
         }
-        if (!in_array('http://127.0.0.1:8888/mi', $urls, true)) {
-            $urls[] = 'http://127.0.0.1:8888/mi';
+        foreach (['http://127.0.0.1:8888/mi', 'http://127.0.0.1:8888/'] as $fallback) {
+            if (!in_array($fallback, $urls, true)) {
+                $urls[] = $fallback;
+            }
         }
         foreach ($urls as $url) {
             $ctx = stream_context_create(['http' => [
@@ -902,20 +907,45 @@ final class OpensipsProvisioner
             $this->lastMiReachable = true;
             return $r;
         }
-        // opensips-cli FIFO fallback (no params → works for dlg_list / reg_reload)
-        if ($params === [] && $this->miFifo !== '' && is_string($method) && preg_match('/^[a-zA-Z0-9_]+$/', $method)) {
-            $cli = trim((string) @shell_exec(
-                'opensips-cli -x mi ' . escapeshellarg($method) . ' 2>/dev/null'
-            ));
-            if ($cli !== '') {
-                $this->lastMiReachable = true;
-                $decoded = json_decode($cli, true);
-                if (is_array($decoded)) {
-                    return $decoded;
+        // opensips-cli FIFO fallback — including param'd calls (dlg_end_dlg <id>)
+        $cliArgs = escapeshellarg($method);
+        if ($params !== []) {
+            if (array_is_list($params)) {
+                foreach ($params as $p) {
+                    if (!is_scalar($p)) {
+                        continue;
+                    }
+                    $cliArgs .= ' ' . escapeshellarg((string) $p);
                 }
-                // Plain text / YAML-ish from older cli — wrap as success so callers know MI works
-                return ['result' => $cli];
+            } else {
+                // Prefer dialog_id / first scalar value for positional MI
+                foreach (['dialog_id', 'callid', 'call_id'] as $k) {
+                    if (isset($params[$k]) && is_scalar($params[$k])) {
+                        $cliArgs .= ' ' . escapeshellarg((string) $params[$k]);
+                        break;
+                    }
+                }
+                if ($cliArgs === escapeshellarg($method)) {
+                    foreach ($params as $p) {
+                        if (is_scalar($p)) {
+                            $cliArgs .= ' ' . escapeshellarg((string) $p);
+                            break;
+                        }
+                    }
+                }
             }
+        }
+        $cli = trim((string) @shell_exec('opensips-cli -x mi ' . $cliArgs . ' 2>/dev/null'));
+        if ($cli !== '') {
+            $this->lastMiReachable = true;
+            $decoded = json_decode($cli, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+            if (preg_match('/error|fail|not found|Invalid|Unknown/i', $cli)) {
+                return ['error' => ['message' => $cli]];
+            }
+            return ['result' => $cli];
         }
         return null;
     }
@@ -1069,7 +1099,7 @@ final class OpensipsProvisioner
                 return [];
             }
             $select = ['callid'];
-            foreach (['from_uri', 'to_uri', 'from_tag', 'to_tag'] as $c) {
+            foreach (['from_uri', 'to_uri', 'from_tag', 'to_tag', 'h_entry', 'h_id', 'hash_entry', 'hash_id'] as $c) {
                 if (in_array($c, $cols, true)) {
                     $select[] = $c;
                 }
@@ -1316,7 +1346,11 @@ final class OpensipsProvisioner
         $last = 'no MI response';
         $miOk = false;
         foreach ($ids as $id) {
-            // Named dialog_id (OpenSIPS 3.x) + positional fallbacks
+            $id = trim((string) $id);
+            if ($id === '') {
+                continue;
+            }
+            // Named dialog_id (OpenSIPS 3.x) + positional; miCall also tries opensips-cli
             $attempts = [
                 ['dialog_id' => $id],
                 [$id],
@@ -1332,39 +1366,40 @@ final class OpensipsProvisioner
                     ? (string) ($r['error']['message'] ?? json_encode($r['error']))
                     : (string) ($r['error'] ?? ($r === null ? 'MI unreachable' : 'no response'));
             }
-            // opensips-cli: dlg_end_dlg <dialog_id>
-            if (preg_match('/^[a-zA-Z0-9@._\-:+]+$/', $id)) {
-                $cli = trim((string) @shell_exec(
-                    'opensips-cli -x mi dlg_end_dlg ' . escapeshellarg($id) . ' 2>/dev/null'
-                ));
-                if ($cli !== '' && !preg_match('/error|fail|not found|Invalid/i', $cli)) {
-                    $miOk = true;
-                    $last = 'opensips-cli dlg_end_dlg ok';
-                    break;
-                }
-                if ($cli !== '') {
-                    $last = 'opensips-cli: ' . mb_substr($cli, 0, 160);
-                }
-            }
         }
 
-        if ($callId !== '') {
-            $this->purgeDialogByCallId($callId);
-        }
-
+        // Verify BYE took effect before claiming success / purging DB
         if ($miOk) {
+            usleep(200_000);
+            if ($callId !== '' && $this->dialogStillLive($callId, $fromTag)) {
+                // Retry once with fresh IDs from MI
+                $retryIds = $this->resolveDialogIdsForHangup($callId, $fromTag);
+                foreach ($retryIds as $id) {
+                    $r = $this->miCall('dlg_end_dlg', ['dialog_id' => $id]);
+                    if ($r !== null && !isset($r['error'])) {
+                        break;
+                    }
+                    $this->miCall('dlg_end_dlg', [$id]);
+                }
+                usleep(200_000);
+            }
+            if ($callId !== '') {
+                $this->purgeDialogByCallId($callId);
+            }
             return ['ok' => true, 'detail' => 'Hangup sent (BYE both legs).'];
         }
 
-        // Only treat as success if the dialog is actually gone from MI
+        // Do NOT purge DB on failure — that only hides the call while media continues
         if ($callId !== '' && !$this->dialogStillLive($callId, $fromTag)) {
+            $this->purgeDialogByCallId($callId);
             return ['ok' => true, 'detail' => 'Call no longer in OpenSIPS (already ended).'];
         }
 
         return [
             'ok' => false,
             'detail' => 'Could not terminate call via OpenSIPS MI: ' . $last
-                . ' — check OPENSIPS_MI_URL / mi_http on :8888',
+                . ' — ensure opensips is active and mi_http listens on 127.0.0.1:8888'
+                . ' (sudo bash /opt/ownswitch-src/deploy/fix-opensips-activating.sh)',
         ];
     }
 
@@ -1428,11 +1463,23 @@ final class OpensipsProvisioner
     /** @param array<string,mixed> $d */
     public static function extractDialogId(array $d): string
     {
+        $entry = $d['h_entry'] ?? $d['hash_entry'] ?? $d['entry'] ?? null;
+        $hid = $d['h_id'] ?? $d['hash_id'] ?? null;
+        if ($entry !== null && $hid !== null && is_numeric($entry) && is_numeric($hid)) {
+            return ((int) $entry) . ':' . ((int) $hid);
+        }
         foreach (['ID', 'id', 'dialog_id', 'dialog', 'dlg_id', 'hash', 'did'] as $k) {
             if (!isset($d[$k])) {
                 continue;
             }
             $v = $d[$k];
+            if (is_array($v)) {
+                $nested = self::extractDialogId($v);
+                if ($nested !== '') {
+                    return $nested;
+                }
+                continue;
+            }
             if (is_int($v) || is_float($v)) {
                 return (string) (int) $v;
             }
@@ -1450,15 +1497,13 @@ final class OpensipsProvisioner
             if (preg_match('/(?:h_entry|hash)[=:\s]+(\d+)[^\d]+(?:h_id|id)[=:\s]+(\d+)/i', $v, $m)) {
                 return $m[1] . ':' . $m[2];
             }
+            // "ID: 3261:1097" / "dialog=3261:1097"
+            if (preg_match('/(\d+:\d+)/', $v, $m)) {
+                return $m[1];
+            }
         }
-        // Some MI builds nest ids
         if (isset($d['dialog']) && is_array($d['dialog'])) {
             return self::extractDialogId($d['dialog']);
-        }
-        $entry = $d['h_entry'] ?? $d['hash_entry'] ?? null;
-        $hid = $d['h_id'] ?? $d['hash_id'] ?? null;
-        if ($entry !== null && $hid !== null && is_numeric($entry) && is_numeric($hid)) {
-            return ((int) $entry) . ':' . ((int) $hid);
         }
         return '';
     }

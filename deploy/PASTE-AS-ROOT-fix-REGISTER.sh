@@ -114,8 +114,12 @@ grep -q 'mpath=' "$CFG" || { echo "FATAL: no mpath in live cfg"; exit 1; }
 install -d /etc/systemd/system/opensips.service.d
 cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<EOF
 [Service]
+Type=simple
 ExecStart=
 ExecStart=/usr/sbin/opensips -F -f ${CFG}
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
 EOF
 systemctl daemon-reload
 

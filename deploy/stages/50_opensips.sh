@@ -647,8 +647,25 @@ if [[ -f /etc/default/opensips ]] && grep -qE '^RUN_OPENSIPS=no' /etc/default/op
   sed -i 's/^RUN_OPENSIPS=no/RUN_OPENSIPS=yes/' /etc/default/opensips
 fi
 
+# Package unit is Type=forking + PIDFile. Foreground (-F) without Type=simple leaves
+# systemd stuck in "activating" forever (health FAIL | service opensips | activating).
+# Always install a matching drop-in before any start/restart.
+install -d /etc/systemd/system/opensips.service.d
+cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<'EOF'
+[Service]
+Type=simple
+ExecStart=
+ExecStart=/usr/sbin/opensips -F -f /etc/opensips/opensips.cfg
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+EOF
+systemctl daemon-reload
+
 # Always restart after stage 50 so digest REGISTER cfg is never left unloaded
 systemctl stop opensips >/dev/null 2>&1 || true
+# Kill any orphan opensips left by a mismatched forking/-F unit
+pkill -x opensips >/dev/null 2>&1 || true
 fuser -k "${SIP_PORT}/udp" >/dev/null 2>&1 || true
 fuser -k "${SIP_PORT}/tcp" >/dev/null 2>&1 || true
 sleep 1
@@ -656,12 +673,22 @@ sleep 1
 _start_opensips() {
   systemctl reset-failed opensips >/dev/null 2>&1 || true
   systemctl start opensips || true
-  local i
-  for i in $(seq 1 20); do
+  local i state
+  for i in $(seq 1 30); do
     if systemctl is-active --quiet opensips; then
       return 0
     fi
-    # Still starting / crash-looping — wait
+    state="$(systemctl is-active opensips 2>/dev/null || true)"
+    # activating forever = Type/ExecStart mismatch or module hang — bail early after 12s
+    if [[ "$state" == "activating" && "$i" -ge 12 ]]; then
+      log_warn "opensips still activating after ${i}s — likely systemd Type mismatch or module hang"
+      systemctl kill -s SIGKILL opensips >/dev/null 2>&1 || true
+      pkill -9 -x opensips >/dev/null 2>&1 || true
+      return 1
+    fi
+    if [[ "$state" == "failed" || "$state" == "inactive" ]] && [[ "$i" -ge 5 ]]; then
+      return 1
+    fi
     sleep 1
   done
   return 1
