@@ -319,21 +319,12 @@ if (( ! skip_apt )); then
   apt_install_optional opensips-nathelper-module || true
 fi
 if [[ -f "${mod_dir}/nathelper.so" ]]; then
-  # SIP OPTIONS from the OpenSIPS socket (not the portal). That RTT is stored on the
-  # contact and is the Live "ms" value. A PHP UDP probe uses a random source port and
-  # never reaches NAT'd phones, so it cannot be the latency source.
-  export OPENSIPS_NATHELPER_BLOCK="loadmodule \"nathelper.so\"
-modparam(\"nathelper\", \"received_avp\", \"\$avp(received)\")
-modparam(\"nathelper\", \"natping_interval\", 10)
-modparam(\"nathelper\", \"ping_nated_only\", 0)
-modparam(\"nathelper\", \"sipping_bflag\", \"SIP_PING\")
-modparam(\"nathelper\", \"sipping_latency_flag\", \"SIP_PING_MS\")
-modparam(\"nathelper\", \"sipping_from\", \"sip:ping@${PUBLIC_IP}\")
-modparam(\"nathelper\", \"sipping_method\", \"OPTIONS\")"
+  # Keep REGISTER to received + fix_nated_register only.
+  # SIP OPTIONS ping flags were removed from this path: they stopped phones getting a reply (request timeout).
+  export OPENSIPS_NATHELPER_BLOCK='loadmodule "nathelper.so"
+modparam("nathelper", "received_avp", "$avp(received)")'
   export OPENSIPS_NAT_REGISTER_BLOCK='force_rport();
-		fix_nated_register();
-		setbflag("SIP_PING");
-		setbflag("SIP_PING_MS");'
+		fix_nated_register();'
 else
   export OPENSIPS_NATHELPER_BLOCK='# nathelper.so not installed (opensips-nathelper-module)'
   export OPENSIPS_NAT_REGISTER_BLOCK='# no nathelper — install opensips-nathelper-module for NAT softphones'

@@ -33,7 +33,9 @@ svc_check() { # unit [required=1]
 svc_check mysql
 svc_check redis-server
 # activating / failed is not a report-only problem: repair the unit, then score it.
-if ! systemctl is-active --quiet opensips; then
+# Not active, or REGISTER path still has the SIP-ping flags that caused request timeouts.
+if ! systemctl is-active --quiet opensips \
+  || grep -q 'sipping_bflag\|setbflag("SIP_PING")' /etc/opensips/opensips.cfg 2>/dev/null; then
   log_warn "opensips is '$(systemctl is-active opensips 2>/dev/null || true)' — repairing before health score"
   bash "${DEPLOY_DIR}/fix-opensips-activating.sh" || true
 fi
