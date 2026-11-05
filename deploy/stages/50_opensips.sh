@@ -612,6 +612,19 @@ mysql_root "${DB_OPENSIPS}" -e \
     PRIMARY KEY (group_id, number_digits)
   ) ENGINE=InnoDB DEFAULT CHARSET=latin1" 2>/dev/null || true
 
+# Failover SIP codes for failure_route t_check_status("408|480|…")
+# Prefer portal system_settings; always export so @@FAILOVER_SIP_STATUS@@ never breaks render.
+_failover_raw="$(mysql_root -N "${DB_OWNSWITCH}" -e \
+  "SELECT setting_value FROM system_settings WHERE setting_key='failover_sip_codes' LIMIT 1" 2>/dev/null || true)"
+_failover_raw="$(printf '%s' "${_failover_raw}" | tr -d '\r\n' | xargs 2>/dev/null || true)"
+if [[ -z "${_failover_raw}" ]]; then
+  _failover_raw="408,480,486,503"
+fi
+_failover_pat="$(printf '%s' "${_failover_raw}" | tr ',; ' '|||' | tr -s '|' | sed 's/^|//;s/|$//;s/[^0-9|]//g')"
+[[ -n "${_failover_pat}" && "${_failover_pat}" != "|" ]] || _failover_pat="408|480|486|503"
+export FAILOVER_SIP_STATUS="${_failover_pat}"
+log_info "FAILOVER_SIP_STATUS=${FAILOVER_SIP_STATUS}"
+
 # Render to a temp file first and validate BEFORE touching the live config.
 tmp_cfg="$(mktemp /tmp/opensips.cfg.XXXXXX)"
 trap 'rm -f "$tmp_cfg"' EXIT

@@ -8,8 +8,11 @@ SRC="${OWNSWITCH_SRC_DIR:-/opt/ownswitch-src}"
 cd "$SRC"
 git fetch origin main && git reset --hard origin/main
 
-# Re-render OpenSIPS (OPTIONS dialog ping BPp) + portal
-bash "$SRC/deploy/install.sh" --only 50 --yes --non-interactive || true
+# Re-render OpenSIPS (OPTIONS dialog ping BPp + FAILOVER_SIP_STATUS) + portal
+if ! bash "$SRC/deploy/install.sh" --only 50 --yes --non-interactive; then
+  echo "WARN: stage 50 failed — check unresolved placeholders / opensips -c"
+  echo "  Retry: sudo bash $SRC/deploy/install.sh --from 50"
+fi
 bash "$SRC/deploy/refresh-ui.sh"
 
 ENV_FILE=/etc/ownswitch/ownswitch.env

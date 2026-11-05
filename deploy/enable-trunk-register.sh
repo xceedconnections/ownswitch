@@ -52,11 +52,16 @@ runuser -u ownswitch -- env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
 runuser -u ownswitch -- env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
   php "$CUR/bin/sync-opensips-trunks.php" || php "$CUR/bin/sync-opensips-trunks.php" || true
 
-# Force UAC reload
+# Force UAC reload (MI name is reg_* when uac_registrant.so is loaded)
 curl -s -X POST http://127.0.0.1:8888/mi -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"reg_reload","id":1}' || true
-opensips-cli -x mi reg_reload 2>/dev/null || true
-opensips-cli -x mi reg_list 2>/dev/null | head -n 40 || true
+  -d '{"jsonrpc":"2.0","method":"reg_reload","id":1}' 2>/dev/null || true
+opensips-cli -x mi reg_reload 2>/dev/null || opensips-cli -x mi uac_reg_reload 2>/dev/null || true
+if ! opensips-cli -x mi reg_list 2>/dev/null | head -n 40; then
+  echo "NOTE: reg_list unavailable — uac_registrant may not be loaded yet (re-run stage 50 after FAILOVER_SIP_STATUS fix)."
+  mysql --protocol=socket -uroot opensips -e "SELECT id,registrar,aor,username,state FROM registrant LIMIT 20;" 2>/dev/null \
+    || mysql --protocol=socket -uroot opensips -e "SELECT l_uuid,l_username,r_domain,auth_proxy FROM uac_registrant LIMIT 20;" 2>/dev/null \
+    || true
+fi
 
 echo
 echo "Public SIP IP (give this to your Magnus vendor for IP peering):"
@@ -64,5 +69,4 @@ hostname -I | awk '{print $1}'
 curl -4 -s ifconfig.me 2>/dev/null || curl -4 -s icanhazip.com 2>/dev/null || true
 echo
 echo "Done. For IP peer trunks: vendor must allowlist the public IP above — they will NOT show Registered."
-echo "For Register trunks: Auth mode=Register + user/pass → save → reg_list state should become 3 (REGISTERED)."
-echo "  Then: sudo bash $SRC/deploy/enable-trunk-register.sh   # if first time on this host"
+echo "For Register trunks: Auth mode=Register + user/pass → save → MI reg_list state 3 = REGISTERED."
