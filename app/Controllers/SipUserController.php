@@ -235,7 +235,7 @@ final class SipUserController extends CrudController
                 'type' => 'select',
                 'options' => SipPeerOptions::YES_NO,
                 'default' => 'yes',
-                'help' => 'Yes = OPTIONS reachability / latency probe for this endpoint when registered or fixed-host.',
+                'help' => 'Yes = show OPTIONS latency when reachable. Dynamic REGISTER status always follows OpenSIPS location (Asterisk/ViciDial often do not answer OPTIONS — that no longer marks them offline).',
                 'section' => 'Network',
             ],
 
@@ -421,25 +421,20 @@ final class SipUserController extends CrudController
             }
 
             if ($reg !== null) {
-                if (!$qualify) {
-                    // No probe: trust usrloc expiry only
-                    $online = true;
-                    $ms = null;
-                } else {
+                // OpenSIPS location with future expires = registered (source of truth).
+                // Do NOT purge on failed OPTIONS — Asterisk/ViciDial often ignore OPTIONS
+                // from the portal, which previously wiped a valid REGISTER and showed offline.
+                $online = true;
+                if ($qualify) {
                     $uri = trim((string) ($reg['received'] ?? '')) !== ''
                         ? (string) $reg['received']
                         : (string) ($reg['contact'] ?? '');
                     $ep = SipOptionsProbe::endpointFromUri($uri);
                     $ms = $ep ? SipOptionsProbe::rttMs($ep['host'], $ep['port']) : null;
-                    if ($ms !== null) {
-                        $online = true;
-                    } else {
-                        // Softphone gone (Eyebeam closed) but stale usrloc — treat offline and purge
-                        $online = false;
-                        $prov->purgeRegistration((string) ($row['username'] ?? ''));
-                    }
+                    // Latency is optional UI only; failed ping must not mark offline or delete usrloc.
                 }
             } elseif ($qualify && $host !== '' && strtolower($host) !== 'dynamic' && filter_var($host, FILTER_VALIDATE_IP)) {
+                // Fixed-IP peer (no REGISTER): OPTIONS is the only liveness signal
                 $ms = SipOptionsProbe::rttMs($host, $port);
                 $online = $ms !== null;
             }
