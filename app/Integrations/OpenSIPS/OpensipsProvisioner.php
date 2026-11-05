@@ -918,20 +918,12 @@ final class OpensipsProvisioner
                     $cliArgs .= ' ' . escapeshellarg((string) $p);
                 }
             } else {
-                // Prefer dialog_id / first scalar value for positional MI
-                foreach (['dialog_id', 'callid', 'call_id'] as $k) {
-                    if (isset($params[$k]) && is_scalar($params[$k])) {
-                        $cliArgs .= ' ' . escapeshellarg((string) $params[$k]);
-                        break;
+                // opensips-cli 3.6: dlg_end_dlg dialog_id=3261:1097
+                foreach ($params as $k => $p) {
+                    if (!is_scalar($p) || !is_string($k)) {
+                        continue;
                     }
-                }
-                if ($cliArgs === escapeshellarg($method)) {
-                    foreach ($params as $p) {
-                        if (is_scalar($p)) {
-                            $cliArgs .= ' ' . escapeshellarg((string) $p);
-                            break;
-                        }
-                    }
+                    $cliArgs .= ' ' . escapeshellarg($k . '=' . (string) $p);
                 }
             }
         }
@@ -1370,9 +1362,14 @@ final class OpensipsProvisioner
                     $r = $this->miFifoJson('dlg_end_dlg', is_array($params) && !array_is_list($params) ? $params : ['dialog_id' => $id]);
                 }
                 if ($r !== null && !isset($r['error'])) {
-                    $miOk = true;
-                    $last = 'dlg_end_dlg ok id=' . $id;
-                    break 2;
+                    usleep(300_000);
+                    if ($callId === '' || !$this->dialogStillLive($callId, $fromTag)) {
+                        $miOk = true;
+                        $last = 'dlg_end_dlg ok id=' . $id;
+                        break 2;
+                    }
+                    $last = 'dlg_end_dlg returned but dialog ' . $id . ' is still live';
+                    continue;
                 }
                 $last = is_array($r['error'] ?? null)
                     ? (string) ($r['error']['message'] ?? json_encode($r['error']))
@@ -1383,21 +1380,7 @@ final class OpensipsProvisioner
             $last = 'no dialog id (need N:N from dlg_list). OpenSIPS must be active.';
         }
 
-        // Verify BYE took effect before claiming success / purging DB
         if ($miOk) {
-            usleep(200_000);
-            if ($callId !== '' && $this->dialogStillLive($callId, $fromTag)) {
-                // Retry once with fresh IDs from MI
-                $retryIds = $this->resolveDialogIdsForHangup($callId, $fromTag);
-                foreach ($retryIds as $id) {
-                    $r = $this->miCall('dlg_end_dlg', ['dialog_id' => $id]);
-                    if ($r !== null && !isset($r['error'])) {
-                        break;
-                    }
-                    $this->miCall('dlg_end_dlg', [$id]);
-                }
-                usleep(200_000);
-            }
             if ($callId !== '') {
                 $this->purgeDialogByCallId($callId);
             }
@@ -1531,7 +1514,7 @@ final class OpensipsProvisioner
                     return $decoded;
                 }
             }
-            return ['result' => 'fifo-sent'];
+            return null;
         }
         return null;
     }
@@ -1717,10 +1700,29 @@ final class OpensipsProvisioner
         $out = $fromSql;
         foreach ($fromMi as $u => $info) {
             if (!isset($out[$u]) || (int) ($info['expires'] ?? 0) > (int) ($out[$u]['expires'] ?? 0)) {
+                $prevMs = (int) ($out[$u]['latency_ms'] ?? 0);
                 $out[$u] = $info;
+                if ((int) ($out[$u]['latency_ms'] ?? 0) <= 0 && $prevMs > 0) {
+                    $out[$u]['latency_ms'] = $prevMs;
+                }
+            } elseif ((int) ($info['latency_ms'] ?? 0) > 0) {
+                $out[$u]['latency_ms'] = (int) $info['latency_ms'];
             }
         }
         return $out;
+    }
+
+    /** OpenSIPS contact ping latency is microseconds. */
+    public static function latencyToMs(mixed $raw): int
+    {
+        if (!is_numeric($raw)) {
+            return 0;
+        }
+        $n = (int) $raw;
+        if ($n <= 0) {
+            return 0;
+        }
+        return max(1, (int) round($n / 1000));
     }
 
     /** Drop a dead/stale registration so the portal stops showing green. */
@@ -1756,29 +1758,31 @@ final class OpensipsProvisioner
                 continue;
             }
             $out = [];
-            $walk = static function ($node) use (&$walk, &$out): void {
+            $walk = static function ($node, ?string $aor) use (&$walk, &$out): void {
                 if (!is_array($node)) {
                     return;
                 }
                 $user = $node['username'] ?? $node['AOR'] ?? $node['aor'] ?? $node['User'] ?? null;
-                if (is_string($user) && str_contains($user, '@')) {
-                    $user = explode('@', $user, 2)[0];
+                if (is_string($user) && $user !== '') {
+                    if (str_contains($user, '@')) {
+                        $user = explode('@', $user, 2)[0];
+                    }
+                    $aor = strtolower($user);
                 }
-                $contact = $node['Contact'] ?? $node['contact'] ?? $node['address'] ?? null;
+                $contact = $node['Contact'] ?? $node['contact'] ?? null;
                 $received = $node['Received'] ?? $node['received'] ?? '';
                 $expires = $node['Expires'] ?? $node['expires'] ?? $node['Expiry'] ?? null;
-                if (is_string($user) && $user !== '' && (is_string($contact) || is_array($contact))) {
-                    $u = strtolower($user);
-                    if (is_array($contact)) {
-                        $received = (string) ($contact['received'] ?? $contact['Received'] ?? $received);
-                        $expires = $contact['Expires'] ?? $contact['expires'] ?? $expires;
-                        $contact = (string) ($contact['Contact'] ?? $contact['contact'] ?? $contact['address'] ?? '');
-                    }
-                    // Require a parseable future expiry — never treat missing/ambiguous as registered
+                $latency = $node['latency'] ?? $node['Latency'] ?? null;
+                if (is_array($contact) && !array_is_list($contact)) {
+                    $received = (string) ($contact['received'] ?? $contact['Received'] ?? $received);
+                    $expires = $contact['Expires'] ?? $contact['expires'] ?? $expires;
+                    $latency = $contact['latency'] ?? $contact['Latency'] ?? $latency;
+                    $contact = (string) ($contact['Contact'] ?? $contact['contact'] ?? $contact['address'] ?? '');
+                }
+                if (is_string($contact) && $contact !== '' && is_string($aor) && $aor !== '') {
                     $expTs = null;
                     if (is_numeric($expires)) {
                         $expTs = (int) $expires;
-                        // Remaining TTL (seconds) vs absolute unix timestamp
                         if ($expTs > 0 && $expTs < 86400 * 10) {
                             $expTs = time() + $expTs;
                         }
@@ -1788,23 +1792,25 @@ final class OpensipsProvisioner
                             $expTs = $ts;
                         }
                     }
-                    if ($expTs === null || $expTs <= time()) {
-                        // expired / unknown — do not mark registered
-                    } elseif (!isset($out[$u]) && (string) $contact !== '') {
-                        $out[$u] = [
-                            'contact' => (string) $contact,
+                    $ms = self::latencyToMs($latency);
+                    if ($expTs !== null && $expTs > time() && !isset($out[$aor])) {
+                        $out[$aor] = [
+                            'contact' => $contact,
                             'received' => is_string($received) ? $received : '',
                             'expires' => $expTs,
+                            'latency_ms' => $ms,
                         ];
+                    } elseif (isset($out[$aor]) && $ms > (int) ($out[$aor]['latency_ms'] ?? 0)) {
+                        $out[$aor]['latency_ms'] = $ms;
                     }
                 }
                 foreach ($node as $v) {
                     if (is_array($v)) {
-                        $walk($v);
+                        $walk($v, $aor);
                     }
                 }
             };
-            $walk($r['result'] ?? $r);
+            $walk($r['result'] ?? $r, null);
             if ($out !== []) {
                 return $out;
             }
@@ -1829,11 +1835,13 @@ final class OpensipsProvisioner
         }
         $hasRecv = in_array('received', $cols, true);
         $hasExp = in_array('expires', $cols, true);
+        $hasLat = in_array('latency', $cols, true);
         // OpenSIPS 3.6 location.expires is INT unix timestamp (not DATETIME).
         // Only live contacts: expires must be in the future. Never fall back to unfiltered SELECT.
         $sql = 'SELECT username, contact'
             . ($hasRecv ? ', received' : '')
             . ($hasExp ? ', expires' : '')
+            . ($hasLat ? ', latency' : '')
             . ' FROM location';
         if ($hasExp) {
             $sql .= ' WHERE expires IS NOT NULL AND expires > UNIX_TIMESTAMP()';
@@ -1865,6 +1873,7 @@ final class OpensipsProvisioner
                 'contact' => $contact,
                 'received' => $hasRecv ? (string) ($row['received'] ?? '') : '',
                 'expires' => $expires,
+                'latency_ms' => $hasLat ? self::latencyToMs($row['latency'] ?? null) : 0,
             ];
         }
         return $out;

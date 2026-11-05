@@ -422,31 +422,12 @@ final class SipUserController extends CrudController
 
             $isDynamic = $host === '' || strtolower($host) === 'dynamic';
             if ($reg !== null) {
-                // OpenSIPS location/MI with future expires = registered (only source of truth for Dynamic).
-                // Never purge usrloc from this page — portal OPTIONS is read-only RTT, not OpenSIPS qualify.
+                // OpenSIPS location/MI with future expires = registered.
+                // Live ms is the proxy's own SIP OPTIONS ping (nathelper), in milliseconds.
                 $online = true;
-                // Latency MS = SIP OPTIONS RTT only (never ICMP).
-                if ($qualify) {
-                    $uris = [];
-                    $recv = trim((string) ($reg['received'] ?? ''));
-                    $contact = trim((string) ($reg['contact'] ?? ''));
-                    if ($recv !== '') {
-                        $uris[] = $recv;
-                    }
-                    if ($contact !== '' && $contact !== $recv) {
-                        $uris[] = $contact;
-                    }
-                    foreach ($uris as $uri) {
-                        $ep = SipOptionsProbe::endpointFromUri($uri);
-                        if ($ep === null) {
-                            continue;
-                        }
-                        $probeUser = $ep['user'] !== '' ? $ep['user'] : $user;
-                        $ms = SipOptionsProbe::rttMs($ep['host'], $ep['port'], 1.5, $probeUser);
-                        if ($ms !== null) {
-                            break;
-                        }
-                    }
+                $fromOs = (int) ($reg['latency_ms'] ?? 0);
+                if ($fromOs > 0) {
+                    $ms = $fromOs;
                 }
             } elseif ($qualify && !$isDynamic && filter_var($host, FILTER_VALIDATE_IP)) {
                 // Fixed-IP peer (no REGISTER): OPTIONS is the only liveness signal

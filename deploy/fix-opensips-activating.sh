@@ -50,6 +50,40 @@ if grep -qE '@@[A-Za-z0-9_]+@@' "$CFG"; then
   grep -nE '@@[A-Za-z0-9_]+@@' "$CFG" >&2 || true
 fi
 
+# Live ms = OpenSIPS SIP OPTIONS ping RTT. Patch a running cfg that predates sipping.
+if grep -q 'loadmodule "nathelper.so"' "$CFG" && ! grep -q 'sipping_from' "$CFG"; then
+  python3 - "$CFG" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+ip_m = re.search(r"\bas (\d+\.\d+\.\d+\.\d+):", text)
+ip = ip_m.group(1) if ip_m else "127.0.0.1"
+old = 'modparam("nathelper", "received_avp", "$avp(received)")'
+extra = old + """
+modparam("nathelper", "natping_interval", 10)
+modparam("nathelper", "ping_nated_only", 0)
+modparam("nathelper", "sipping_bflag", "SIP_PING")
+modparam("nathelper", "sipping_latency_flag", "SIP_PING_MS")
+modparam("nathelper", "sipping_from", "sip:ping@%s")
+modparam("nathelper", "sipping_method", "OPTIONS")""" % ip
+if old not in text:
+    sys.exit("nathelper received_avp line missing")
+text = text.replace(old, extra, 1)
+needle = 'if (!save("location"))'
+if 'setbflag("SIP_PING")' not in text and needle in text:
+    text = text.replace(
+        needle,
+        'setbflag("SIP_PING");\n\t\tsetbflag("SIP_PING_MS");\n\t\t' + needle,
+        1,
+    )
+path.write_text(text)
+print("Enabled OpenSIPS SIP OPTIONS ping for Live ms")
+PY
+  # First two named flags in this cfg are SIP_PING (bit 0) and SIP_PING_MS (bit 1).
+  mysql --protocol=socket -uroot opensips -e \
+    "UPDATE location SET cflags = IFNULL(cflags,0) | 3" 2>/dev/null || true
+fi
+
 # AppArmor on Ubuntu 24.04 often kills a custom unit before any log line (exit 255).
 if [[ -f /etc/apparmor.d/usr.sbin.opensips ]] && command -v apparmor_parser >/dev/null 2>&1; then
   install -d /etc/apparmor.d/disable
