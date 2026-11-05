@@ -96,6 +96,9 @@ modparam("dialog", "db_url", "@@OPENSIPS_DB_URL@@")
 modparam("dialog", "db_mode", 2)
 # hard cap on call length (seconds) - safety net for billing
 modparam("dialog", "default_timeout", 7200)
+# Detect dead legs (ViciDial hangup without BYE reaching us) and clear zombie "Connected" dialogs
+modparam("dialog", "options_ping_interval", 20)
+modparam("dialog", "delete_delay", 5)
 
 # CGRateS SessionS bi-directional JSON-RPC (listen_bijson), loopback only
 loadmodule "cgrates.so"
@@ -274,7 +277,8 @@ route {
 	if (lookup("location")) {
 		xlog("L_INFO", "local AOR hit for $rU from $fU\n");
 		record_route();
-		create_dialog("B");
+		# B=BYE on timeout; P/p=OPTIONS ping caller/callee → drop zombies when peer gone
+		create_dialog("BPp");
 		route(resolve_os_src);
 		$dlg_val(os_dst) = $rU;
 		$acc_extra(src) = $dlg_val(os_src);
@@ -297,7 +301,7 @@ route {
 	}
 
 	record_route();
-	create_dialog("B");
+	create_dialog("BPp");
 	# Prefer digest auth user — $fU may be presented CallerID (ViciDial)
 	route(resolve_os_src);
 	$dlg_val(os_dst) = $rU;
@@ -382,7 +386,7 @@ route[resolve_os_src] {
 # Called only after alias+lookup already succeeded for a carrier-sourced INVITE
 route[inbound_from_carrier_deliver] {
 	record_route();
-	create_dialog("B");
+	create_dialog("BPp");
 	route(resolve_os_src);
 	$dlg_val(os_dst) = $rU;
 	$acc_extra(src) = $dlg_val(os_src);

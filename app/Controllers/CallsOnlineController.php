@@ -71,18 +71,19 @@ final class CallsOnlineController extends BaseController
                 break;
             }
         }
-        if (!$allowed && !$this->scope($r)->isGlobal()) {
+        if (!$allowed && !$this->scope($r)->isGlobal() && !$this->scope($r)->isStaff()) {
             return $this->redirect($r, '/calls-online', 'You can only hang up your own calls.', 'danger');
         }
         $prov = OpensipsProvisioner::fromConfig();
-        if (!$prov->enabled() || !$prov->hasMi()) {
-            return $this->redirect($r, '/calls-online', 'OpenSIPS MI not available.', 'danger');
+        if (!$prov->enabled()) {
+            return $this->redirect($r, '/calls-online', 'OpenSIPS is not configured.', 'danger');
         }
+        // Always attempt MI + DB purge (stale “Connected” rows often have no live MI dialog)
         $res = $prov->endDialog($callId, $fromTag !== '' ? $fromTag : null);
         return $this->redirect(
             $r,
             '/calls-online',
-            $res['ok'] ? 'Hangup requested.' : ('Hangup failed: ' . $res['detail']),
+            $res['ok'] ? $res['detail'] : ('Hangup failed: ' . $res['detail']),
             $res['ok'] ? 'success' : 'danger'
         );
     }
@@ -285,9 +286,9 @@ final class CallsOnlineController extends BaseController
     /** @return array{0:string,1:string} bucket, label */
     private static function classifyState(mixed $stateRaw, int $dur): array
     {
-        if (is_int($stateRaw) || (is_string($stateRaw) && ctype_digit($stateRaw))) {
+        // OpenSIPS dlg states: 1=unconfirmed, 2=early(180/183), 3=confirmed(no ACK), 4=confirmed, 5=deleted
+        if (is_int($stateRaw) || (is_string($stateRaw) && ctype_digit(trim($stateRaw)))) {
             $n = (int) $stateRaw;
-            // OpenSIPS dialog: 1=unconfirmed, 2=early(180/183), 3=confirmed(no ACK), 4=confirmed+ACK, 5=deleted
             return match (true) {
                 $n === 1 => ['trying', 'Trying'],
                 $n === 2 => ['ringing', 'Ringing'],
@@ -297,23 +298,27 @@ final class CallsOnlineController extends BaseController
             };
         }
         $s = strtoupper(trim((string) $stateRaw));
-        if ($s === '') {
-            // No state from MI — treat as connected if duration growing, else trying
-            return $dur >= 2 ? ['connected', 'Connected'] : ['trying', 'Trying'];
+        // MI sometimes returns "2: EARLY" / "4: CONFIRMED"
+        if (preg_match('/\b([1-5])\b/', $s, $m)) {
+            return self::classifyState((int) $m[1], $dur);
         }
-        if (str_contains($s, 'CONFIRM') || str_contains($s, 'CONNECT') || $s === 'INCALL' || $s === 'ANSWERED' || $s === '4' || $s === '3') {
+        if ($s === '') {
+            // No state — prefer trying/ringing over false "Connected" for short legs
+            return $dur >= 15 ? ['connected', 'Connected'] : ['trying', 'Trying'];
+        }
+        if (str_contains($s, 'CONFIRM') || str_contains($s, 'CONNECT') || $s === 'INCALL' || $s === 'ANSWERED') {
             return ['connected', 'Connected'];
         }
-        if (str_contains($s, 'EARLY') || str_contains($s, 'RING') || str_contains($s, 'PROGRESS') || str_contains($s, '183') || str_contains($s, '180') || $s === '2') {
+        if (str_contains($s, 'EARLY') || str_contains($s, 'RING') || str_contains($s, 'PROGRESS') || str_contains($s, '183') || str_contains($s, '180')) {
             return ['ringing', 'Ringing'];
         }
-        if (str_contains($s, 'TRY') || str_contains($s, 'UNCONFIRM') || str_contains($s, '100') || str_contains($s, 'INIT') || $s === '1') {
+        if (str_contains($s, 'TRY') || str_contains($s, 'UNCONFIRM') || str_contains($s, '100') || str_contains($s, 'INIT')) {
             return ['trying', 'Trying'];
         }
-        if (str_contains($s, 'DEAD') || str_contains($s, 'DELETE') || $s === '5') {
+        if (str_contains($s, 'DEAD') || str_contains($s, 'DELETE') || str_contains($s, 'END')) {
             return ['other', 'Ending'];
         }
-        return ['other', $s !== '' ? $s : 'Connected'];
+        return ['other', $s];
     }
 
     /** VICIdial-style row background class. */

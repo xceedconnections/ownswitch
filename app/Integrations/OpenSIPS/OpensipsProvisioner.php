@@ -21,12 +21,19 @@ final class OpensipsProvisioner
     public const GRP_CARRIER = 2;
     public const DR_GROUP = '1';
 
+    /** True when the last miCall got an HTTP/CLI response (even with JSON-RPC error). */
+    private bool $lastMiReachable = false;
+
+    /** True when dlg_list returned an explicit empty dialog set (safe to wipe DB zombies). */
+    private bool $miDialogsEmptyConfirmed = false;
+
     public function __construct(
         private ?PDO $osDb,
         private string $miUrl = '',
         private string $sipDomain = '',
         private string $initError = '',
         private string $publicIp = '',
+        private string $miFifo = '',
     ) {
     }
 
@@ -46,12 +53,17 @@ final class OpensipsProvisioner
             error_log('[ownswitch] OpenSIPS DB connect failed: ' . $e->getMessage());
             return new self(null, '', '', 'Cannot connect to OpenSIPS DB: ' . $e->getMessage());
         }
+        $mi = trim((string) ($cfg['mi_url'] ?? ''));
+        if ($mi === '') {
+            $mi = 'http://127.0.0.1:8888/mi';
+        }
         return new self(
             $pdo,
-            (string) ($cfg['mi_url'] ?? ''),
+            $mi,
             (string) ($cfg['sip_domain'] ?? ''),
             '',
             (string) ($cfg['public_ip'] ?? ''),
+            (string) ($cfg['mi_fifo'] ?? '/run/opensips/opensips_fifo'),
         );
     }
 
@@ -67,7 +79,10 @@ final class OpensipsProvisioner
 
     public function hasMi(): bool
     {
-        return $this->miUrl !== '';
+        if ($this->miUrl !== '') {
+            return true;
+        }
+        return $this->miFifo !== '' && @is_writable($this->miFifo);
     }
 
     /** OpenSIPS MySQL handle (null when provisioning disabled). */
@@ -855,56 +870,84 @@ final class OpensipsProvisioner
      */
     public function miCall(string $method, array $params = []): ?array
     {
-        if ($this->miUrl === '') {
-            return null;
-        }
+        $this->lastMiReachable = false;
         $body = ['jsonrpc' => '2.0', 'method' => $method, 'id' => 1];
         if ($params !== []) {
             $body['params'] = $params;
         }
-        $ctx = stream_context_create(['http' => [
-            'method' => 'POST',
-            'header' => "Content-Type: application/json\r\n",
-            'timeout' => 5,
-            'ignore_errors' => true,
-            'content' => json_encode($body, JSON_THROW_ON_ERROR),
-        ]]);
-        $raw = @file_get_contents($this->miUrl, false, $ctx);
-        if ($raw === false) {
-            return null;
+        $payload = json_encode($body, JSON_THROW_ON_ERROR);
+        $urls = [];
+        if ($this->miUrl !== '') {
+            $urls[] = $this->miUrl;
         }
-        $r = json_decode($raw, true);
-        return is_array($r) ? $r : null;
+        if (!in_array('http://127.0.0.1:8888/mi', $urls, true)) {
+            $urls[] = 'http://127.0.0.1:8888/mi';
+        }
+        foreach ($urls as $url) {
+            $ctx = stream_context_create(['http' => [
+                'method' => 'POST',
+                'header' => "Content-Type: application/json\r\n",
+                'timeout' => 4,
+                'ignore_errors' => true,
+                'content' => $payload,
+            ]]);
+            $raw = @file_get_contents($url, false, $ctx);
+            if ($raw === false || $raw === '') {
+                continue;
+            }
+            $r = json_decode($raw, true);
+            if (!is_array($r)) {
+                continue;
+            }
+            $this->lastMiReachable = true;
+            return $r;
+        }
+        // opensips-cli FIFO fallback (no params → works for dlg_list / reg_reload)
+        if ($params === [] && $this->miFifo !== '' && is_string($method) && preg_match('/^[a-zA-Z0-9_]+$/', $method)) {
+            $cli = trim((string) @shell_exec(
+                'opensips-cli -x mi ' . escapeshellarg($method) . ' 2>/dev/null'
+            ));
+            if ($cli !== '') {
+                $this->lastMiReachable = true;
+                $decoded = json_decode($cli, true);
+                if (is_array($decoded)) {
+                    return $decoded;
+                }
+                // Plain text / YAML-ish from older cli — wrap as success so callers know MI works
+                return ['result' => $cli];
+            }
+        }
+        return null;
     }
 
     /**
-     * Live dialogs from OpenSIPS dlg_list (MI), with dialog table fallback.
+     * Live dialogs: MI is source of truth (includes early/ringing).
+     * DB fallback only when MI is unreachable — never merge DB zombies into MI.
      *
      * @return list<array<string,mixed>>
      */
     public function listDialogs(): array
     {
+        $this->miDialogsEmptyConfirmed = false;
         $fromMi = $this->listDialogsMi();
-        $fromDb = $this->listDialogsDb();
-        if ($fromMi === []) {
-            return $fromDb;
-        }
-        if ($fromDb === []) {
+        if ($this->lastMiReachable) {
+            $liveIds = [];
+            foreach ($fromMi as $d) {
+                if (!is_array($d)) {
+                    continue;
+                }
+                $cid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? $d['CallId'] ?? $d['ci'] ?? '');
+                if ($cid !== '') {
+                    $liveIds[] = $cid;
+                }
+            }
+            // Only sync-delete DB when we have a parsed live set OR confirmed empty dlg_list
+            if ($liveIds !== [] || $this->miDialogsEmptyConfirmed) {
+                $this->purgeStaleDialogDbRows($liveIds);
+            }
             return $fromMi;
         }
-        // Merge by Call-ID so early/trying dialogs missing from one source still appear
-        $byId = [];
-        foreach (array_merge($fromDb, $fromMi) as $d) {
-            if (!is_array($d)) {
-                continue;
-            }
-            $cid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? '');
-            if ($cid === '') {
-                continue;
-            }
-            $byId[$cid] = isset($byId[$cid]) ? array_merge($byId[$cid], $d) : $d;
-        }
-        return array_values($byId);
+        return $this->listDialogsDb();
     }
 
     /** @return list<array<string,mixed>> */
@@ -917,19 +960,32 @@ final class OpensipsProvisioner
                 continue;
             }
             if (isset($r['error'])) {
+                // Transport worked; method missing — try next
                 continue;
             }
             $result = $r['result'] ?? $r['Result'] ?? null;
             if ($result === null && isset($r['Dialogs'])) {
                 $result = $r;
             }
+            if ($result === null || $result === '' || $result === []) {
+                $this->miDialogsEmptyConfirmed = true;
+                return [];
+            }
             if (!is_array($result)) {
                 continue;
+            }
+            // {"Dialogs":[]} / {"dialogs":[]}
+            foreach (['Dialogs', 'dialogs', 'Dialog', 'dialog'] as $k) {
+                if (array_key_exists($k, $result) && $result[$k] === []) {
+                    $this->miDialogsEmptyConfirmed = true;
+                    return [];
+                }
             }
             $list = $this->extractDialogList($result);
             if ($list !== []) {
                 return $list;
             }
+            // Unparsed non-empty payload — do not claim idle / wipe DB
         }
         return [];
     }
@@ -1026,20 +1082,65 @@ final class OpensipsProvisioner
             if ($startCol !== null) {
                 $select[] = "`{$startCol}` AS start_time";
             }
-            $sql = 'SELECT ' . implode(', ', $select)
-                . ' FROM dialog ORDER BY ' . ($startCol ? "`{$startCol}`" : 'callid') . ' DESC LIMIT 500';
-            $rows = $db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            // Attach dlg_vals (os_src / os_dst) when dialog_vars table exists
-            if ($rows !== [] && $this->tableExists('dialog_vars')) {
-                $vcols = $this->columns('dialog_vars');
-                if (in_array('hash_entry', $vcols, true) || in_array('dlg_id', $vcols, true)) {
-                    // Best-effort: some schemas store dlg_id as callid-like key; skip if unusable
-                }
+            // Exclude deleted (5) — those are zombies left after BYE / timeout
+            $where = '';
+            if ($stateCol !== null) {
+                $where = " WHERE `{$stateCol}` IS NOT NULL AND `{$stateCol}` <> 5 AND `{$stateCol}` <> '5'";
             }
-            return $rows;
+            $sql = 'SELECT ' . implode(', ', $select)
+                . ' FROM dialog' . $where
+                . ' ORDER BY ' . ($startCol ? "`{$startCol}`" : 'callid') . ' DESC LIMIT 500';
+            $rows = $db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            return is_array($rows) ? $rows : [];
         } catch (\Throwable $e) {
             error_log('[ownswitch] listDialogsDb: ' . $e->getMessage());
             return [];
+        }
+    }
+
+    /**
+     * When MI reports live Call-IDs, drop dialog DB rows that are no longer live (zombies).
+     *
+     * @param list<string> $liveCallIds Empty = purge all dialog table rows (MI says idle).
+     */
+    public function purgeStaleDialogDbRows(array $liveCallIds): int
+    {
+        if (!$this->enabled() || !$this->tableExists('dialog')) {
+            return 0;
+        }
+        try {
+            $db = $this->db();
+            if ($liveCallIds === []) {
+                $n = $db->exec('DELETE FROM dialog');
+                if ($this->tableExists('dialog_vars')) {
+                    $db->exec('DELETE FROM dialog_vars');
+                }
+                return is_int($n) ? $n : 0;
+            }
+            // Keep only live callids — delete the rest
+            $placeholders = implode(',', array_fill(0, count($liveCallIds), '?'));
+            $st = $db->prepare("DELETE FROM dialog WHERE callid NOT IN ({$placeholders})");
+            $st->execute(array_values($liveCallIds));
+            return $st->rowCount();
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] purgeStaleDialogDbRows: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /** Delete one dialog row (portal hangup fallback when MI cannot terminate in-memory dlg). */
+    public function purgeDialogByCallId(string $callId): bool
+    {
+        $callId = trim($callId);
+        if ($callId === '' || !$this->enabled() || !$this->tableExists('dialog')) {
+            return false;
+        }
+        try {
+            $st = $this->db()->prepare('DELETE FROM dialog WHERE callid = ?');
+            $st->execute([$callId]);
+            return $st->rowCount() > 0;
+        } catch (\Throwable) {
+            return false;
         }
     }
 
@@ -1187,7 +1288,7 @@ final class OpensipsProvisioner
     }
 
     /**
-     * Hang up a live dialog. Tries dlg_end_dlg with callid (OpenSIPS 3.x).
+     * Hang up a live dialog. Tries dlg_end_dlg (MI), then opensips-cli, then DB purge.
      *
      * @return array{ok:bool,detail:string}
      */
@@ -1196,23 +1297,48 @@ final class OpensipsProvisioner
         if ($callId === '') {
             return ['ok' => false, 'detail' => 'Missing Call-ID'];
         }
+        unset($toTag);
         // OpenSIPS 3.6: dlg_end_dlg params often { callid, from_tag } or dialog hash
         $attempts = [];
         if ($fromTag !== null && $fromTag !== '') {
             $attempts[] = ['dlg_end_dlg', ['callid' => $callId, 'fhtag' => $fromTag]];
+            $attempts[] = ['dlg_end_dlg', ['callid' => $callId, 'from_tag' => $fromTag]];
             $attempts[] = ['dlg_end_dlg', [$callId, $fromTag]];
         }
         $attempts[] = ['dlg_end_dlg', ['callid' => $callId]];
         $attempts[] = ['dlg_end_dlg', [$callId]];
+        $last = 'no MI response';
+        $miOk = false;
         foreach ($attempts as [$method, $params]) {
             $r = $this->miCall($method, is_array($params) ? $params : [$params]);
             if ($r !== null && !isset($r['error'])) {
-                return ['ok' => true, 'detail' => 'Dialog terminate requested'];
+                $miOk = true;
+                break;
             }
-            $detail = is_array($r['error'] ?? null) ? (string) ($r['error']['message'] ?? json_encode($r['error'])) : (string) ($r['error'] ?? 'no response');
-            $last = $detail;
+            $last = is_array($r['error'] ?? null)
+                ? (string) ($r['error']['message'] ?? json_encode($r['error']))
+                : (string) ($r['error'] ?? 'no response');
         }
-        return ['ok' => false, 'detail' => $last ?? 'dlg_end_dlg failed'];
+        if (!$miOk && preg_match('/^[a-zA-Z0-9@._\-:+]+$/', $callId)) {
+            $cli = trim((string) @shell_exec(
+                'opensips-cli -x mi dlg_end_dlg '
+                . escapeshellarg($callId)
+                . ($fromTag !== null && $fromTag !== '' ? ' ' . escapeshellarg($fromTag) : '')
+                . ' 2>/dev/null'
+            ));
+            if ($cli !== '' && !preg_match('/error|fail|not found/i', $cli)) {
+                $miOk = true;
+                $last = 'opensips-cli dlg_end_dlg';
+            }
+        }
+        $purged = $this->purgeDialogByCallId($callId);
+        if ($miOk) {
+            return ['ok' => true, 'detail' => 'Dialog terminate requested' . ($purged ? ' (DB cleared)' : '')];
+        }
+        if ($purged) {
+            return ['ok' => true, 'detail' => 'Cleared stale dialog from OpenSIPS DB (MI unreachable or dialog already dead)'];
+        }
+        return ['ok' => false, 'detail' => $last];
     }
 
     private function ensureDbAliases(): void
