@@ -372,9 +372,10 @@ route[resolve_os_src] {
 	if ($var(src) == NULL || $(var(src){s.len}) == 0) {
 		$var(src) = $avp(os_auth_user);
 	}
+	# address.context_info is "sip:username" — use s.select (NOT re.subst with // — // starts a comment!)
 	if (($var(src) == NULL || $(var(src){s.len}) == 0)
 		&& $avp(os_addr_ctx) != NULL && $(avp(os_addr_ctx){s.len}) > 4) {
-		$var(src) = $(avp(os_addr_ctx){re.subst,/^sip://i});
+		$var(src) = $(avp(os_addr_ctx){s.select,1,:});
 	}
 	if ($var(src) == NULL || $(var(src){s.len}) == 0) {
 		$var(src) = $fU;

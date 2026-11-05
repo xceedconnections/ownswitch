@@ -632,6 +632,9 @@ render_to_stdout "${TEMPLATE_DIR}/opensips.cfg.tpl" >"$tmp_cfg" || die "opensips
 
 if ! check_out="$(opensips -c -f "$tmp_cfg" 2>&1)"; then
   printf '%s\n' "$check_out" >&2
+  # Keep a copy for debugging (tmp is removed by EXIT trap)
+  cp -f "$tmp_cfg" /tmp/opensips.cfg.ownswitch.bad 2>/dev/null || true
+  echo "Bad config saved to /tmp/opensips.cfg.ownswitch.bad" >&2
   die "Generated OpenSIPS configuration failed syntax check (opensips -c). Live config untouched."
 fi
 log_ok "opensips -c: configuration OK"
