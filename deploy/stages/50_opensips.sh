@@ -513,8 +513,9 @@ route[check_dnc] {
 }'
 elif [[ -f "${mod_dir}/sqlops.so" ]]; then
   # OpenSIPS 3.6 sqlops: db_url without name=>; sql_query_one(query, "$var(x)")
+  # Expand the URL here. The cfg renderer does not rescan text injected via @@OPENSIPS_DNC_MODULES@@.
   DNC_MODS+="loadmodule \"sqlops.so\"
-modparam(\"sqlops\", \"db_url\", \"@@OPENSIPS_DB_URL@@\")
+modparam(\"sqlops\", \"db_url\", \"${OPENSIPS_DB_URL}\")
 "
   DNC_ROUTE='route[check_sip_dnc] {
 	if ($avp(os_dncid) == NULL || $(avp(os_dncid){s.int}) <= 0) {

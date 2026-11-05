@@ -29,6 +29,27 @@ sed -i \
   -e 's/^stderror_enabled=no/stderror_enabled=yes/' \
   "$CFG"
 
+# sqlops was injected with a nested @@OPENSIPS_DB_URL@@ that the renderer does not expand.
+# That string is not a DB driver, so sqlops init exits 255.
+if grep -q '@@OPENSIPS_DB_URL@@' "$CFG"; then
+  dburl="$(sed -n 's/.*modparam("auth_db", "db_url", "\([^"]*\)").*/\1/p' "$CFG" | head -n 1)"
+  if [[ -z "$dburl" || "$dburl" == *'@@'* ]]; then
+    echo "Cannot fix @@OPENSIPS_DB_URL@@ — auth_db db_url is missing" >&2
+    exit 1
+  fi
+  python3 - "$CFG" "$dburl" <<'PY'
+import pathlib, sys
+path, url = sys.argv[1], sys.argv[2]
+file = pathlib.Path(path)
+file.write_text(file.read_text().replace("@@OPENSIPS_DB_URL@@", url))
+print("Replaced leftover @@OPENSIPS_DB_URL@@ in", path)
+PY
+fi
+if grep -qE '@@[A-Za-z0-9_]+@@' "$CFG"; then
+  echo "Unresolved placeholders still in ${CFG}:" >&2
+  grep -nE '@@[A-Za-z0-9_]+@@' "$CFG" >&2 || true
+fi
+
 # AppArmor on Ubuntu 24.04 often kills a custom unit before any log line (exit 255).
 if [[ -f /etc/apparmor.d/usr.sbin.opensips ]] && command -v apparmor_parser >/dev/null 2>&1; then
   install -d /etc/apparmor.d/disable
