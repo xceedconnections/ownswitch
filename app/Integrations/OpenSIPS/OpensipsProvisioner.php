@@ -1344,14 +1344,21 @@ final class OpensipsProvisioner
             }
         }
 
-        $last = 'no MI response';
-        $miOk = false;
+        // OpenSIPS 3.6 accepts the dlg_list DID (6ae.4b38d013) or the SIP Call-ID.
+        // Colon hash ids are not that DID — try them last, never instead of it.
+        $ordered = [];
         foreach ($ids as $id) {
             $id = trim((string) $id);
-            if ($id === '' || !preg_match('/^[0-9]+:[0-9]+$/', $id)) {
+            if ($id === '' || preg_match('/[\r\n\x00]/', $id) || isset($ordered[$id])) {
                 continue;
             }
-            // Named dialog_id (OpenSIPS 3.x) + positional; miCall also tries opensips-cli
+            $ordered[$id] = str_contains($id, '.') ? 0 : (str_contains($id, ':') ? 2 : 1);
+        }
+        asort($ordered);
+
+        $last = 'no MI response';
+        $miOk = false;
+        foreach (array_keys($ordered) as $id) {
             $attempts = [
                 ['dialog_id' => $id],
                 [$id],
@@ -1362,22 +1369,23 @@ final class OpensipsProvisioner
                     $r = $this->miFifoJson('dlg_end_dlg', is_array($params) && !array_is_list($params) ? $params : ['dialog_id' => $id]);
                 }
                 if ($r !== null && !isset($r['error'])) {
-                    usleep(300_000);
-                    if ($callId === '' || !$this->dialogStillLive($callId, $fromTag)) {
-                        $miOk = true;
-                        $last = 'dlg_end_dlg ok id=' . $id;
-                        break 2;
-                    }
-                    $last = 'dlg_end_dlg returned but dialog ' . $id . ' is still live';
-                    continue;
+                    $miOk = true;
+                    $last = 'dlg_end_dlg ok id=' . $id;
+                    break 2;
                 }
                 $last = is_array($r['error'] ?? null)
                     ? (string) ($r['error']['message'] ?? json_encode($r['error']))
                     : (string) ($r['error'] ?? ($r === null ? 'MI unreachable' : 'no response'));
             }
         }
-        if (!$miOk && $last === 'no MI response') {
-            $last = 'no dialog id (need N:N from dlg_list). OpenSIPS must be active.';
+        if (!$miOk && $callId !== '') {
+            $seq = $this->miCall('dlg_send_sequential', ['callid' => $callId, 'method' => 'BYE']);
+            if ($seq !== null && !isset($seq['error'])) {
+                $miOk = true;
+                $last = 'dlg_send_sequential BYE';
+            } elseif ($last === 'no MI response') {
+                $last = 'dlg_end_dlg did not accept Call-ID or dialog DID';
+            }
         }
 
         if ($miOk) {
@@ -1579,10 +1587,14 @@ final class OpensipsProvisioner
     /** @param array<string,mixed> $d */
     public static function extractDialogId(array $d): string
     {
-        if (isset($d['dlg_id'])) {
-            $fromDb = self::hashIdFromDlgId($d['dlg_id']);
-            if ($fromDb !== '' && $fromDb !== '0:0') {
-                return $fromDb;
+        // OpenSIPS 3.6 dlg_list "ID" is the DID, e.g. 6ae.4b38d013 — that is what dlg_end_dlg wants.
+        foreach (['ID', 'id', 'DID', 'did', 'dialog_id', 'dlg_id'] as $k) {
+            if (!isset($d[$k]) || is_array($d[$k])) {
+                continue;
+            }
+            $v = trim((string) $d[$k]);
+            if ($v !== '' && preg_match('/^[0-9a-fA-F]+\.[0-9a-fA-F]+$/', $v)) {
+                return $v;
             }
         }
         $entry = $d['h_entry'] ?? $d['hash_entry'] ?? $d['entry'] ?? null;
