@@ -169,7 +169,7 @@ final class CustomerController extends CrudController
             return null;
         }
         // Refresh OpenSIPS allow_calls when prepaid balance / status changes
-        \Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner::fromConfig()->refreshAllowCallsForCustomer($id);
+        \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig()->refreshAllowCallsForCustomer($id);
         return $res['detail'] . ' Sign in with username or email + portal password.';
     }
 
@@ -241,7 +241,7 @@ final class CustomerController extends CrudController
 
         // Best-effort OpenSIPS cleanup for removed SIP peers
         try {
-            $prov = \Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner::fromConfig();
+            $prov = \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig();
             if ($prov->enabled()) {
                 foreach ($sipUsers as $s) {
                     $prov->removeSubscriber((string) $s['username'], (string) $s['domain']);

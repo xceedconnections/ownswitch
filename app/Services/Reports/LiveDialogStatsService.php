@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Ownswitch\Services\Reports;
 
-use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
+use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use PDO;
 
 /** Live OpenSIPS dialogs grouped by customer / trunk, plus today's ASR/ACD from CDRs. */
@@ -19,9 +19,9 @@ final class LiveDialogStatsService
      */
     public function dialogs(): array
     {
-        $prov = FreeswitchProvisioner::fromConfig();
+        $prov = OpensipsProvisioner::fromConfig();
         if (!$prov->enabled()) {
-            return ['dialogs' => [], 'error' => 'FreeSWITCH is not configured (ESL host / password).'];
+            return ['dialogs' => [], 'error' => 'OpenSIPS is not configured (OPENSIPS_ENABLED / MI URL).'];
         }
         try {
             $out = [];

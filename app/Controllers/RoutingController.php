@@ -7,7 +7,7 @@ namespace Ownswitch\Controllers;
 use Ownswitch\App;
 use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
-use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
+use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CustomerRepository;
 use Ownswitch\Services\Billing\RateResolver;
@@ -374,14 +374,14 @@ final class RoutingController extends CrudController
 
     private function pushRoutes(): void
     {
-        $prov = FreeswitchProvisioner::fromConfig();
+        $prov = OpensipsProvisioner::fromConfig();
         if (!$prov->enabled()) {
             return;
         }
         try {
             (new OpensipsRoutingSync($this->db(), $prov))->syncAll();
         } catch (\Throwable $e) {
-            App::session()->flash('warning', 'Saved, but FreeSWITCH gateway sync failed: ' . (App::config('app.debug') ? $e->getMessage() : 'run php bin/sync-opensips-trunks.php'));
+            App::session()->flash('warning', 'Saved, but OpenSIPS route sync failed: ' . (App::config('app.debug') ? $e->getMessage() : 'run php bin/sync-opensips-trunks.php'));
         }
     }
 

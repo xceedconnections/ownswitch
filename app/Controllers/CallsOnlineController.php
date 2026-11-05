@@ -6,7 +6,7 @@ namespace Ownswitch\Controllers;
 
 use Ownswitch\Http\Request;
 use Ownswitch\Http\Response;
-use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
+use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\CustomerRepository;
 
 /** Live calls from OpenSIPS dialogs — stats, user filter, VICIdial-style colors. */
@@ -87,9 +87,9 @@ final class CallsOnlineController extends BaseController
         if (!$allowed && !$this->scope($r)->isGlobal() && !$this->scope($r)->isStaff()) {
             return $this->redirect($r, '/calls-online', 'You can only hang up your own calls.', 'danger');
         }
-        $prov = FreeswitchProvisioner::fromConfig();
+        $prov = OpensipsProvisioner::fromConfig();
         if (!$prov->enabled()) {
-            return $this->redirect($r, '/calls-online', 'FreeSWITCH is not configured.', 'danger');
+            return $this->redirect($r, '/calls-online', 'OpenSIPS is not configured.', 'danger');
         }
         $res = $prov->endDialog(
             $callId,
@@ -107,11 +107,11 @@ final class CallsOnlineController extends BaseController
     /** @return array{0:list<array<string,mixed>>,1:?string} */
     private function loadCalls(Request $r, ?string $filterUser): array
     {
-        $prov = FreeswitchProvisioner::fromConfig();
+        $prov = OpensipsProvisioner::fromConfig();
         $error = null;
         $calls = [];
         if (!$prov->enabled()) {
-            return [[], 'FreeSWITCH is not configured (ESL host / password).'];
+            return [[], 'OpenSIPS is not configured (OPENSIPS_ENABLED / MI URL).'];
         }
         try {
             $mine = $this->mySipUsernames($r);
@@ -232,7 +232,7 @@ final class CallsOnlineController extends BaseController
         if ($sipUser === '') {
             $sipUser = $fromUser;
         }
-        $dlg = FreeswitchProvisioner::extractDialogId($d);
+        $dlg = OpensipsProvisioner::extractDialogId($d);
         $fromTag = (string) ($d['from_tag'] ?? $d['caller_tag'] ?? $d['ftag'] ?? $d['fromtag'] ?? '');
         $callid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? $d['CallId'] ?? $d['ci'] ?? '');
         return [

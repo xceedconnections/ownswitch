@@ -6,7 +6,7 @@ namespace Ownswitch\Controllers;
 
 use Ownswitch\App;
 use Ownswitch\Http\Request;
-use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
+use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\IpEndpointRepository;
 
@@ -66,17 +66,17 @@ final class IpAuthController extends CrudController
 
     protected function afterSave(Request $r, int $id, array $data, ?array $existing): ?string
     {
-        $prov = FreeswitchProvisioner::fromConfig();
+        $prov = OpensipsProvisioner::fromConfig();
         $row = $this->repo()->findInternal($id);
         if ($row && $prov->enabled()) {
             try {
                 // OpenSIPS permissions group 1 = all customer IP peers (see opensips.cfg.tpl).
                 if ($existing) {
-                    $prov->removeAddress(FreeswitchProvisioner::GRP_CUSTOMER, (string) $existing['ip_address'], (int) $existing['mask'], (int) $existing['port']);
+                    $prov->removeAddress(OpensipsProvisioner::GRP_CUSTOMER, (string) $existing['ip_address'], (int) $existing['mask'], (int) $existing['port']);
                 }
                 if ($row['status'] === 'active') {
                     $prov->upsertAddress(
-                        FreeswitchProvisioner::GRP_CUSTOMER,
+                        OpensipsProvisioner::GRP_CUSTOMER,
                         (string) $row['ip_address'],
                         (int) $row['mask'],
                         (int) $row['port'],
@@ -86,7 +86,7 @@ final class IpAuthController extends CrudController
                 }
                 $prov->reloadAddresses();
             } catch (\Throwable) {
-                App::session()->flash('warning', 'Saved, but FreeSWITCH provisioning failed.');
+                App::session()->flash('warning', 'Saved, but OpenSIPS provisioning failed.');
             }
         }
         return null;
@@ -94,13 +94,13 @@ final class IpAuthController extends CrudController
 
     protected function afterDelete(Request $r, array $row): void
     {
-        $prov = FreeswitchProvisioner::fromConfig();
+        $prov = OpensipsProvisioner::fromConfig();
         if ($prov->enabled()) {
             try {
-                $prov->removeAddress(FreeswitchProvisioner::GRP_CUSTOMER, (string) $row['ip_address'], (int) $row['mask'], (int) $row['port']);
+                $prov->removeAddress(OpensipsProvisioner::GRP_CUSTOMER, (string) $row['ip_address'], (int) $row['mask'], (int) $row['port']);
                 $prov->reloadAddresses();
             } catch (\Throwable) {
-                App::session()->flash('warning', 'Deleted locally, but FreeSWITCH deprovisioning failed.');
+                App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
             }
         }
     }

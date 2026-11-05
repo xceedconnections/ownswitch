@@ -78,7 +78,7 @@ final class LedgerService
         // Sync OpenSIPS allow_calls after top-up / spend (402 Payment Required gate)
         if (!empty($result['balance_changed'])) {
             try {
-                \Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner::fromConfig()
+                \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig()
                     ->refreshAllowCallsForCustomer((int) $e['customer_id']);
             } catch (\Throwable $ex) {
                 error_log('[ownswitch] allow_calls sync after ledger: ' . $ex->getMessage());

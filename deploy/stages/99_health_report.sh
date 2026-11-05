@@ -32,21 +32,21 @@ svc_check() { # unit [required=1]
 # ---------------------------------------------------------------------------
 svc_check mysql
 svc_check redis-server
-svc_check freeswitch 1
+# activating / failed is not a report-only problem: repair the unit, then score it.
+# Not active, or REGISTER path still has the SIP-ping flags that caused request timeouts.
+if ! systemctl is-active --quiet opensips \
+  || grep -q 'sipping_bflag\|setbflag("SIP_PING")' /etc/opensips/opensips.cfg 2>/dev/null; then
+  log_warn "opensips is '$(systemctl is-active opensips 2>/dev/null || true)' — repairing before health score"
+  bash "${DEPLOY_DIR}/fix-opensips-activating.sh" || true
+fi
+svc_check opensips
 svc_check cgrates
 svc_check "php${PHP_VERSION}-fpm"
 svc_check nginx
 svc_check ufw
 svc_check chrony
 for u in $(systemctl list-unit-files --no-legend 'rtpengine*.service' 2>/dev/null | awk '{print $1}' || true); do svc_check "$u" 1; done
-_sip_owner="$(ss -H -ulnp 'sport = :5060' 2>/dev/null | head -n1 || true)"
-if systemctl is-active --quiet freeswitch && [[ "${_sip_owner}" == *freeswitch* ]]; then
-  add OK "SIP 5060" "FreeSWITCH"
-elif [[ "${_sip_owner}" == *opensips* ]]; then
-  add FAIL "SIP 5060" "still owned by OpenSIPS — run deploy/remove-opensips.sh after stage 75"
-else
-  add FAIL "SIP 5060" "FreeSWITCH is not bound (${_sip_owner:-no listener})"
-fi
+if is_true "${FREESWITCH_ENABLED}"; then svc_check freeswitch 1; fi
 svc_check ownswitch-scheduler.timer 1
 svc_check ownswitch-backup.timer 1
 if [[ -f "${OWN_OPT}/current/bin/worker.php" || -f "${OWN_OPT}/current/bin/worker_cdr.php" ]]; then
@@ -60,7 +60,8 @@ fi
 # ---------------------------------------------------------------------------
 mv_="$(mysqld --version 2>/dev/null | sed -n 's/.*Ver \([0-9.]*\).*/\1/p' || true)"
 [[ "$mv_" == 8.4.* ]] && add OK "MySQL version" "$mv_" || add FAIL "MySQL version" "expected 8.4.x, got '${mv_}'"
-ov_="removed"
+ov_="$(dpkg-query -W -f='${Version}' opensips 2>/dev/null || true)"
+[[ "$ov_" == 3.6.* ]] && add OK "OpenSIPS version" "$ov_" || add FAIL "OpenSIPS version" "expected 3.6.x, got '${ov_}'"
 pv_="$(php -r 'echo PHP_VERSION;' 2>/dev/null || true)"
 [[ "$pv_" == ${PHP_VERSION}.* ]] && add OK "PHP version" "$pv_" || add FAIL "PHP version" "expected ${PHP_VERSION}.x, got '${pv_}'"
 cv_="$(cat /usr/share/cgrates/.installed-version 2>/dev/null || true)"
@@ -74,6 +75,12 @@ for db in "${DB_OWNSWITCH}" "${DB_OPENSIPS}" "${DB_CGRATES}"; do
   if [[ "$cnt" == "ERR" ]]; then add FAIL "database ${db}" "not reachable"
   else add OK "database ${db}" "${cnt} tables"; fi
 done
+_sub="$(mysql_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_OPENSIPS}' AND LOWER(table_name)='subscriber'" 2>/dev/null || echo 0)"
+if [[ "$_sub" != "0" && "$_sub" != "ERR" ]]; then
+  add OK "OpenSIPS schema" "subscriber table present"
+else
+  add FAIL "OpenSIPS schema" "subscriber table missing"
+fi
 [[ "$(mysql_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_CGRATES}' AND table_name IN ('cdrs','tp_rates')" 2>/dev/null || echo 0)" == "2" ]] \
   && add OK "CGRateS StorDB schema" "cdrs + tp_rates present" || add FAIL "CGRateS StorDB schema" "tables missing"
 
@@ -85,10 +92,13 @@ fi
 pong="$(curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"method":"CoreSv1.Ping","params":[{}],"id":1}' "http://${CGR_HTTP_ADDR}/jsonrpc" 2>/dev/null || true)"
 [[ "$pong" == *Pong* ]] && add OK "CGRateS JSON-RPC" "CoreSv1.Ping -> Pong" || add FAIL "CGRateS JSON-RPC" "no Pong (${pong:-empty})"
 
-if [[ -x /usr/local/freeswitch/bin/freeswitch ]]; then
-  add OK "FreeSWITCH binary" "$(cat /usr/local/freeswitch/.ownswitch-installed-version 2>/dev/null || echo present)"
+_os_c_err="$(opensips -c -f /etc/opensips/opensips.cfg 2>&1)"
+_os_c_rc=$?
+if [[ "${_os_c_rc}" -eq 0 ]]; then
+  add OK "OpenSIPS config" "opensips -c passed"
 else
-  add FAIL "FreeSWITCH binary" "missing — run deploy stage 75"
+  _snip="$(echo "${_os_c_err}" | grep -E 'ERROR|CRITICAL|parse error|failed|yyerror' | tail -n 4 | tr '\n' ';' | cut -c1-240)"
+  add FAIL "OpenSIPS config" "opensips -c exit=${_os_c_rc}${_snip:+; ${_snip}}"
 fi
 if nginx -t >/dev/null 2>&1; then add OK "nginx config" "nginx -t passed"; else add FAIL "nginx config" "nginx -t failed"; fi
 
@@ -111,7 +121,7 @@ fi
 # exposure audit: internal ports must be loopback-only; list everything that is public
 # ---------------------------------------------------------------------------
 listeners="$(ss -H -lntu 2>/dev/null || true)"
-for spec in tcp:3306 tcp:33060 tcp:6379 tcp:2012 tcp:2013 tcp:2014 tcp:2080 tcp:8021 udp:"${RTPENGINE_NG_PORT}"; do
+for spec in tcp:3306 tcp:33060 tcp:6379 tcp:2012 tcp:2013 tcp:2014 tcp:2080 tcp:8021 tcp:8888 udp:"${RTPENGINE_NG_PORT}"; do
   proto="${spec%%:*}"; port="${spec##*:}"
   leaks="$(awk -v pr="$proto" -v pt=":${port}" '$1==pr && $5 ~ pt"$" && $5 !~ /^127\.0\.0\.1:/ && $5 !~ /^\[::1\]:/ {print $5}' <<<"$listeners" || true)"
   if [[ -n "$leaks" ]]; then add FAIL "exposure ${proto}/${port}" "listening on non-loopback: $(echo "$leaks" | tr '\n' ' ')"
@@ -157,7 +167,7 @@ else add OK "secret leakage" "no DB password found under ${OWN_OPT}/current"; fi
   echo "COMPONENT VERSIONS"
   echo "------------------"
   echo "  MySQL     : ${mv_}"
-  echo "  OpenSIPS  : removed (FreeSWITCH is the SIP edge)"
+  echo "  OpenSIPS  : ${ov_}"
   echo "  CGRateS   : ${cv_}"
   echo "  PHP       : ${pv_}"
   echo "  nginx     : $(nginx -v 2>&1 | sed -n 's/.*nginx\///p' || echo n/a)"
@@ -183,7 +193,7 @@ else add OK "secret leakage" "no DB password found under ${OWN_OPT}/current"; fi
   echo "  Application env file  : ${OWN_ETC}/ownswitch.env (root:ownswitch 0640)"
   echo "  Persisted settings    : ${OWN_ETC}/install.conf (non-secret)"
   echo "  CGRateS config        : /etc/cgrates/cgrates.json (root:cgrates 0640)"
-  echo "  FreeSWITCH config     : /usr/local/freeswitch/conf (SIP ${SIP_PORT}, ESL 127.0.0.1:8021)"
+  echo "  OpenSIPS config       : /etc/opensips/opensips.cfg (root:opensips 0640)"
   echo "  Backup passphrase     : $(secret_path backup_passphrase)  <-- COPY OFFLINE"
   [[ -f /root/ownswitch-initial-admin.txt ]] && echo "  Initial admin password: /root/ownswitch-initial-admin.txt (delete after first login)"
   echo

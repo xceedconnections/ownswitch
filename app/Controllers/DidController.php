@@ -6,7 +6,7 @@ namespace Ownswitch\Controllers;
 
 use Ownswitch\App;
 use Ownswitch\Http\Request;
-use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
+use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\DidRepository;
 use Ownswitch\Services\Billing\LedgerService;
@@ -173,7 +173,7 @@ final class DidController extends CrudController
                 }
                 $this->pushAlias((int) $row['did_id']);
             }
-            return 'DID assigned. Inbound to this number rings the SIP user.';
+            return 'DID assigned. OpenSIPS alias synced — inbound to this number rings the SIP user.';
         }
         if ($this->kind === 'dids' && $existing !== null) {
             // re-push alias if assigned
@@ -226,7 +226,7 @@ final class DidController extends CrudController
 
     private function pushAlias(int $didId): void
     {
-        $prov = FreeswitchProvisioner::fromConfig();
+        $prov = OpensipsProvisioner::fromConfig();
         if (!$prov->enabled()) {
             return;
         }
@@ -251,13 +251,13 @@ final class DidController extends CrudController
         try {
             $prov->syncDidAlias((string) $row['number_norm'], $user, $domain);
         } catch (\Throwable $e) {
-            App::session()->flash('warning', 'DID saved but FreeSWITCH sync failed: ' . $e->getMessage());
+            App::session()->flash('warning', 'DID saved but OpenSIPS alias sync failed: ' . $e->getMessage());
         }
     }
 
     private function removeAlias(int $didId): void
     {
-        $prov = FreeswitchProvisioner::fromConfig();
+        $prov = OpensipsProvisioner::fromConfig();
         if (!$prov->enabled()) {
             return;
         }

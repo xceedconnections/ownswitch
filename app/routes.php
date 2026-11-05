@@ -38,7 +38,6 @@ use Ownswitch\Controllers\SystemController;
 use Ownswitch\Controllers\TariffController;
 use Ownswitch\Controllers\CallsOnlineController;
 use Ownswitch\Controllers\DidController;
-use Ownswitch\Controllers\FreeswitchXmlController;
 use Ownswitch\Controllers\PrefixImportController;
 use Ownswitch\Controllers\TariffImportController;
 use Ownswitch\Http\Response;
@@ -59,13 +58,6 @@ $crud = static function (Router $router, string $prefix, object $c, string $role
     $router->post($prefix . '/{id}', [$c, 'update'], [$roles]);
     $router->post($prefix . '/{id}/delete', [$c, 'destroy'], [$roles]);
 };
-
-// ---- FreeSWITCH xml_curl / xml_cdr (loopback nginx only, shared secret, no session) ----
-$fsXml = new FreeswitchXmlController();
-$router->post('/internal/fs/xml', [$fsXml, 'xml']);
-$router->post('/internal/fs/directory', [$fsXml, 'xml']);
-$router->post('/internal/fs/dialplan', [$fsXml, 'xml']);
-$router->post('/internal/fs/cdr', [$fsXml, 'cdr']);
 
 // ---- public ----
 $router->group('', ['csrf'], function (Router $r): void {

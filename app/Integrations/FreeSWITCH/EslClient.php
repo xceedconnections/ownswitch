@@ -59,40 +59,6 @@ final class EslClient
         return trim($this->api('status'));
     }
 
-    /** Send BYE both ways. $uuid is a FreeSWITCH channel UUID. */
-    public function uuidKill(string $uuid): string
-    {
-        if (!preg_match('/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/', $uuid)) {
-            throw new \InvalidArgumentException('Not a FreeSWITCH channel UUID');
-        }
-        return trim($this->api('uuid_kill ' . $uuid));
-    }
-
-    /**
-     * Live channels from `show channels as json`.
-     *
-     * @return list<array<string,mixed>>
-     */
-    public function channels(): array
-    {
-        $raw = $this->api('show channels as json');
-        $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) {
-            return [];
-        }
-        $rows = $decoded['rows'] ?? [];
-        if (!is_array($rows)) {
-            return [];
-        }
-        $out = [];
-        foreach ($rows as $row) {
-            if (is_array($row)) {
-                $out[] = $row;
-            }
-        }
-        return $out;
-    }
-
     public function close(): void
     {
         if ($this->sock) {
