@@ -12,15 +12,35 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq || true
 apt-get install -y opensips-uac-module || apt-get install -y opensips-module-uac || true
 
-# Import uac_registrant schema if missing
+# OpenSIPS 3.6+ uses table `registrant` (not legacy uac_registrant alone)
+mysql --protocol=socket -uroot opensips <<'SQL' || true
+CREATE TABLE IF NOT EXISTS registrant (
+  id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  registrar CHAR(255) DEFAULT '' NOT NULL,
+  proxy CHAR(255) DEFAULT NULL,
+  aor CHAR(255) DEFAULT '' NOT NULL,
+  third_party_registrant CHAR(255) DEFAULT NULL,
+  username CHAR(64) DEFAULT NULL,
+  password CHAR(64) DEFAULT NULL,
+  binding_URI CHAR(255) DEFAULT '' NOT NULL,
+  binding_params CHAR(64) DEFAULT NULL,
+  expiry INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  forced_socket CHAR(64) DEFAULT NULL,
+  cluster_shtag CHAR(64) DEFAULT NULL,
+  state INT DEFAULT 0 NOT NULL,
+  description CHAR(64) DEFAULT NULL,
+  KEY aor_idx (aor)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+SQL
+# Also import package schema if present (legacy name)
 if ! mysql --protocol=socket -uroot -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='opensips' AND table_name='uac_registrant'" | grep -q 1; then
-  schema=$(find /usr/share/opensips /usr/share/doc/opensips* -name '*uac*registrant*.sql' 2>/dev/null | head -n1 || true)
+  schema=$(find /usr/share/opensips /usr/share/doc/opensips* -name '*uac*registrant*.sql' -o -name '*registrant*.sql' 2>/dev/null | head -n1 || true)
   if [[ -n "${schema:-}" ]]; then
     mysql --protocol=socket -uroot opensips <"$schema" || true
   fi
 fi
 
-# Re-run OpenSIPS stage to render UAC block + do_routing("1")
+# Re-run OpenSIPS stage to render UAC block (uac_auth + registrant table) + do_routing("1")
 bash "$SRC/deploy/install.sh" --only 50 --yes --non-interactive || true
 
 # Portal release with new PHP sync code
@@ -32,10 +52,17 @@ runuser -u ownswitch -- env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
 runuser -u ownswitch -- env OWNSWITCH_ENV_FILE=/etc/ownswitch/ownswitch.env \
   php "$CUR/bin/sync-opensips-trunks.php" || php "$CUR/bin/sync-opensips-trunks.php" || true
 
+# Force UAC reload
+curl -s -X POST http://127.0.0.1:8888/mi -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"reg_reload","id":1}' || true
+opensips-cli -x mi reg_reload 2>/dev/null || true
+opensips-cli -x mi reg_list 2>/dev/null | head -n 40 || true
+
 echo
 echo "Public SIP IP (give this to your Magnus vendor for IP peering):"
 hostname -I | awk '{print $1}'
 curl -4 -s ifconfig.me 2>/dev/null || curl -4 -s icanhazip.com 2>/dev/null || true
 echo
 echo "Done. For IP peer trunks: vendor must allowlist the public IP above — they will NOT show Registered."
-echo "For Register trunks: edit trunk → Auth mode = Register → save, then check Magnus after ~30s."
+echo "For Register trunks: Auth mode=Register + user/pass → save → reg_list state should become 3 (REGISTERED)."
+echo "  Then: sudo bash $SRC/deploy/enable-trunk-register.sh   # if first time on this host"

@@ -188,6 +188,8 @@ final class OpensipsAccImporter
             $dst = self::cleanCallerId($this->userPart((string) ($row['to_uri'] ?? $row['callee_id'] ?? $row['to_user'] ?? $row['ruri'] ?? '')));
         }
 
+        $sourceIp = self::cleanToken((string) ($row['src_ip'] ?? $row['ip'] ?? ''));
+
         // Attribution username = SIP account; src = presented CallerID (or SIP user fallback)
         $username = null;
         if ($sipUser !== '' && $cli !== '' && $sipUser !== $cli) {
@@ -196,7 +198,15 @@ final class OpensipsAccImporter
             $username = $sipUser;
         } elseif ($sipUser !== '' && $this->sipUsernameExists($sipUser)) {
             $username = $sipUser; // numeric SIP usernames are valid
-        } else {
+        }
+        // ViciDial / IP ACL: From=CallerID and src_user empty or phone → resolve via REGISTER contact IP
+        if ($username === null || (self::looksLikePhone((string) $username) && !$this->sipUsernameExists((string) $username))) {
+            $byIp = $sourceIp !== '' ? $this->opensips->usernameBySourceIp($sourceIp) : null;
+            if ($byIp !== null && $byIp !== '') {
+                $username = $byIp;
+            }
+        }
+        if ($username === null) {
             $username = $this->soleActiveSipUsername();
         }
 
@@ -216,7 +226,6 @@ final class OpensipsAccImporter
         if ($trunkId === null) {
             $trunkId = $this->soleActiveTrunkId();
         }
-        $sourceIp = self::cleanToken((string) ($row['src_ip'] ?? $row['ip'] ?? ''));
 
         $setup = $row['time'] ?? $row['created'] ?? $row['setuptime'] ?? gmdate('Y-m-d H:i:s');
         $duration = (int) ($row['duration'] ?? $row['ms_duration'] ?? 0);

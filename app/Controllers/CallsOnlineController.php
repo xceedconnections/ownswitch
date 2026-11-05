@@ -107,6 +107,17 @@ final class CallsOnlineController extends BaseController
                 if ($n['callid'] === '') {
                     continue;
                 }
+                // ViciDial: From/os_src often = CallerID digits — map signalling IP → SIP username
+                $sip = trim((string) ($n['sip_user'] ?? ''));
+                if ($sip === '' || preg_match('/^[+]?[0-9]{8,30}$/', $sip)) {
+                    $ip = self::callerSignallingIp($d);
+                    if ($ip !== null) {
+                        $byIp = $prov->usernameBySourceIp($ip);
+                        if ($byIp !== null && $byIp !== '') {
+                            $n['sip_user'] = $byIp;
+                        }
+                    }
+                }
                 if ($mine !== null) {
                     if (!$this->matchesUsers($n, $mine)) {
                         continue;
@@ -222,6 +233,24 @@ final class CallsOnlineController extends BaseController
             'from_tag' => $fromTag,
             'dialog' => $dlg,
         ];
+    }
+
+    /** Best-effort caller signalling IP from dialog MI / DB shapes. */
+    private static function callerSignallingIp(array $d): ?string
+    {
+        foreach ([
+            'caller_contact', 'caller_bind_addr', 'contact', 'from_contact',
+            'leg1_contact', 'caller_socket', 'from_sock', 'bind_addr',
+        ] as $k) {
+            $v = $d[$k] ?? null;
+            if (!is_string($v) || $v === '') {
+                continue;
+            }
+            if (preg_match('#(\d{1,3}(?:\.\d{1,3}){3})#', $v, $m) && filter_var($m[1], FILTER_VALIDATE_IP)) {
+                return $m[1];
+            }
+        }
+        return null;
     }
 
     /** Read dialog context value (os_src / os_dst) from MI dlg_list_ctx shapes. */

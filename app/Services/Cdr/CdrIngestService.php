@@ -241,6 +241,25 @@ final class CdrIngestService
                     $customerId = (int) $rows[0]['customer_id'];
                 }
             }
+            // Dynamic REGISTER (ViciDial): usrloc received/contact IP → SIP username
+            if ($customerId === null) {
+                try {
+                    $prov = \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig();
+                    $u = $prov->enabled() ? $prov->usernameBySourceIp((string) $d['source_ip']) : null;
+                    if ($u !== null && $u !== '') {
+                        $st = $this->pdo->prepare(
+                            "SELECT id, customer_id FROM sip_accounts WHERE status = 'active' AND LOWER(username) = LOWER(?) LIMIT 2"
+                        );
+                        $st->execute([$u]);
+                        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+                        if (count($rows) === 1) {
+                            $out['sip_account_id'] = (int) $rows[0]['id'];
+                            $customerId = (int) $rows[0]['customer_id'];
+                        }
+                    }
+                } catch (\Throwable) {
+                }
+            }
         }
         // Single-tenant failsafe: exactly one active SIP account on the platform
         $trusted = self::isTrustedCdrSource($source);

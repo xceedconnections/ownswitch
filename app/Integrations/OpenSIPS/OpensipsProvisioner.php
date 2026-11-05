@@ -26,6 +26,7 @@ final class OpensipsProvisioner
         private string $miUrl = '',
         private string $sipDomain = '',
         private string $initError = '',
+        private string $publicIp = '',
     ) {
     }
 
@@ -45,7 +46,13 @@ final class OpensipsProvisioner
             error_log('[ownswitch] OpenSIPS DB connect failed: ' . $e->getMessage());
             return new self(null, '', '', 'Cannot connect to OpenSIPS DB: ' . $e->getMessage());
         }
-        return new self($pdo, (string) ($cfg['mi_url'] ?? ''), (string) ($cfg['sip_domain'] ?? ''));
+        return new self(
+            $pdo,
+            (string) ($cfg['mi_url'] ?? ''),
+            (string) ($cfg['sip_domain'] ?? ''),
+            '',
+            (string) ($cfg['public_ip'] ?? ''),
+        );
     }
 
     public function enabled(): bool
@@ -585,8 +592,9 @@ final class OpensipsProvisioner
     /** @param array<string,mixed> $trunk */
     private function upsertRegistrant(array $trunk): void
     {
-        if (!$this->tableExists('uac_registrant')) {
-            throw new \RuntimeException('uac_registrant table missing — install opensips-uac-module');
+        $table = $this->registrantTable();
+        if ($table === null) {
+            throw new \RuntimeException('registrant / uac_registrant table missing — install opensips-uac-module');
         }
         $id = (int) $trunk['id'];
         $user = trim((string) ($trunk['auth_username'] ?? ''));
@@ -595,34 +603,232 @@ final class OpensipsProvisioner
             throw new \DomainException('Register mode needs Username and Password on the trunk.');
         }
         $pass = Crypto::decrypt($enc);
-        $host = (string) $trunk['host'];
+        $host = trim((string) $trunk['host']);
         $port = (int) ($trunk['port'] ?? 5060);
+        if ($port <= 0) {
+            $port = 5060;
+        }
         $proxyHost = trim((string) ($trunk['outbound_proxy'] ?? ''));
-        if ($proxyHost === '') {
-            $proxyHost = $host;
-        }
-        $authProxy = 'sip:' . $proxyHost . ($port && $port !== 5060 ? ':' . $port : '');
-        $domain = $this->sipDomain !== '' ? $this->sipDomain : $host;
+        $registrarUri = 'sip:' . $host . ($port !== 5060 ? ':' . $port : '');
+        $proxyUri = $proxyHost !== '' && strcasecmp($proxyHost, $host) !== 0
+            ? ('sip:' . $proxyHost . ($port !== 5060 ? ':' . $port : ''))
+            : null;
+        // Contact must advertise the switch public IP (not a private NIC).
+        $contactHost = $this->publicIp !== '' ? $this->publicIp : ($this->sipDomain !== '' ? $this->sipDomain : $host);
+        $aor = 'sip:' . $user . '@' . $host;
+        $binding = 'sip:' . $user . '@' . $contactHost;
         $uuid = self::regUuid($id);
-
+        $cols = $this->columns($table);
         $db = $this->db();
-        $st = $db->prepare('SELECT id FROM uac_registrant WHERE l_uuid = ?');
-        $st->execute([$uuid]);
-        if ($rowId = $st->fetchColumn()) {
-            $db->prepare('UPDATE uac_registrant SET l_username=?, l_domain=?, r_username=?, r_domain=?, realm=?, auth_username=?, auth_password=?, auth_proxy=?, expires=? WHERE id=?')
-                ->execute([$user, $domain, $user, $host, $host, $user, $pass, $authProxy, 300, $rowId]);
-        } else {
-            $db->prepare('INSERT INTO uac_registrant (l_uuid, l_username, l_domain, r_username, r_domain, realm, auth_username, auth_password, auth_proxy, expires) VALUES (?,?,?,?,?,?,?,?,?,?)')
-                ->execute([$uuid, $user, $domain, $user, $host, $host, $user, $pass, $authProxy, 300]);
+
+        // OpenSIPS 3.x default schema (registrar/aor/binding_URI/username/password)
+        if (in_array('registrar', $cols, true) && in_array('aor', $cols, true)) {
+            $this->upsertRegistrantModern($db, $table, $cols, $uuid, $registrarUri, $proxyUri, $aor, $binding, $user, $pass);
+            return;
         }
+
+        // Legacy uac_registrant (l_uuid / auth_proxy / …) — keep IP2IP unaffected
+        if (!in_array('l_uuid', $cols, true)) {
+            throw new \RuntimeException("{$table} schema unexpected — need OpenSIPS 3.x registrant columns or legacy l_uuid");
+        }
+        $domain = $this->sipDomain !== '' ? $this->sipDomain : $host;
+        $authProxy = $proxyUri ?? $registrarUri;
+        // Empty realm → use WWW-Authenticate realm from vendor (forced host realm breaks many providers)
+        $realm = '';
+        $st = $db->prepare("SELECT id FROM `{$table}` WHERE l_uuid = ?");
+        $st->execute([$uuid]);
+        $fields = [
+            'l_username' => $user,
+            'l_domain' => $domain,
+            'r_username' => $user,
+            'r_domain' => $host,
+            'realm' => $realm,
+            'auth_username' => $user,
+            'auth_password' => $pass,
+            'auth_proxy' => $authProxy,
+            'expires' => 3600,
+        ];
+        if (in_array('contact_addr', $cols, true)) {
+            $fields['contact_addr'] = $contactHost . ':5060';
+        }
+        if ($rowId = $st->fetchColumn()) {
+            $parts = [];
+            $vals = [];
+            foreach ($fields as $c => $v) {
+                if (!in_array($c, $cols, true)) {
+                    continue;
+                }
+                $parts[] = "`{$c}` = ?";
+                $vals[] = $v;
+            }
+            $vals[] = $rowId;
+            $db->prepare("UPDATE `{$table}` SET " . implode(',', $parts) . ' WHERE id = ?')->execute($vals);
+        } else {
+            $insert = ['l_uuid' => $uuid] + $fields;
+            $insert = array_filter(
+                $insert,
+                static fn ($k) => $k === 'l_uuid' || in_array($k, $cols, true),
+                ARRAY_FILTER_USE_KEY
+            );
+            $insert['l_uuid'] = $uuid;
+            $names = array_keys($insert);
+            $sql = "INSERT INTO `{$table}` (" . implode(',', array_map(static fn ($c) => "`{$c}`", $names)) . ') VALUES ('
+                . implode(',', array_fill(0, count($names), '?')) . ')';
+            $db->prepare($sql)->execute(array_values($insert));
+        }
+    }
+
+    /**
+     * OpenSIPS 3.6+ registrant row (table registrant or uac_registrant with modern columns).
+     *
+     * @param list<string> $cols
+     */
+    private function upsertRegistrantModern(
+        PDO $db,
+        string $table,
+        array $cols,
+        string $uuid,
+        string $registrarUri,
+        ?string $proxyUri,
+        string $aor,
+        string $binding,
+        string $user,
+        string $pass,
+    ): void {
+        $fields = [
+            'registrar' => $registrarUri,
+            'aor' => $aor,
+            'binding_URI' => $binding,
+            'username' => $user,
+            'password' => $pass,
+            'expiry' => 3600,
+            'state' => 0,
+        ];
+        if (in_array('proxy', $cols, true)) {
+            $fields['proxy'] = $proxyUri;
+        }
+        if (in_array('third_party_registrant', $cols, true)) {
+            $fields['third_party_registrant'] = null;
+        }
+        if (in_array('binding_params', $cols, true)) {
+            $fields['binding_params'] = null;
+        }
+        if (in_array('forced_socket', $cols, true)) {
+            $fields['forced_socket'] = null;
+        }
+        $idCol = in_array('l_uuid', $cols, true) ? 'l_uuid' : (in_array('description', $cols, true) ? 'description' : null);
+
+        $rowId = null;
+        if ($idCol !== null) {
+            $st = $db->prepare("SELECT id FROM `{$table}` WHERE `{$idCol}` = ?");
+            $st->execute([$uuid]);
+            $rowId = $st->fetchColumn() ?: null;
+        }
+        if ($rowId === null) {
+            $st = $db->prepare("SELECT id FROM `{$table}` WHERE aor = ? AND registrar = ? LIMIT 1");
+            $st->execute([$aor, $registrarUri]);
+            $rowId = $st->fetchColumn() ?: null;
+        }
+        if ($idCol !== null) {
+            $fields[$idCol] = $uuid;
+        }
+
+        if ($rowId) {
+            $parts = [];
+            $vals = [];
+            foreach ($fields as $c => $v) {
+                if (!in_array($c, $cols, true)) {
+                    continue;
+                }
+                $parts[] = "`{$c}` = ?";
+                $vals[] = $v;
+            }
+            $vals[] = $rowId;
+            $db->prepare("UPDATE `{$table}` SET " . implode(',', $parts) . ' WHERE id = ?')->execute($vals);
+            return;
+        }
+
+        $insert = [];
+        foreach ($fields as $c => $v) {
+            if (in_array($c, $cols, true)) {
+                $insert[$c] = $v;
+            }
+        }
+        $names = array_keys($insert);
+        $sql = "INSERT INTO `{$table}` (" . implode(',', array_map(static fn ($c) => "`{$c}`", $names)) . ') VALUES ('
+            . implode(',', array_fill(0, count($names), '?')) . ')';
+        $db->prepare($sql)->execute(array_values($insert));
     }
 
     private function removeRegistrant(int $trunkId): void
     {
-        if (!$this->tableExists('uac_registrant')) {
+        $table = $this->registrantTable();
+        if ($table === null) {
             return;
         }
-        $this->db()->prepare('DELETE FROM uac_registrant WHERE l_uuid = ?')->execute([self::regUuid($trunkId)]);
+        $uuid = self::regUuid($trunkId);
+        $cols = $this->columns($table);
+        $db = $this->db();
+        if (in_array('l_uuid', $cols, true)) {
+            $db->prepare("DELETE FROM `{$table}` WHERE l_uuid = ?")->execute([$uuid]);
+        }
+        if (in_array('description', $cols, true)) {
+            $db->prepare("DELETE FROM `{$table}` WHERE description = ?")->execute([$uuid]);
+        }
+    }
+
+    /** Prefer OpenSIPS 3.x `registrant`, then legacy `uac_registrant`. */
+    private function registrantTable(): ?string
+    {
+        if ($this->tableExists('registrant')) {
+            $cols = $this->columns('registrant');
+            if (in_array('registrar', $cols, true) || in_array('l_uuid', $cols, true)) {
+                return 'registrant';
+            }
+        }
+        if ($this->tableExists('uac_registrant')) {
+            return 'uac_registrant';
+        }
+        return null;
+    }
+
+    /**
+     * Map signalling source IP → registered SIP username (ViciDial / dynamic REGISTER).
+     * Used when ACC src_user is empty or is CallerID digits.
+     */
+    public function usernameBySourceIp(string $ip): ?string
+    {
+        $ip = trim($ip);
+        if ($ip === '' || !filter_var($ip, FILTER_VALIDATE_IP) || !$this->enabled()) {
+            return null;
+        }
+        $hits = [];
+        foreach ($this->registeredContacts() as $user => $info) {
+            $blob = strtolower(($info['received'] ?? '') . ' ' . ($info['contact'] ?? ''));
+            if ($blob === '') {
+                continue;
+            }
+            if (preg_match('#(?:sip:)?(?:[^@;>\s]+@)?' . preg_quote(strtolower($ip), '#') . '(?:[:;>\s]|$)#', $blob)) {
+                $hits[strtolower((string) $user)] = true;
+            }
+        }
+        if ($this->tableExists('address')) {
+            try {
+                $st = $this->db()->prepare(
+                    'SELECT context_info FROM address WHERE grp = ? AND ip = ? LIMIT 4'
+                );
+                $st->execute([self::GRP_CUSTOMER, $ip]);
+                foreach ($st->fetchAll(PDO::FETCH_COLUMN) ?: [] as $ctx) {
+                    $ctx = trim((string) $ctx);
+                    if (preg_match('#^sip:([^@;>\s]+)$#i', $ctx, $m)) {
+                        $hits[strtolower($m[1])] = true;
+                    }
+                }
+            } catch (\Throwable) {
+            }
+        }
+        $users = array_keys($hits);
+        return count($users) === 1 ? (string) $users[0] : null;
     }
 
     public static function gwid(int $trunkId): string

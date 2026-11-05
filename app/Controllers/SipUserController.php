@@ -423,10 +423,10 @@ final class SipUserController extends CrudController
             $isDynamic = $host === '' || strtolower($host) === 'dynamic';
             if ($reg !== null) {
                 // OpenSIPS location/MI with future expires = registered (only source of truth for Dynamic).
-                // Never purge usrloc from this page — Asterisk ignores OPTIONS and was being wiped.
+                // Never purge usrloc from this page — portal OPTIONS is read-only RTT, not OpenSIPS qualify.
                 $online = true;
-                // Latency probe only when explicitly enabled; never for deciding online/offline.
-                if ($qualify && !$isDynamic) {
+                // Latency MS for Live column when Qualify=Yes (dynamic REGISTER + fixed contacts).
+                if ($qualify) {
                     $uri = trim((string) ($reg['received'] ?? '')) !== ''
                         ? (string) $reg['received']
                         : (string) ($reg['contact'] ?? '');

@@ -268,19 +268,53 @@ fi
 if (( ! skip_apt )); then
   apt_install_optional opensips-uac-module || true
 fi
+# uac_auth is a hard dependency of uac_registrant (digest REGISTER to vendors).
+# OpenSIPS 3.6 defaults: table=registrant, columns registrar/aor/binding_URI/username/password.
+mysql_root "${DB_OPENSIPS}" <<'SQL' 2>/dev/null || true
+CREATE TABLE IF NOT EXISTS registrant (
+  id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
+  registrar CHAR(255) DEFAULT '' NOT NULL,
+  proxy CHAR(255) DEFAULT NULL,
+  aor CHAR(255) DEFAULT '' NOT NULL,
+  third_party_registrant CHAR(255) DEFAULT NULL,
+  username CHAR(64) DEFAULT NULL,
+  password CHAR(64) DEFAULT NULL,
+  binding_URI CHAR(255) DEFAULT '' NOT NULL,
+  binding_params CHAR(64) DEFAULT NULL,
+  expiry INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  forced_socket CHAR(64) DEFAULT NULL,
+  cluster_shtag CHAR(64) DEFAULT NULL,
+  state INT DEFAULT 0 NOT NULL,
+  description CHAR(64) DEFAULT NULL,
+  KEY aor_idx (aor)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+SQL
+
 if [[ -f "${mod_dir}/uac_registrant.so" ]]; then
-  export OPENSIPS_UAC_BLOCK="loadmodule \"uac_registrant.so\"
+  _uac_auth_load=""
+  if [[ -f "${mod_dir}/uac_auth.so" ]]; then
+    _uac_auth_load="loadmodule \"uac_auth.so\""
+  fi
+  export OPENSIPS_UAC_BLOCK="${_uac_auth_load}
+loadmodule \"uac_registrant.so\"
 modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
+modparam(\"uac_registrant\", \"table_name\", \"registrant\")
 modparam(\"uac_registrant\", \"timer_interval\", 20)
-modparam(\"uac_registrant\", \"hash_size\", 2)"
+modparam(\"uac_registrant\", \"hash_size\", 2)
+modparam(\"uac_registrant\", \"failure_retry_interval\", 60)"
 else
   # refresh mod_dir in case package just landed
   mod_dir="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -n1)")"
   if [[ -f "${mod_dir}/uac_registrant.so" ]]; then
     export OPENSIPS_MPATH="${mod_dir}/"
-    export OPENSIPS_UAC_BLOCK="loadmodule \"uac_registrant.so\"
+    _uac_auth_load=""
+    [[ -f "${mod_dir}/uac_auth.so" ]] && _uac_auth_load="loadmodule \"uac_auth.so\""
+    export OPENSIPS_UAC_BLOCK="${_uac_auth_load}
+loadmodule \"uac_registrant.so\"
 modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
-modparam(\"uac_registrant\", \"timer_interval\", 20)"
+modparam(\"uac_registrant\", \"table_name\", \"registrant\")
+modparam(\"uac_registrant\", \"timer_interval\", 20)
+modparam(\"uac_registrant\", \"hash_size\", 2)"
   else
     export OPENSIPS_UAC_BLOCK='# uac_registrant.so not installed — IP peer trunks OK; Register-mode needs opensips-uac-module'
   fi

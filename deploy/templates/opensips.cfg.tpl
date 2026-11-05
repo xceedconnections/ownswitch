@@ -227,15 +227,17 @@ route {
 	# still proxy_authorize so load_credentials fills os_cid_mode / os_dncid / media AVPs.
 	# Without that, Softphone Display Name mode never runs (AVPs stay NULL → passthrough).
 	# Carrier ACL → deliver only if local AOR exists; else fall through to digest.
-	if (check_source_address(1)) {
+	# 4th arg captures address.context_info (sip:username) for IP peers without digest.
+	if (check_source_address(1, $sp, "any", $avp(os_addr_ctx))) {
 		if (is_present_hf("Proxy-Authorization") || is_present_hf("Authorization")) {
 			if (proxy_authorize("", "subscriber")) {
+				$avp(os_auth_user) = $au;
 				consume_credentials();
 			} else {
 				xlog("L_WARN", "IP ACL ok but INVITE digest failed user=$fU from=$si (AVPs may be empty)\n");
 			}
 		} else {
-			xlog("L_INFO", "IP ACL peer (no digest) from=$si user=$fU — CID prefs need sql load if used\n");
+			xlog("L_INFO", "IP ACL peer (no digest) from=$si user=$fU ctx=$avp(os_addr_ctx)\n");
 		}
 	} else {
 		if (check_source_address(2)) {
@@ -254,6 +256,7 @@ route {
 			proxy_challenge("", "auth");
 			exit;
 		}
+		$avp(os_auth_user) = $au;
 		consume_credentials();
 	}
 
@@ -272,6 +275,12 @@ route {
 		xlog("L_INFO", "local AOR hit for $rU from $fU\n");
 		record_route();
 		create_dialog("B");
+		route(resolve_os_src);
+		$dlg_val(os_dst) = $rU;
+		$acc_extra(src) = $dlg_val(os_src);
+		$acc_extra(dst) = $rU;
+		$acc_extra(cli) = $fU;
+		$acc_extra(ip) = $si;
 		if ($avp(os_dtmf) != NULL) {
 			$dlg_val(os_dtmf) = $avp(os_dtmf);
 		} else {
@@ -289,11 +298,8 @@ route {
 
 	record_route();
 	create_dialog("B");
-	# Prefer digest auth user ($au) — $fU may later become presented CallerID
-	$dlg_val(os_src) = $au;
-	if ($dlg_val(os_src) == NULL || $(dlg_val(os_src){s.len}) == 0) {
-		$dlg_val(os_src) = $fU;
-	}
+	# Prefer digest auth user — $fU may be presented CallerID (ViciDial)
+	route(resolve_os_src);
 	$dlg_val(os_dst) = $rU;
 	# Presented CLI starts as From user; apply_sip_cid replaces with display_name / fixed
 	$dlg_val(os_cli) = $fU;
@@ -355,10 +361,34 @@ route {
 	route(relay);
 }
 
+# Resolve SIP account for Live Calls / ACC src / billing.
+# Priority: digest $au → captured auth AVP → address context sip:user → non-phone $fU → $fU
+route[resolve_os_src] {
+	$var(src) = $au;
+	if ($var(src) == NULL || $(var(src){s.len}) == 0) {
+		$var(src) = $avp(os_auth_user);
+	}
+	if (($var(src) == NULL || $(var(src){s.len}) == 0)
+		&& $avp(os_addr_ctx) != NULL && $(avp(os_addr_ctx){s.len}) > 4) {
+		$var(src) = $(avp(os_addr_ctx){re.subst,/^sip://i});
+	}
+	if ($var(src) == NULL || $(var(src){s.len}) == 0) {
+		$var(src) = $fU;
+	}
+	$dlg_val(os_src) = $var(src);
+	xlog("L_INFO", "os_src=$dlg_val(os_src) au=$au fU=$fU ctx=$avp(os_addr_ctx) from=$si\n");
+}
+
 # Called only after alias+lookup already succeeded for a carrier-sourced INVITE
 route[inbound_from_carrier_deliver] {
 	record_route();
 	create_dialog("B");
+	route(resolve_os_src);
+	$dlg_val(os_dst) = $rU;
+	$acc_extra(src) = $dlg_val(os_src);
+	$acc_extra(dst) = $rU;
+	$acc_extra(cli) = $fU;
+	$acc_extra(ip) = $si;
 	do_accounting("db", "cdr|missed|failed");
 	$avp(os_media) = "relay";
 	route(apply_media);
