@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Ownswitch\Services\Reports;
 
-use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
+use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
 use Ownswitch\Support\TenantScope;
 use PDO;
 
@@ -76,7 +76,7 @@ final class ConcurrentCallsService
             return 0;
         }
         $set = array_fill_keys(array_map('strval', $users), true);
-        $prov = OpensipsProvisioner::fromConfig();
+        $prov = FreeswitchProvisioner::fromConfig();
         if (!$prov->enabled() || !$prov->hasMi()) {
             return 0;
         }

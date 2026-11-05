@@ -97,7 +97,7 @@ Edit `/etc/ownswitch/install.conf` (or pass env vars), then re-run the affected 
 | firewall CIDRs / ports | `--only 20` (and 50/70 if the SIP or RTP ports changed) |
 | domain / TLS | `--only 80,90,99` |
 | `PUBLIC_IP` / `PRIVATE_IP` (NAT) | `--only 50,70,90,99` |
-| enable FreeSWITCH | `FREESWITCH_ENABLED=1 … --only 75,90,99` |
+| FreeSWITCH cutover (replaces OpenSIPS) | see `docs/FREESWITCH-CUTOVER.md` |
 
 ## 8. Upgrading the installer itself
 

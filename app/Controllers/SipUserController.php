@@ -6,7 +6,7 @@ namespace Ownswitch\Controllers;
 
 use Ownswitch\App;
 use Ownswitch\Http\Request;
-use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
+use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\SipAccountRepository;
 use Ownswitch\Services\Dnc\DncService;
@@ -378,12 +378,12 @@ final class SipUserController extends CrudController
         if ($rows === []) {
             return $rows;
         }
-        $prov = OpensipsProvisioner::fromConfig();
+        $prov = FreeswitchProvisioner::fromConfig();
         if (!$prov->enabled()) {
             App::session()->flash(
                 'warning',
-                'Cannot read OpenSIPS registrations: '
-                . ($prov->initError() !== '' ? $prov->initError() : 'OPENSIPS_ENABLED off / DB credentials missing in ownswitch.env')
+                'Cannot read FreeSWITCH registrations: '
+                . ($prov->initError() !== '' ? $prov->initError() : 'ESL host or password missing in ownswitch.env')
             );
         }
         $regs = $prov->enabled() ? $prov->registeredContacts() : [];
@@ -518,7 +518,7 @@ final class SipUserController extends CrudController
                 }
             }
             if ($pw !== null && $pw !== '') {
-                [$ha1, $ha1b] = OpensipsProvisioner::ha1($username, $domain, (string) $pw);
+                [$ha1, $ha1b] = FreeswitchProvisioner::ha1($username, $domain, (string) $pw);
                 $data['ha1'] = $ha1;
                 $data['ha1b'] = $ha1b;
                 $data['password_changed_at'] = gmdate('Y-m-d H:i:s');
@@ -625,13 +625,13 @@ final class SipUserController extends CrudController
     protected function afterSave(Request $r, int $id, array $data, ?array $existing): ?string
     {
         $row = $this->repo()->findInternal($id);
-        $prov = OpensipsProvisioner::fromConfig();
+        $prov = FreeswitchProvisioner::fromConfig();
         $fw = new \Ownswitch\Services\System\SipPeerFirewallService();
         $connMode = $this->resolveConnectionMode($row ?? $data);
         if ($row) {
             if (!$prov->enabled()) {
-                App::session()->flash('warning', 'Saved in portal, but OpenSIPS provisioning is not available: '
-                    . ($prov->initError() !== '' ? $prov->initError() : 'OPENSIPS_ENABLED off'));
+                App::session()->flash('warning', 'Saved in portal, but FreeSWITCH is not available: '
+                    . ($prov->initError() !== '' ? $prov->initError() : 'ESL password missing'));
             } else {
                 try {
                     if ($row['status'] === 'active') {
@@ -666,8 +666,8 @@ final class SipUserController extends CrudController
                         $prov->reloadAddresses();
                     }
                 } catch (\Throwable $e) {
-                    error_log('[ownswitch] OpenSIPS provision SIP user: ' . $e->getMessage());
-                    App::session()->flash('warning', 'Saved, but OpenSIPS provisioning failed: ' . mb_substr($e->getMessage(), 0, 240));
+                    error_log('[ownswitch] FreeSWITCH provision SIP user: ' . $e->getMessage());
+                    App::session()->flash('warning', 'Saved, but FreeSWITCH provisioning failed: ' . mb_substr($e->getMessage(), 0, 240));
                 }
             }
 
@@ -705,12 +705,12 @@ final class SipUserController extends CrudController
         if ($row && $connMode === 'ip' && $row['status'] === 'active') {
             $ip = (string) ($row['sip_host'] ?? '');
             $peerPort = (int) ($row['sip_port'] ?? 5060);
-            return "IP based SIP peer saved. Host={$ip} port={$peerPort} — OpenSIPS ACL + firewall updated (old IP/port removed).";
+            return "IP based SIP peer saved. Host={$ip} port={$peerPort}. Calls from that IP are accepted. Firewall updated.";
         }
         if ($row && $connMode === 'dynamic' && empty($row['password_enc'])) {
             App::session()->flash(
                 'warning',
-                'Re-save this SIP user with a password once so OpenSIPS can accept Domain=FQDN and Domain=IP (plaintext digest).'
+                'Re-save this SIP user with a password once so FreeSWITCH can accept Domain=FQDN and Domain=IP.'
             );
         }
         return null;
@@ -718,14 +718,14 @@ final class SipUserController extends CrudController
 
     protected function afterDelete(Request $r, array $row): void
     {
-        $prov = OpensipsProvisioner::fromConfig();
+        $prov = FreeswitchProvisioner::fromConfig();
         if ($prov->enabled()) {
             try {
                 $prov->removeSubscriber((string) $row['username'], (string) $row['domain']);
                 $prov->removeSipPeerProfile((string) $row['username']);
                 $prov->reloadAddresses();
             } catch (\Throwable) {
-                App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
+                App::session()->flash('warning', 'Deleted locally, but FreeSWITCH deprovisioning failed.');
             }
         }
         try {

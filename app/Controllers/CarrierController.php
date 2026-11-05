@@ -6,7 +6,7 @@ namespace Ownswitch\Controllers;
 
 use Ownswitch\App;
 use Ownswitch\Http\Request;
-use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
+use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
 use Ownswitch\Repositories\BaseRepository;
 use Ownswitch\Repositories\CarrierRepository;
 use Ownswitch\Services\Routing\OpensipsRoutingSync;
@@ -224,9 +224,9 @@ final class CarrierController extends CrudController
         if ($this->kind !== 'trunk') {
             return null;
         }
-        $prov = OpensipsProvisioner::fromConfig();
+        $prov = FreeswitchProvisioner::fromConfig();
         if (!$prov->enabled()) {
-            return 'Trunk saved in portal only — OpenSIPS provisioning disabled.';
+            return 'Trunk saved in portal only — FreeSWITCH ESL is not configured.';
         }
         try {
             $row = $this->repo()->findInternal($id);
@@ -237,10 +237,10 @@ final class CarrierController extends CrudController
             if ($sync['warnings'] !== []) {
                 App::session()->flash('warning', 'Trunk saved with warnings: ' . mb_substr(implode(' | ', $sync['warnings']), 0, 300));
             }
-            return 'Trunk pushed to OpenSIPS (gateway + routes + auth).';
+            return 'Trunk pushed to FreeSWITCH (Sofia gateway). Routes stay in the portal.';
         } catch (\Throwable $e) {
-            error_log('[ownswitch] OpenSIPS trunk sync: ' . $e->getMessage());
-            App::session()->flash('warning', 'Saved, but OpenSIPS sync failed: ' . mb_substr($e->getMessage(), 0, 280));
+            error_log('[ownswitch] FreeSWITCH trunk sync: ' . $e->getMessage());
+            App::session()->flash('warning', 'Saved, but FreeSWITCH sync failed: ' . mb_substr($e->getMessage(), 0, 280));
             return null;
         }
     }
@@ -250,13 +250,13 @@ final class CarrierController extends CrudController
         if ($this->kind !== 'trunk') {
             return;
         }
-        $prov = OpensipsProvisioner::fromConfig();
+        $prov = FreeswitchProvisioner::fromConfig();
         if ($prov->enabled()) {
             try {
                 $prov->removeTrunk((int) $row['id']);
                 (new OpensipsRoutingSync($this->db(), $prov))->syncAll();
             } catch (\Throwable) {
-                App::session()->flash('warning', 'Deleted locally, but OpenSIPS deprovisioning failed.');
+                App::session()->flash('warning', 'Deleted locally, but FreeSWITCH deprovisioning failed.');
             }
         }
     }

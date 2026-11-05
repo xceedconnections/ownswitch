@@ -55,11 +55,14 @@ $cycle = static function () use ($pdo, $ingest, $prepaid, $limit, $spool): int {
     $done = 0;
     $prepaid->expireStale();
 
-    // Bridge OpenSIPS acc / missed_calls → portal queue (failed + completed)
+    // OpenSIPS acc import is unused once FreeSWITCH posts xml_cdr. Skip when that DB is not configured.
     try {
-        $pulled = (new OpensipsAccImporter($pdo, OpensipsProvisioner::fromConfig()))->import($limit);
-        if ($pulled > 0) {
-            echo gmdate('c') . " queued {$pulled} OpenSIPS acc row(s)\n";
+        $os = OpensipsProvisioner::fromConfig();
+        if ($os->enabled()) {
+            $pulled = (new OpensipsAccImporter($pdo, $os))->import($limit);
+            if ($pulled > 0) {
+                echo gmdate('c') . " queued {$pulled} OpenSIPS acc row(s)\n";
+            }
         }
     } catch (\Throwable $e) {
         fwrite(STDERR, 'opensips acc import: ' . $e->getMessage() . "\n");

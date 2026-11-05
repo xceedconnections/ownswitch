@@ -49,10 +49,10 @@ Ansible alternative: `deploy/ansible/playbook.yml` (+ `inventory.example`) runs 
 | 20 | `20_firewall.sh` | ufw default-deny; SSH, 80/443, SIP, RTP range only; explicit denies for internal ports; fail2ban(sshd) |
 | 30 | `30_mysql.sh` | MySQL **8.4 LTS** via MySQL APT repo; DBs `ownswitch`, `opensips`, `cgrates`; per-DB users |
 | 40 | `40_redis.sh` | Redis on loopback, `requirepass`, AOF, `noeviction` |
-| 50 | `50_opensips.sh` | OpenSIPS 3.6 from apt.opensips.org, modules incl. `cgrates` + `mysql`, schema, validated config |
+| 50 | `50_opensips.sh` | Does not install OpenSIPS. SIP is FreeSWITCH (stage 75). Existing hosts: `deploy/remove-opensips.sh` |
 | 60 | `60_cgrates.sh` | CGRateS v0.10.4 (source build), Redis DataDB idx 10, MySQL StorDB `cgrates`, systemd unit |
 | 70 | `70_rtpengine.sh` | RTPengine + recording daemon, kernel module if possible, loopback ng socket |
-| 75 | `75_freeswitch.sh` | **only if `FREESWITCH_ENABLED=1`**; source build, ESL 127.0.0.1:8021 |
+| 75 | `75_freeswitch.sh` | FreeSWITCH SIP edge on `SIP_PORT`, ESL 127.0.0.1:8021, xml_curl + xml_cdr. Skipped only when `FREESWITCH_ENABLED=0` |
 | 80 | `80_php_nginx.sh` | PHP 8.3-FPM dedicated pool, nginx vhost, self-signed → Let's Encrypt |
 | 90 | `90_app_deploy.sh` | release deploy, env file, migrations hook, first admin |
 | 95 | `95_workers.sh` | systemd worker/scheduler/backup units, logrotate, `ownswitch-backup` |

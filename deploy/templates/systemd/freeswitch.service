@@ -1,7 +1,7 @@
 # Managed by Ownswitch installer - rendered from deploy/templates/systemd/freeswitch.service
 # Only installed when FREESWITCH_ENABLED=1
 [Unit]
-Description=FreeSWITCH (Ownswitch media processing, optional)
+Description=FreeSWITCH (Ownswitch SIP edge)
 After=network-online.target
 Wants=network-online.target
 

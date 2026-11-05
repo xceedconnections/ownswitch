@@ -244,7 +244,7 @@ final class CdrIngestService
             // Dynamic REGISTER (ViciDial): usrloc received/contact IP → SIP username
             if ($customerId === null) {
                 try {
-                    $prov = \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig();
+                    $prov = \Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner::fromConfig();
                     $u = $prov->enabled() ? $prov->usernameBySourceIp((string) $d['source_ip']) : null;
                     if ($u !== null && $u !== '') {
                         $st = $this->pdo->prepare(
@@ -285,7 +285,7 @@ final class CdrIngestService
     private static function isTrustedCdrSource(string $source): bool
     {
         $source = strtolower(trim($source));
-        if (in_array($source, ['worker', 'internal', 'seed', 'opensips', 'opensips_acc', 'opensips_missed_calls'], true)) {
+        if (in_array($source, ['worker', 'internal', 'seed', 'freeswitch', 'opensips', 'opensips_acc', 'opensips_missed_calls'], true)) {
             return true;
         }
         return str_starts_with($source, 'opensips_');

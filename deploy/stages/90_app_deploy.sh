@@ -123,7 +123,7 @@ fi
 # 1. Secrets + env file
 # ---------------------------------------------------------------------------
 export APP_KEY MYSQL_OWNSWITCH_PASSWORD MYSQL_OPENSIPS_PASSWORD MYSQL_CGRATES_RO_PASSWORD REDIS_PASSWORD \
-       RECORDING_NOTIFY_TOKEN FS_ESL_PASSWORD OPENSIPS_MI_HTTP_URL
+       RECORDING_NOTIFY_TOKEN FS_ESL_PASSWORD FS_XML_SECRET OPENSIPS_MI_HTTP_URL
 APP_KEY="$(ensure_secret app_key 64)"
 MYSQL_OWNSWITCH_PASSWORD="$(get_secret mysql_ownswitch_password)"
 MYSQL_OPENSIPS_PASSWORD="$(get_secret mysql_opensips_password)"
@@ -135,6 +135,7 @@ if is_true "${FREESWITCH_ENABLED}" && [[ -s "$(secret_path freeswitch_esl_passwo
 else
   FS_ESL_PASSWORD=""
 fi
+FS_XML_SECRET="$(ensure_secret freeswitch_xml_secret 40)"
 if ss -H -ltn 'sport = :8888' | grep -q .; then OPENSIPS_MI_HTTP_URL="http://127.0.0.1:8888/mi"; else OPENSIPS_MI_HTTP_URL=""; fi
 
 render_template "${TEMPLATE_DIR}/ownswitch.env.tpl" "${ENV_FILE}" 0640 root ownswitch

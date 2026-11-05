@@ -65,44 +65,23 @@ final class HealthService
     /** @return array{component:string,status:string,detail:string} */
     private function probeOpensips(): array
     {
-        $os = (array) App::config('app.integrations.opensips', []);
-        if (empty($os['enabled'])) {
-            return ['component' => 'OpenSIPS', 'status' => 'unconfigured', 'detail' => 'OPENSIPS_ENABLED off'];
+        $prov = \Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner::fromConfig();
+        if (!$prov->enabled()) {
+            return ['component' => 'FreeSWITCH', 'status' => 'unconfigured', 'detail' => $prov->initError() ?: 'ESL not configured'];
         }
         try {
-            $prov = \Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner::fromConfig();
-            if (!$prov->enabled()) {
-                return ['component' => 'OpenSIPS', 'status' => 'fail', 'detail' => $prov->initError() ?: 'DB not connected'];
-            }
-            // Re-open via config for counts (provisioner PDO is private)
-            $db = \Ownswitch\Database\Connection::make((array) $os['db'] + ['charset' => 'utf8mb4']);
-            $subs = (int) $db->query('SELECT COUNT(*) FROM subscriber')->fetchColumn();
-            $loc = 0;
-            $hasLocation = true;
-            try {
-                $loc = (int) $db->query('SELECT COUNT(*) FROM location')->fetchColumn();
-            } catch (\Throwable) {
-                $hasLocation = false;
-            }
-            $gws = 0;
-            try {
-                $gws = (int) $db->query('SELECT COUNT(*) FROM dr_gateways')->fetchColumn();
-            } catch (\Throwable) {
-            }
-            $domain = (string) ($os['sip_domain'] ?? '');
-            $detail = "realm={$domain}; subscribers={$subs}; registered_contacts={$loc}; trunks/gateways={$gws}";
-            if (!$hasLocation) {
-                return ['component' => 'OpenSIPS', 'status' => 'fail', 'detail' => $detail . ' — missing opensips.location (run: sudo bash /opt/ownswitch-src/deploy/fix-opensips-provision.sh)'];
-            }
-            if ($subs === 0) {
-                return ['component' => 'OpenSIPS', 'status' => 'warn', 'detail' => $detail . ' — no SIP users in opensips.subscriber (reset SIP password in portal)'];
-            }
-            if ($loc === 0) {
-                return ['component' => 'OpenSIPS', 'status' => 'warn', 'detail' => $detail . ' — softphone not registered (UDP 5060). Run: sudo bash /opt/ownswitch-src/deploy/fix-udp-5060.sh'];
-            }
-            return ['component' => 'OpenSIPS', 'status' => 'ok', 'detail' => $detail];
+            $esl = new \Ownswitch\Integrations\FreeSWITCH\EslClient(
+                (string) App::config('app.integrations.freeswitch.host'),
+                (int) App::config('app.integrations.freeswitch.port', 8021),
+                (string) App::config('app.integrations.freeswitch.password'),
+                3.0
+            );
+            $status = $esl->status();
+            $esl->close();
+            $regs = count($prov->registeredContacts());
+            return ['component' => 'FreeSWITCH', 'status' => 'ok', 'detail' => 'ESL up; registered=' . $regs . '; ' . mb_substr(str_replace(["\r", "\n"], ' ', $status), 0, 180)];
         } catch (\Throwable $e) {
-            return ['component' => 'OpenSIPS', 'status' => 'fail', 'detail' => $e->getMessage()];
+            return ['component' => 'FreeSWITCH', 'status' => 'fail', 'detail' => $e->getMessage()];
         }
     }
 

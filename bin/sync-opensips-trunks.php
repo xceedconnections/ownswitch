@@ -13,10 +13,10 @@ $root = dirname(__DIR__);
 require $root . '/app/bootstrap.php';
 
 use Ownswitch\App;
-use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
+use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
 use Ownswitch\Services\Routing\OpensipsRoutingSync;
 
-$prov = OpensipsProvisioner::fromConfig();
+$prov = FreeswitchProvisioner::fromConfig();
 $sync = new OpensipsRoutingSync(App::db(), $prov);
 $result = $sync->syncAll();
 

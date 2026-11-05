@@ -174,7 +174,7 @@ init_config() {
   : "${SSH_ALLOW_CIDRS:=}"      # comma separated; empty = any source may reach SSH
   : "${ADMIN_ALLOW_CIDRS:=}"    # reserved: restrict 80/443 (empty = public)
   : "${FAIL2BAN_ENABLED:=1}"
-  : "${FREESWITCH_ENABLED:=0}"
+  : "${FREESWITCH_ENABLED:=1}"
   : "${FREESWITCH_VERSION:=v1.10.12}"
   : "${CGRATES_VERSION:=v0.10.4}"
   : "${CGRATES_TENANT:=ownswitch.local}"

@@ -4,16 +4,16 @@ declare(strict_types=1);
 
 namespace Ownswitch\Services\Routing;
 
-use Ownswitch\Integrations\OpenSIPS\OpensipsProvisioner;
+use Ownswitch\Integrations\FreeSWITCH\FreeswitchProvisioner;
 use Ownswitch\Services\Billing\RateResolver;
 use Ownswitch\Services\Billing\RatingService;
 use Ownswitch\Services\Settings\SettingsService;
 use PDO;
 
-/** Full sync of Ownswitch trunks + routes → OpenSIPS drouting / registrant / address. */
+/** Write Sofia gateways. Routing rules stay in the Ownswitch database for the dialplan. */
 final class OpensipsRoutingSync
 {
-    public function __construct(private PDO $own, private OpensipsProvisioner $prov)
+    public function __construct(private PDO $own, private FreeswitchProvisioner $prov)
     {
     }
 
@@ -22,7 +22,7 @@ final class OpensipsRoutingSync
     {
         $warnings = [];
         if (!$this->prov->enabled()) {
-            return ['trunks' => 0, 'rules' => 0, 'warnings' => ['OpenSIPS provisioning disabled (OPENSIPS_ENABLED=false)']];
+            return ['trunks' => 0, 'rules' => 0, 'warnings' => ['FreeSWITCH ESL is not configured']];
         }
 
         $trunks = $this->own->query('SELECT * FROM carrier_trunks')->fetchAll(PDO::FETCH_ASSOC) ?: [];
