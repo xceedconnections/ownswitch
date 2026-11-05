@@ -269,7 +269,7 @@ if (( ! skip_apt )); then
   apt_install_optional opensips-uac-module || true
 fi
 # uac_auth is a hard dependency of uac_registrant (digest REGISTER to vendors).
-# OpenSIPS 3.6 defaults: table=registrant, columns registrar/aor/binding_URI/username/password.
+# Official OpenSIPS schema + version row — missing version → "failed to initialize modules".
 mysql_root "${DB_OPENSIPS}" <<'SQL' 2>/dev/null || true
 CREATE TABLE IF NOT EXISTS registrant (
   id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY NOT NULL,
@@ -281,42 +281,45 @@ CREATE TABLE IF NOT EXISTS registrant (
   password CHAR(64) DEFAULT NULL,
   binding_URI CHAR(255) DEFAULT '' NOT NULL,
   binding_params CHAR(64) DEFAULT NULL,
-  expiry INT(11) UNSIGNED DEFAULT 0 NOT NULL,
+  expiry INT(10) UNSIGNED DEFAULT NULL,
   forced_socket CHAR(64) DEFAULT NULL,
   cluster_shtag CHAR(64) DEFAULT NULL,
-  state INT DEFAULT 0 NOT NULL,
-  description CHAR(64) DEFAULT NULL,
-  KEY aor_idx (aor)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+  state INT DEFAULT 0 NOT NULL
+) ENGINE=InnoDB;
 SQL
+# Add state / unique index if an older empty table already existed
+mysql_root "${DB_OPENSIPS}" -e "ALTER TABLE registrant ADD COLUMN state INT DEFAULT 0 NOT NULL" 2>/dev/null || true
+mysql_root "${DB_OPENSIPS}" -e "ALTER TABLE registrant ADD UNIQUE KEY registrant_idx (aor, binding_URI, registrar)" 2>/dev/null || true
+mysql_root "${DB_OPENSIPS}" -e \
+  "INSERT INTO version (table_name, table_version) SELECT 'registrant', 3
+   FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM version WHERE table_name='registrant')" 2>/dev/null || true
+mysql_root "${DB_OPENSIPS}" -e \
+  "UPDATE version SET table_version=3 WHERE table_name='registrant'" 2>/dev/null || true
 
-if [[ -f "${mod_dir}/uac_registrant.so" ]]; then
-  _uac_auth_load=""
-  if [[ -f "${mod_dir}/uac_auth.so" ]]; then
-    _uac_auth_load="loadmodule \"uac_auth.so\""
-  fi
-  export OPENSIPS_UAC_BLOCK="${_uac_auth_load}
+# Only enable UAC when BOTH .so files exist (registrant calls load_uac_auth_api at init)
+if [[ -f "${mod_dir}/uac_registrant.so" && -f "${mod_dir}/uac_auth.so" ]]; then
+  export OPENSIPS_UAC_BLOCK="loadmodule \"uac_auth.so\"
 loadmodule \"uac_registrant.so\"
 modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
 modparam(\"uac_registrant\", \"table_name\", \"registrant\")
 modparam(\"uac_registrant\", \"timer_interval\", 20)
 modparam(\"uac_registrant\", \"hash_size\", 2)
 modparam(\"uac_registrant\", \"failure_retry_interval\", 60)"
+  log_info "UAC registrant enabled (uac_auth + uac_registrant)"
 else
-  # refresh mod_dir in case package just landed
   mod_dir="$(dirname "$(find /usr/lib -type f -name tm.so -path '*opensips/modules*' 2>/dev/null | head -n1)")"
-  if [[ -f "${mod_dir}/uac_registrant.so" ]]; then
-    export OPENSIPS_MPATH="${mod_dir}/"
-    _uac_auth_load=""
-    [[ -f "${mod_dir}/uac_auth.so" ]] && _uac_auth_load="loadmodule \"uac_auth.so\""
-    export OPENSIPS_UAC_BLOCK="${_uac_auth_load}
+  export OPENSIPS_MPATH="${mod_dir}/"
+  if [[ -f "${mod_dir}/uac_registrant.so" && -f "${mod_dir}/uac_auth.so" ]]; then
+    export OPENSIPS_UAC_BLOCK="loadmodule \"uac_auth.so\"
 loadmodule \"uac_registrant.so\"
 modparam(\"uac_registrant\", \"db_url\", \"${OPENSIPS_DB_URL}\")
 modparam(\"uac_registrant\", \"table_name\", \"registrant\")
 modparam(\"uac_registrant\", \"timer_interval\", 20)
 modparam(\"uac_registrant\", \"hash_size\", 2)"
+    log_info "UAC registrant enabled (refreshed mod_dir)"
   else
-    export OPENSIPS_UAC_BLOCK='# uac_registrant.so not installed — IP peer trunks OK; Register-mode needs opensips-uac-module'
+    export OPENSIPS_UAC_BLOCK='# uac_auth.so / uac_registrant.so missing — IP peer trunks OK; Register-mode needs opensips-uac-module'
+    log_warn "UAC registrant disabled — IP trunks still work"
   fi
 fi
 
@@ -658,7 +661,53 @@ systemctl stop opensips >/dev/null 2>&1 || true
 fuser -k "${SIP_PORT}/udp" >/dev/null 2>&1 || true
 fuser -k "${SIP_PORT}/tcp" >/dev/null 2>&1 || true
 sleep 1
-svc_apply opensips 1
+
+_start_opensips() {
+  systemctl reset-failed opensips >/dev/null 2>&1 || true
+  systemctl start opensips
+  sleep 2
+  systemctl is-active --quiet opensips
+}
+
+if ! _start_opensips; then
+  log_warn "OpenSIPS failed to start — last errors:"
+  journalctl -u opensips -n 60 --no-pager >&2 || true
+  # Retry 1: disable UAC (common: version/schema / missing uac_auth API)
+  if grep -q 'loadmodule "uac_registrant.so"' /etc/opensips/opensips.cfg; then
+    log_warn "Retrying without uac_registrant (IP peer trunks still work)"
+    sed -i \
+      -e 's/^loadmodule "uac_auth.so"/# loadmodule "uac_auth.so"/' \
+      -e 's/^loadmodule "uac_registrant.so"/# loadmodule "uac_registrant.so"/' \
+      -e 's/^modparam("uac_registrant"/# modparam("uac_registrant"/' \
+      /etc/opensips/opensips.cfg
+    systemctl stop opensips >/dev/null 2>&1 || true
+    if _start_opensips; then
+      log_warn "OpenSIPS started WITHOUT UAC registrant — Register-mode trunks disabled until schema/modules fixed"
+    fi
+  fi
+fi
+
+if ! systemctl is-active --quiet opensips; then
+  # Retry 2: drop dialog OPTIONS ping params (older builds)
+  if grep -q 'options_ping_interval' /etc/opensips/opensips.cfg; then
+    log_warn "Retrying without dialog options_ping_interval / delete_delay"
+    sed -i \
+      -e 's/^modparam("dialog", "options_ping_interval"/# modparam("dialog", "options_ping_interval"/' \
+      -e 's/^modparam("dialog", "delete_delay"/# modparam("dialog", "delete_delay"/' \
+      /etc/opensips/opensips.cfg
+    # Also soften create_dialog flags if BPp unsupported
+    sed -i 's/create_dialog("BPp")/create_dialog("B")/g' /etc/opensips/opensips.cfg
+    systemctl stop opensips >/dev/null 2>&1 || true
+    _start_opensips || true
+  fi
+fi
+
+if ! systemctl is-active --quiet opensips; then
+  journalctl -u opensips -n 80 --no-pager >&2 || true
+  die "opensips is not active"
+fi
+log_ok "opensips active"
+systemctl enable opensips >/dev/null 2>&1 || true
 
 # Digest REGISTER must be present in the live file
 grep -q 'www_authorize' /etc/opensips/opensips.cfg \
