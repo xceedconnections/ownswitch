@@ -670,7 +670,7 @@ route[check_cid_len] {
 }
 
 # Rate CAP: portal compares buy rate vs SIP-user CAP and trunk CAP (bin/dial-cap-check.php)
-# Stub when exec module is absent — deploy injects real body via @@OPENSIPS_RATE_CAP_ROUTE@@
+# (OPENSIPS_RATE_CAP_ROUTE injected on its own line — never put multiline placeholders inside # comments)
 @@OPENSIPS_RATE_CAP_ROUTE@@
 
 # DNC: trunk attrs dncid=N → Redis SISMEMBER or indexed MySQL dnc_cache (never PHP exec)
