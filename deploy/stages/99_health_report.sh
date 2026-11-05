@@ -32,6 +32,11 @@ svc_check() { # unit [required=1]
 # ---------------------------------------------------------------------------
 svc_check mysql
 svc_check redis-server
+# activating / failed is not a report-only problem: repair the unit, then score it.
+if ! systemctl is-active --quiet opensips; then
+  log_warn "opensips is '$(systemctl is-active opensips 2>/dev/null || true)' — repairing before health score"
+  bash "${DEPLOY_DIR}/fix-opensips-activating.sh" || true
+fi
 svc_check opensips
 svc_check cgrates
 svc_check "php${PHP_VERSION}-fpm"

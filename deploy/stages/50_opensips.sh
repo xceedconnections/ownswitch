@@ -647,18 +647,33 @@ if [[ -f /etc/default/opensips ]] && grep -qE '^RUN_OPENSIPS=no' /etc/default/op
   sed -i 's/^RUN_OPENSIPS=no/RUN_OPENSIPS=yes/' /etc/default/opensips
 fi
 
-# Package unit is Type=forking + PIDFile. Foreground (-F) without Type=simple leaves
-# systemd stuck in "activating" forever (health FAIL | service opensips | activating).
-# Always install a matching drop-in before any start/restart.
+# Package unit is Type=forking + PIDFile. A drop-in that only sets ExecStart=-F
+# leaves systemd in "activating" forever. Replace the unit outright.
+rm -f /etc/systemd/system/opensips.service.d/*.conf
 install -d /etc/systemd/system/opensips.service.d
-cat >/etc/systemd/system/opensips.service.d/ownswitch.conf <<'EOF'
+cat >/etc/systemd/system/opensips.service <<'EOF'
+[Unit]
+Description=OpenSIPS SIP server (Ownswitch)
+After=network-online.target mysql.service
+Wants=network-online.target
+
 [Service]
 Type=simple
-ExecStart=
+User=opensips
+Group=opensips
+RuntimeDirectory=opensips
+RuntimeDirectoryMode=0750
 ExecStart=/usr/sbin/opensips -F -f /etc/opensips/opensips.cfg
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2
-TimeoutStartSec=30
+TimeoutStartSec=20
+TimeoutStopSec=10
+LimitNOFILE=65536
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 

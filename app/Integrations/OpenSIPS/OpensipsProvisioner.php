@@ -1099,7 +1099,7 @@ final class OpensipsProvisioner
                 return [];
             }
             $select = ['callid'];
-            foreach (['from_uri', 'to_uri', 'from_tag', 'to_tag', 'h_entry', 'h_id', 'hash_entry', 'hash_id'] as $c) {
+            foreach (['from_uri', 'to_uri', 'from_tag', 'to_tag', 'dlg_id', 'h_entry', 'h_id', 'hash_entry', 'hash_id'] as $c) {
                 if (in_array($c, $cols, true)) {
                     $select[] = $c;
                 }
@@ -1343,11 +1343,20 @@ final class OpensipsProvisioner
             $ids[] = $callId;
         }
 
+        // DB dlg_id (64-bit) is the reliable hangup key when MI JSON omits "ID"
+        if ($callId !== '') {
+            foreach ($this->dialogHashIdsFromDb($callId) as $dbId) {
+                if (!in_array($dbId, $ids, true)) {
+                    array_unshift($ids, $dbId);
+                }
+            }
+        }
+
         $last = 'no MI response';
         $miOk = false;
         foreach ($ids as $id) {
             $id = trim((string) $id);
-            if ($id === '') {
+            if ($id === '' || !preg_match('/^[0-9]+:[0-9]+$/', $id)) {
                 continue;
             }
             // Named dialog_id (OpenSIPS 3.x) + positional; miCall also tries opensips-cli
@@ -1357,6 +1366,9 @@ final class OpensipsProvisioner
             ];
             foreach ($attempts as $params) {
                 $r = $this->miCall('dlg_end_dlg', $params);
+                if ($r === null) {
+                    $r = $this->miFifoJson('dlg_end_dlg', is_array($params) && !array_is_list($params) ? $params : ['dialog_id' => $id]);
+                }
                 if ($r !== null && !isset($r['error'])) {
                     $miOk = true;
                     $last = 'dlg_end_dlg ok id=' . $id;
@@ -1366,6 +1378,9 @@ final class OpensipsProvisioner
                     ? (string) ($r['error']['message'] ?? json_encode($r['error']))
                     : (string) ($r['error'] ?? ($r === null ? 'MI unreachable' : 'no response'));
             }
+        }
+        if (!$miOk && $last === 'no MI response') {
+            $last = 'no dialog id (need N:N from dlg_list). OpenSIPS must be active.';
         }
 
         // Verify BYE took effect before claiming success / purging DB
@@ -1401,6 +1416,124 @@ final class OpensipsProvisioner
                 . ' — ensure opensips is active and mi_http listens on 127.0.0.1:8888'
                 . ' (sudo bash /opt/ownswitch-src/deploy/fix-opensips-activating.sh)',
         ];
+    }
+
+    /**
+     * OpenSIPS dialog.dlg_id is (h_entry << 32) | h_id. MI wants "entry:id".
+     *
+     * @return list<string>
+     */
+    private function dialogHashIdsFromDb(string $callId): array
+    {
+        $callId = trim($callId);
+        if ($callId === '' || !$this->tableExists('dialog')) {
+            return [];
+        }
+        try {
+            $cols = $this->columns('dialog');
+            if (!in_array('dlg_id', $cols, true) || !in_array('callid', $cols, true)) {
+                return [];
+            }
+            $st = $this->db()->prepare('SELECT dlg_id FROM dialog WHERE callid = ? LIMIT 5');
+            $st->execute([$callId]);
+            $out = [];
+            foreach ($st->fetchAll(PDO::FETCH_COLUMN) ?: [] as $raw) {
+                $id = self::hashIdFromDlgId($raw);
+                if ($id !== '') {
+                    $out[] = $id;
+                }
+            }
+            return $out;
+        } catch (\Throwable $e) {
+            error_log('[ownswitch] dialogHashIdsFromDb: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /** @param mixed $raw */
+    public static function hashIdFromDlgId(mixed $raw): string
+    {
+        if ($raw === null || $raw === '' || !is_numeric($raw)) {
+            return '';
+        }
+        $s = (string) $raw;
+        if (function_exists('bcmod') && function_exists('bcdiv')) {
+            $entry = bcdiv($s, '4294967296', 0);
+            $hid = bcmod($s, '4294967296');
+            if ($entry !== '' && $hid !== '') {
+                return $entry . ':' . $hid;
+            }
+        }
+        $n = (int) $s;
+        if ($n <= 0) {
+            return '';
+        }
+        return (($n >> 32) & 0xFFFFFFFF) . ':' . ($n & 0xFFFFFFFF);
+    }
+
+    /**
+     * JSON-RPC write straight to the MI fifo (works when HTTP :8888 is down).
+     *
+     * @param array<string,mixed> $params
+     * @return array<string,mixed>|null
+     */
+    private function miFifoJson(string $method, array $params): ?array
+    {
+        $fifos = [];
+        if ($this->miFifo !== '') {
+            $fifos[] = $this->miFifo;
+        }
+        foreach (['/run/opensips/opensips.fifo', '/tmp/opensips_fifo'] as $p) {
+            if (!in_array($p, $fifos, true)) {
+                $fifos[] = $p;
+            }
+        }
+        foreach ($fifos as $fifo) {
+            if (!is_file($fifo) && !file_exists($fifo)) {
+                continue;
+            }
+            $reply = sys_get_temp_dir() . '/os_mi_' . getmypid() . '_' . bin2hex(random_bytes(3));
+            @unlink($reply);
+            if (function_exists('posix_mkfifo')) {
+                @posix_mkfifo($reply, 0666);
+            }
+            $req = json_encode([
+                'jsonrpc' => '2.0',
+                'method' => $method,
+                'params' => $params,
+                'id' => 1,
+                'reply_fifo' => $reply,
+            ], JSON_THROW_ON_ERROR);
+            $fp = @fopen($fifo, 'w');
+            if ($fp === false) {
+                @unlink($reply);
+                continue;
+            }
+            stream_set_timeout($fp, 2);
+            $written = @fwrite($fp, $req . "\n");
+            fclose($fp);
+            if ($written === false || $written < 1) {
+                @unlink($reply);
+                continue;
+            }
+            $this->lastMiReachable = true;
+            $out = '';
+            $rf = @fopen($reply, 'r');
+            if ($rf !== false) {
+                stream_set_timeout($rf, 2);
+                $out = (string) stream_get_contents($rf);
+                fclose($rf);
+            }
+            @unlink($reply);
+            if ($out !== '') {
+                $decoded = json_decode($out, true);
+                if (is_array($decoded)) {
+                    return $decoded;
+                }
+            }
+            return ['result' => 'fifo-sent'];
+        }
+        return null;
     }
 
     /**
@@ -1463,6 +1596,12 @@ final class OpensipsProvisioner
     /** @param array<string,mixed> $d */
     public static function extractDialogId(array $d): string
     {
+        if (isset($d['dlg_id'])) {
+            $fromDb = self::hashIdFromDlgId($d['dlg_id']);
+            if ($fromDb !== '' && $fromDb !== '0:0') {
+                return $fromDb;
+            }
+        }
         $entry = $d['h_entry'] ?? $d['hash_entry'] ?? $d['entry'] ?? null;
         $hid = $d['h_id'] ?? $d['hash_id'] ?? null;
         if ($entry !== null && $hid !== null && is_numeric($entry) && is_numeric($hid)) {

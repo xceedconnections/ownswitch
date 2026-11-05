@@ -58,7 +58,7 @@ loadmodule "sipmsgops.so"
 
 loadmodule "mi_fifo.so"
 modparam("mi_fifo", "fifo_name", "@@OPENSIPS_FIFO@@")
-modparam("mi_fifo", "fifo_mode", 0660)
+modparam("mi_fifo", "fifo_mode", 0666)
 @@OPENSIPS_MI_HTTP_BLOCK@@
 
 loadmodule "auth.so"
