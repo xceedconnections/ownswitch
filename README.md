@@ -4,12 +4,11 @@ Multi-tenant VoIP billing platform — **native PHP** (no Laravel/Symfony) + MyS
 
 Install target: **Ubuntu Server 24.04 LTS (amd64)** — e.g. Hetzner Cloud.
 
-## Production install (Hetzner / any clean Ubuntu 24.04)
+## New Ubuntu 24.04 server (OpenSIPS)
 
-**Recommended server:** Hetzner **CX42 / CPX42** (8 vCPU, 16 GB RAM) — see [docs/HETZNER.md](docs/HETZNER.md). Lab minimum: **CX32** (4 vCPU / 8 GB). Use Ubuntu **24.04**, not ARM.
+This repository is the OpenSIPS portal. On a clean Ubuntu 24.04 amd64 server, as root, point a DNS A record at the server and run:
 
 ```bash
-# On the new server (as root). Point DNS A → this IP first when possible.
 curl -fsSL https://raw.githubusercontent.com/xceedconnections/ownswitch/main/install-server.sh \
   | sudo bash -s -- \
       --domain voip.yourdomain.com \
@@ -17,9 +16,31 @@ curl -fsSL https://raw.githubusercontent.com/xceedconnections/ownswitch/main/ins
       --password 'ChooseALongPassword1!'
 ```
 
-That single script clones this repo and installs the full stack (MySQL, Redis, OpenSIPS, CGRateS, RTPengine, FreeSWITCH, Nginx, PHP, portal, firewall, workers). Credentials are printed and saved to `/root/ownswitch-credentials.txt`.
+The same install after a manual clone:
 
-Skip FreeSWITCH (faster): add `--no-freeswitch`.
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/xceedconnections/ownswitch.git /opt/ownswitch-src
+cd /opt/ownswitch-src
+export OWNSWITCH_DOMAIN=voip.yourdomain.com
+export OWNSWITCH_ADMIN_EMAIL=ops@yourdomain.com
+export OWN_SWITCH_ADMIN_PASS='ChooseALongPassword1!'
+export FREESWITCH_ENABLED=0
+sudo -E bash deploy/install.sh --yes --non-interactive
+```
+
+That installs MySQL, Redis, OpenSIPS 3.6 on UDP/TCP 5060, CGRateS, RTPengine, Nginx, PHP, and the portal. FreeSWITCH is not installed. The admin password is printed and saved to `/root/ownswitch-credentials.txt`. Open TCP 22, 80, 443 and UDP/TCP 5060 plus UDP 30000–40000 on the cloud firewall.
+
+To install again on a server that already has this checkout:
+
+```bash
+cd /opt/ownswitch-src
+git fetch origin
+git reset --hard origin/main
+sudo bash deploy/install.sh --yes --non-interactive
+```
+
+**Recommended server:** Hetzner **CX42 / CPX42** (8 vCPU, 16 GB RAM) — see [docs/HETZNER.md](docs/HETZNER.md). Lab minimum: **CX32** (4 vCPU / 8 GB). Use Ubuntu **24.04**, not ARM.
 
 ### If install failed (MySQL GPG / incomplete stack)
 

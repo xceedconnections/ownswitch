@@ -4,8 +4,9 @@
 # Server 24.04 LTS (amd64) host.
 #
 # This script installs EVERYTHING for a working VoIP billing switch:
-#   MySQL 8.4 · Redis · OpenSIPS 3.6 (+ modules) · CGRateS · RTPengine
-#   PHP 8.3-FPM · Nginx · FreeSWITCH (media) · portal · workers · firewall
+#   MySQL 8.4 · Redis · OpenSIPS 3.6 (+ modules) on UDP/TCP 5060 · CGRateS
+#   RTPengine · PHP 8.3-FPM · Nginx · portal · workers · firewall
+#   FreeSWITCH is off unless FREESWITCH_ENABLED=1 is set in the environment.
 #
 # Usage (on a clean Ubuntu 24.04 server as root):
 #
@@ -22,7 +23,7 @@
 #   --password PASS        Admin password (min 12 chars); auto-generated if omitted
 #   --repo URL             Git clone URL (default: xceedconnections/ownswitch)
 #   --branch BRANCH        Git branch (default: main)
-#   --no-freeswitch        Skip FreeSWITCH (faster; still full billing/routing)
+#   --no-freeswitch        Keep FreeSWITCH off (this is already the default)
 #   --no-letsencrypt       Self-signed TLS only
 #   --sip-allow CIDRS      Comma-separated CIDRs allowed to reach SIP (optional)
 #   --force                Override soft hardware checks
@@ -39,7 +40,7 @@ SRC_DIR="${OWNSWITCH_SRC_DIR:-/opt/ownswitch-src}"
 DOMAIN="${OWNSWITCH_DOMAIN:-}"
 EMAIL="${OWNSWITCH_ADMIN_EMAIL:-}"
 ADMIN_PASS="${OWN_SWITCH_ADMIN_PASS:-${OWNSWITCH_ADMIN_PASS:-}}"
-FREESWITCH_ENABLED="${FREESWITCH_ENABLED:-1}"
+FREESWITCH_ENABLED="${FREESWITCH_ENABLED:-0}"
 LETSENCRYPT=1
 SIP_ALLOW_CIDRS="${SIP_ALLOW_CIDRS:-}"
 FORCE="${FORCE:-0}"

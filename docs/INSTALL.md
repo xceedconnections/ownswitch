@@ -8,20 +8,30 @@ CGRateS v0.10.4 · RTPengine 11.5.x · PHP 8.3-FPM · nginx · optional FreeSWIT
 
 ## 1. Quick start
 
-```bash
-# on the Ubuntu 24.04 server
-sudo apt-get update && sudo apt-get install -y git
-git clone <your-ownswitch-repo> /opt/ownswitch-src && cd /opt/ownswitch-src
+On a clean Ubuntu 24.04 server, as root:
 
-# Windows checkouts cannot store the exec bit; fix once (install.sh also works via `bash`)
-find deploy -type f \( -name '*.sh' -o -path '*/bin/*' \) -exec chmod +x {} +
+```bash
+curl -fsSL https://raw.githubusercontent.com/xceedconnections/ownswitch/main/install-server.sh \
+  | sudo bash -s -- \
+      --domain voip.example.com \
+      --email ops@example.com \
+      --password 'a-long-random-passphrase'
+```
+
+Or clone this repository and run the installer. `FREESWITCH_ENABLED=0` keeps OpenSIPS on port 5060.
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/xceedconnections/ownswitch.git /opt/ownswitch-src
+cd /opt/ownswitch-src
 
 export OWNSWITCH_DOMAIN=voip.example.com          # DNS A record -> this server
 export OWNSWITCH_ADMIN_EMAIL=ops@example.com
 export LETSENCRYPT_EMAIL=ops@example.com          # optional; omit for self-signed
 export OWN_SWITCH_ADMIN_PASS='a-long-random-passphrase'   # optional; else prompt / auto-generate
+export FREESWITCH_ENABLED=0
 
-sudo -E ./deploy/install.sh            # asks for confirmation; add --yes to skip
+sudo -E bash deploy/install.sh --yes --non-interactive
 ```
 
 The run ends with a **deployment report** (`/var/lib/ownswitch-install/reports/latest.txt`) and a non-zero exit
