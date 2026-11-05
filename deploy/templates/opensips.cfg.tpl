@@ -146,10 +146,11 @@ route {
 		# OpenSIPS 3.3+: rewritehost() removed → sethost()
 		sethost("@@PUBLIC_IP@@");
 		xlog("L_INFO", "REGISTER from=$si port=$sp user=$tU realm=$td ruri=$ru\n");
-		# Realm = softphone Domain ($td): IP or any FQDN. calculate_ha1=1 → plaintext password.
-		if (!www_authorize("$td", "subscriber")) {
+		# Empty realm: accept Domain=IP or FQDN (Eyebeam + Asterisk/ViciDial). calculate_ha1=1.
+		# Fall back to $td challenge only for the WWW-Authenticate realm display.
+		if (!www_authorize("", "subscriber")) {
 			xlog("L_WARN", "REGISTER auth failed user=$tU realm=$td from=$si\n");
-			www_challenge("$td", "auth");
+			www_challenge("", "auth");
 			exit;
 		}
 		@@OPENSIPS_NAT_REGISTER_BLOCK@@

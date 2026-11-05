@@ -234,8 +234,8 @@ final class SipUserController extends CrudController
                 'label' => 'Qualify',
                 'type' => 'select',
                 'options' => SipPeerOptions::YES_NO,
-                'default' => 'yes',
-                'help' => 'Yes = show OPTIONS latency when reachable. Dynamic REGISTER status always follows OpenSIPS location (Asterisk/ViciDial often do not answer OPTIONS — that no longer marks them offline).',
+                'default' => 'no',
+                'help' => 'Optional OPTIONS latency only. Live/Registered always follows OpenSIPS location for Dynamic SIP users (Asterisk/ViciDial). Fixed-IP peers use OPTIONS when Qualify=Yes.',
                 'section' => 'Network',
             ],
 
@@ -420,20 +420,20 @@ final class SipUserController extends CrudController
                 }
             }
 
+            $isDynamic = $host === '' || strtolower($host) === 'dynamic';
             if ($reg !== null) {
-                // OpenSIPS location with future expires = registered (source of truth).
-                // Do NOT purge on failed OPTIONS — Asterisk/ViciDial often ignore OPTIONS
-                // from the portal, which previously wiped a valid REGISTER and showed offline.
+                // OpenSIPS location/MI with future expires = registered (only source of truth for Dynamic).
+                // Never purge usrloc from this page — Asterisk ignores OPTIONS and was being wiped.
                 $online = true;
-                if ($qualify) {
+                // Latency probe only when explicitly enabled; never for deciding online/offline.
+                if ($qualify && !$isDynamic) {
                     $uri = trim((string) ($reg['received'] ?? '')) !== ''
                         ? (string) $reg['received']
                         : (string) ($reg['contact'] ?? '');
                     $ep = SipOptionsProbe::endpointFromUri($uri);
                     $ms = $ep ? SipOptionsProbe::rttMs($ep['host'], $ep['port']) : null;
-                    // Latency is optional UI only; failed ping must not mark offline or delete usrloc.
                 }
-            } elseif ($qualify && $host !== '' && strtolower($host) !== 'dynamic' && filter_var($host, FILTER_VALIDATE_IP)) {
+            } elseif ($qualify && !$isDynamic && filter_var($host, FILTER_VALIDATE_IP)) {
                 // Fixed-IP peer (no REGISTER): OPTIONS is the only liveness signal
                 $ms = SipOptionsProbe::rttMs($host, $port);
                 $online = $ms !== null;
@@ -442,9 +442,11 @@ final class SipUserController extends CrudController
             $row['presence'] = [
                 'online' => $online,
                 'ms' => $ms,
+                'contact' => $reg['contact'] ?? '',
+                'received' => $reg['received'] ?? '',
             ];
             $row['reg_status'] = $online ? 'registered' : 'offline';
-            $row['latency_ms'] = $ms !== null ? $ms : ($online ? '—' : 'n/a');
+            $row['latency_ms'] = $ms !== null ? $ms : ($online ? 'reg' : 'n/a');
         }
         unset($row);
         return $rows;

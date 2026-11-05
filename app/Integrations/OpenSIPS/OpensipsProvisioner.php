@@ -1074,13 +1074,15 @@ final class OpensipsProvisioner
     {
         $fromMi = $this->registeredContactsFromMi();
         $fromSql = $this->registeredContactsFromSql();
-        // SQL write-through is authoritative; MI only fills gaps (avoids stale MI-only ghosts)
+        // Union of SQL write-through + live MI — either source with a future expiry counts.
+        // (Asterisk/ViciDial often present only in one view briefly after REGISTER.)
+        $out = $fromSql;
         foreach ($fromMi as $u => $info) {
-            if (!isset($fromSql[$u])) {
-                $fromSql[$u] = $info;
+            if (!isset($out[$u]) || (int) ($info['expires'] ?? 0) > (int) ($out[$u]['expires'] ?? 0)) {
+                $out[$u] = $info;
             }
         }
-        return $fromSql;
+        return $out;
     }
 
     /** Drop a dead/stale registration so the portal stops showing green. */
@@ -1217,12 +1219,8 @@ final class OpensipsProvisioner
             if ($contact === '') {
                 continue;
             }
-            $raw = $row['expires'] ?? null;
-            if (!is_numeric($raw)) {
-                continue;
-            }
-            $expires = (int) $raw;
-            if ($expires <= $now) {
+            $expires = $this->parseLocationExpires($row['expires'] ?? null);
+            if ($expires === null || $expires <= $now) {
                 continue;
             }
             $out[$u] = [
@@ -1232,6 +1230,23 @@ final class OpensipsProvisioner
             ];
         }
         return $out;
+    }
+
+    /** OpenSIPS DB stores absolute unix INT (or DATETIME on some schemas). */
+    private function parseLocationExpires(mixed $raw): ?int
+    {
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        if (is_numeric($raw)) {
+            $n = (int) $raw;
+            return $n > 0 ? $n : null;
+        }
+        if (is_string($raw)) {
+            $ts = strtotime($raw);
+            return $ts !== false ? $ts : null;
+        }
+        return null;
     }
 
     /**
