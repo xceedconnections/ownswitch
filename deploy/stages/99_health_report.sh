@@ -85,14 +85,13 @@ fi
 pong="$(curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"method":"CoreSv1.Ping","params":[{}],"id":1}' "http://${CGR_HTTP_ADDR}/jsonrpc" 2>/dev/null || true)"
 [[ "$pong" == *Pong* ]] && add OK "CGRateS JSON-RPC" "CoreSv1.Ping -> Pong" || add FAIL "CGRateS JSON-RPC" "no Pong (${pong:-empty})"
 
-_os_c_err="$(opensips -c -f /etc/opensips/opensips.cfg 2>&1 || true)"
-if echo "${_os_c_err}" | grep -qiE 'config file OK|Listening on|config file successfully'; then
-  add OK "OpenSIPS config" "opensips -c passed"
-elif opensips -c -f /etc/opensips/opensips.cfg >/dev/null 2>&1; then
+_os_c_err="$(opensips -c -f /etc/opensips/opensips.cfg 2>&1)"
+_os_c_rc=$?
+if [[ "${_os_c_rc}" -eq 0 ]]; then
   add OK "OpenSIPS config" "opensips -c passed"
 else
-  _snip="$(echo "${_os_c_err}" | grep -E 'ERROR|CRITICAL|parse error|failed' | tail -n 3 | tr '\n' ' ' | cut -c1-220)"
-  add FAIL "OpenSIPS config" "opensips -c failed${_snip:+: ${_snip}}"
+  _snip="$(echo "${_os_c_err}" | grep -E 'ERROR|CRITICAL|parse error|failed|yyerror' | tail -n 4 | tr '\n' ';' | cut -c1-240)"
+  add FAIL "OpenSIPS config" "opensips -c exit=${_os_c_rc}${_snip:+; ${_snip}}"
 fi
 if nginx -t >/dev/null 2>&1; then add OK "nginx config" "nginx -t passed"; else add FAIL "nginx config" "nginx -t failed"; fi
 
@@ -223,23 +222,41 @@ chmod 0640 "${JSON}"
 ln -sfn "${REPORT}" "${REPORT_DIR}/latest.txt"
 ln -sfn "${JSON}" "${REPORT_DIR}/latest.json"
 
-echo
-cat "${REPORT}"
-echo
-log_info "Report saved: ${REPORT}"
-
+# Always print failures FIRST (full report is long — operators miss [FAIL] lines)
 if (( n_fail > 0 )); then
   echo
-  echo "======== FAILED CHECKS (${n_fail}) ========"
+  echo "======== FAILED CHECKS (${n_fail}) — READ THIS ========"
   for c in "${CHECKS[@]}"; do
     IFS='|' read -r s n d <<<"$c"
     [[ "$s" == "FAIL" ]] || continue
-    echo "  FAIL  ${n}: ${d}"
-    log_error "FAIL  ${n}: ${d}"
+    printf '  >>> FAIL | %s | %s\n' "$n" "$d"
   done
-  echo "=========================================="
-  echo "Full report: ${REPORT}"
-  echo "Re-check:    sudo bash ${DEPLOY_DIR}/install.sh --only 99"
+  echo "======================================================"
+  echo
+fi
+
+echo
+# Only show CHECKS summary lines from the report (not the whole essay) + pointer
+echo "SUMMARY: ${n_ok} OK, ${n_warn} WARN, ${n_fail} FAIL"
+echo "CHECKS:"
+for c in "${CHECKS[@]}"; do
+  IFS='|' read -r s n d <<<"$c"
+  printf '  [%-4s] %-28s %s\n' "$s" "$n" "$d"
+done
+echo
+log_info "Full report saved: ${REPORT}"
+log_info "Symlink: ${REPORT_DIR}/latest.txt"
+
+if (( n_fail > 0 )); then
+  echo
+  echo "======== FAILED CHECKS (${n_fail}) — AGAIN ========"
+  for c in "${CHECKS[@]}"; do
+    IFS='|' read -r s n d <<<"$c"
+    [[ "$s" == "FAIL" ]] || continue
+    printf '  >>> FAIL | %s | %s\n' "$n" "$d"
+    log_error "FAIL | ${n} | ${d}"
+  done
+  echo "Fix the item(s) above, then: sudo bash ${DEPLOY_DIR}/install.sh --only 99"
   echo
   log_error "${n_fail} health check(s) FAILED"
   is_true "${HEALTH_FAIL_EXIT}" && exit 1
