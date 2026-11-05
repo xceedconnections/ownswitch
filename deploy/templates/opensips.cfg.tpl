@@ -17,7 +17,7 @@
 
 log_level=3
 xlog_level=3
-stderror_enabled=no
+stderror_enabled=yes
 syslog_enabled=yes
 syslog_facility=LOG_LOCAL0
 syslog_name="opensips"

@@ -656,6 +656,8 @@ cat >/etc/systemd/system/opensips.service <<'EOF'
 Description=OpenSIPS SIP server (Ownswitch)
 After=network-online.target mysql.service
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -663,6 +665,7 @@ User=opensips
 Group=opensips
 RuntimeDirectory=opensips
 RuntimeDirectoryMode=0750
+WorkingDirectory=/run/opensips
 ExecStart=/usr/sbin/opensips -F -f /etc/opensips/opensips.cfg
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
@@ -671,6 +674,9 @@ TimeoutStartSec=20
 TimeoutStopSec=10
 LimitNOFILE=65536
 KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=opensips
 
 [Install]
 WantedBy=multi-user.target
