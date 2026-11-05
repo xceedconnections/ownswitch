@@ -71,11 +71,12 @@
                 <td class="os-mono small text-muted"><?= e(mb_substr((string) ($c['callid'] ?? ''), 0, 40)) ?></td>
                 <?php if (!empty($canHangup)): ?>
                 <td class="text-end">
-                    <form method="post" action="<?= e(url('/calls-online/hangup')) ?>" class="d-inline" data-confirm="Hang up this call?">
+                    <form method="post" action="<?= e(url('/calls-online/hangup')) ?>" class="d-inline" data-confirm="Hang up this call? OpenSIPS will send BYE to both sides.">
                         <?= csrf_field() ?>
                         <input type="hidden" name="callid" value="<?= e((string) ($c['callid'] ?? '')) ?>">
                         <input type="hidden" name="from_tag" value="<?= e((string) ($c['from_tag'] ?? '')) ?>">
-                        <button type="submit" class="btn btn-outline-danger btn-sm" data-once><i class="bi bi-telephone-x"></i></button>
+                        <input type="hidden" name="dialog_id" value="<?= e((string) ($c['dialog'] ?? '')) ?>">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" title="Hang up" data-once><i class="bi bi-telephone-x"></i></button>
                     </form>
                 </td>
                 <?php endif; ?>

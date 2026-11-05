@@ -1288,57 +1288,179 @@ final class OpensipsProvisioner
     }
 
     /**
-     * Hang up a live dialog. Tries dlg_end_dlg (MI), then opensips-cli, then DB purge.
+     * Hang up a live dialog via MI dlg_end_dlg (sends BYE both ways).
+     * OpenSIPS 3.x param is dialog_id = Call-ID or internal ID from dlg_list (e.g. "3261:1097").
      *
      * @return array{ok:bool,detail:string}
      */
-    public function endDialog(string $callId, ?string $fromTag = null, ?string $toTag = null): array
+    public function endDialog(string $callId, ?string $fromTag = null, ?string $dialogId = null): array
     {
-        if ($callId === '') {
+        if ($callId === '' && ($dialogId === null || $dialogId === '')) {
             return ['ok' => false, 'detail' => 'Missing Call-ID'];
         }
-        unset($toTag);
-        // OpenSIPS 3.6: dlg_end_dlg params often { callid, from_tag } or dialog hash
-        $attempts = [];
-        if ($fromTag !== null && $fromTag !== '') {
-            $attempts[] = ['dlg_end_dlg', ['callid' => $callId, 'fhtag' => $fromTag]];
-            $attempts[] = ['dlg_end_dlg', ['callid' => $callId, 'from_tag' => $fromTag]];
-            $attempts[] = ['dlg_end_dlg', [$callId, $fromTag]];
+        // Resolve internal dialog ID from live MI list when possible (most reliable)
+        $ids = [];
+        if ($dialogId !== null && trim($dialogId) !== '') {
+            $ids[] = trim($dialogId);
         }
-        $attempts[] = ['dlg_end_dlg', ['callid' => $callId]];
-        $attempts[] = ['dlg_end_dlg', [$callId]];
+        $resolved = $this->resolveDialogIdsForHangup($callId, $fromTag);
+        foreach ($resolved as $id) {
+            if ($id !== '' && !in_array($id, $ids, true)) {
+                $ids[] = $id;
+            }
+        }
+        if ($callId !== '' && !in_array($callId, $ids, true)) {
+            $ids[] = $callId;
+        }
+
         $last = 'no MI response';
         $miOk = false;
-        foreach ($attempts as [$method, $params]) {
-            $r = $this->miCall($method, is_array($params) ? $params : [$params]);
-            if ($r !== null && !isset($r['error'])) {
-                $miOk = true;
-                break;
+        foreach ($ids as $id) {
+            // Named dialog_id (OpenSIPS 3.x) + positional fallbacks
+            $attempts = [
+                ['dialog_id' => $id],
+                [$id],
+            ];
+            foreach ($attempts as $params) {
+                $r = $this->miCall('dlg_end_dlg', $params);
+                if ($r !== null && !isset($r['error'])) {
+                    $miOk = true;
+                    $last = 'dlg_end_dlg ok id=' . $id;
+                    break 2;
+                }
+                $last = is_array($r['error'] ?? null)
+                    ? (string) ($r['error']['message'] ?? json_encode($r['error']))
+                    : (string) ($r['error'] ?? ($r === null ? 'MI unreachable' : 'no response'));
             }
-            $last = is_array($r['error'] ?? null)
-                ? (string) ($r['error']['message'] ?? json_encode($r['error']))
-                : (string) ($r['error'] ?? 'no response');
-        }
-        if (!$miOk && preg_match('/^[a-zA-Z0-9@._\-:+]+$/', $callId)) {
-            $cli = trim((string) @shell_exec(
-                'opensips-cli -x mi dlg_end_dlg '
-                . escapeshellarg($callId)
-                . ($fromTag !== null && $fromTag !== '' ? ' ' . escapeshellarg($fromTag) : '')
-                . ' 2>/dev/null'
-            ));
-            if ($cli !== '' && !preg_match('/error|fail|not found/i', $cli)) {
-                $miOk = true;
-                $last = 'opensips-cli dlg_end_dlg';
+            // opensips-cli: dlg_end_dlg <dialog_id>
+            if (preg_match('/^[a-zA-Z0-9@._\-:+]+$/', $id)) {
+                $cli = trim((string) @shell_exec(
+                    'opensips-cli -x mi dlg_end_dlg ' . escapeshellarg($id) . ' 2>/dev/null'
+                ));
+                if ($cli !== '' && !preg_match('/error|fail|not found|Invalid/i', $cli)) {
+                    $miOk = true;
+                    $last = 'opensips-cli dlg_end_dlg ok';
+                    break;
+                }
+                if ($cli !== '') {
+                    $last = 'opensips-cli: ' . mb_substr($cli, 0, 160);
+                }
             }
         }
-        $purged = $this->purgeDialogByCallId($callId);
+
+        if ($callId !== '') {
+            $this->purgeDialogByCallId($callId);
+        }
+
         if ($miOk) {
-            return ['ok' => true, 'detail' => 'Dialog terminate requested' . ($purged ? ' (DB cleared)' : '')];
+            return ['ok' => true, 'detail' => 'Hangup sent (BYE both legs).'];
         }
-        if ($purged) {
-            return ['ok' => true, 'detail' => 'Cleared stale dialog from OpenSIPS DB (MI unreachable or dialog already dead)'];
+
+        // Only treat as success if the dialog is actually gone from MI
+        if ($callId !== '' && !$this->dialogStillLive($callId, $fromTag)) {
+            return ['ok' => true, 'detail' => 'Call no longer in OpenSIPS (already ended).'];
         }
-        return ['ok' => false, 'detail' => $last];
+
+        return [
+            'ok' => false,
+            'detail' => 'Could not terminate call via OpenSIPS MI: ' . $last
+                . ' — check OPENSIPS_MI_URL / mi_http on :8888',
+        ];
+    }
+
+    /**
+     * Collect Call-ID + internal dlg IDs for hangup.
+     *
+     * @return list<string>
+     */
+    private function resolveDialogIdsForHangup(string $callId, ?string $fromTag): array
+    {
+        $out = [];
+        foreach ($this->listDialogs() as $d) {
+            if (!is_array($d)) {
+                continue;
+            }
+            $cid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? $d['CallId'] ?? $d['ci'] ?? '');
+            if ($callId !== '' && $cid !== '' && strcasecmp($cid, $callId) !== 0) {
+                continue;
+            }
+            if ($callId === '' && $cid === '') {
+                continue;
+            }
+            if ($fromTag !== null && $fromTag !== '') {
+                $ft = (string) ($d['from_tag'] ?? $d['caller_tag'] ?? $d['ftag'] ?? '');
+                if ($ft !== '' && strcasecmp($ft, $fromTag) !== 0) {
+                    continue;
+                }
+            }
+            $did = self::extractDialogId($d);
+            if ($did !== '') {
+                $out[] = $did;
+            }
+            if ($cid !== '') {
+                $out[] = $cid;
+            }
+        }
+        return array_values(array_unique($out));
+    }
+
+    private function dialogStillLive(string $callId, ?string $fromTag): bool
+    {
+        foreach ($this->listDialogs() as $d) {
+            if (!is_array($d)) {
+                continue;
+            }
+            $cid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? $d['CallId'] ?? $d['ci'] ?? '');
+            if (strcasecmp($cid, $callId) !== 0) {
+                continue;
+            }
+            if ($fromTag !== null && $fromTag !== '') {
+                $ft = (string) ($d['from_tag'] ?? $d['caller_tag'] ?? $d['ftag'] ?? '');
+                if ($ft !== '' && strcasecmp($ft, $fromTag) !== 0) {
+                    continue;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /** @param array<string,mixed> $d */
+    public static function extractDialogId(array $d): string
+    {
+        foreach (['ID', 'id', 'dialog_id', 'dialog', 'dlg_id', 'hash', 'did'] as $k) {
+            if (!isset($d[$k])) {
+                continue;
+            }
+            $v = $d[$k];
+            if (is_int($v) || is_float($v)) {
+                return (string) (int) $v;
+            }
+            if (!is_string($v)) {
+                continue;
+            }
+            $v = trim($v);
+            // OpenSIPS: "3261:1097" or "6ae.4b38d013"
+            if ($v !== '' && preg_match('/^[0-9a-fA-F]+[:.][0-9a-fA-F]+$/', $v)) {
+                return $v;
+            }
+            if ($v !== '' && ctype_digit($v)) {
+                return $v;
+            }
+            if (preg_match('/(?:h_entry|hash)[=:\s]+(\d+)[^\d]+(?:h_id|id)[=:\s]+(\d+)/i', $v, $m)) {
+                return $m[1] . ':' . $m[2];
+            }
+        }
+        // Some MI builds nest ids
+        if (isset($d['dialog']) && is_array($d['dialog'])) {
+            return self::extractDialogId($d['dialog']);
+        }
+        $entry = $d['h_entry'] ?? $d['hash_entry'] ?? null;
+        $hid = $d['h_id'] ?? $d['hash_id'] ?? null;
+        if ($entry !== null && $hid !== null && is_numeric($entry) && is_numeric($hid)) {
+            return ((int) $entry) . ':' . ((int) $hid);
+        }
+        return '';
     }
 
     private function ensureDbAliases(): void

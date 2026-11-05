@@ -60,14 +60,23 @@ final class CallsOnlineController extends BaseController
     {
         $callId = trim((string) $r->input('callid', ''));
         $fromTag = trim((string) $r->input('from_tag', ''));
-        if ($callId === '') {
+        $dialogId = trim((string) $r->input('dialog_id', ''));
+        if ($callId === '' && $dialogId === '') {
             return $this->redirect($r, '/calls-online', 'Missing Call-ID.', 'danger');
         }
         [$calls] = $this->loadCalls($r, null);
         $allowed = false;
         foreach ($calls as $c) {
-            if (($c['callid'] ?? '') === $callId) {
+            if (($callId !== '' && ($c['callid'] ?? '') === $callId)
+                || ($dialogId !== '' && ($c['dialog'] ?? '') === $dialogId)) {
                 $allowed = true;
+                // Prefer live internal ID from current list
+                if ($dialogId === '' && trim((string) ($c['dialog'] ?? '')) !== '') {
+                    $dialogId = trim((string) $c['dialog']);
+                }
+                if ($fromTag === '' && trim((string) ($c['from_tag'] ?? '')) !== '') {
+                    $fromTag = trim((string) $c['from_tag']);
+                }
                 break;
             }
         }
@@ -78,8 +87,11 @@ final class CallsOnlineController extends BaseController
         if (!$prov->enabled()) {
             return $this->redirect($r, '/calls-online', 'OpenSIPS is not configured.', 'danger');
         }
-        // Always attempt MI + DB purge (stale “Connected” rows often have no live MI dialog)
-        $res = $prov->endDialog($callId, $fromTag !== '' ? $fromTag : null);
+        $res = $prov->endDialog(
+            $callId,
+            $fromTag !== '' ? $fromTag : null,
+            $dialogId !== '' ? $dialogId : null
+        );
         return $this->redirect(
             $r,
             '/calls-online',
@@ -216,7 +228,7 @@ final class CallsOnlineController extends BaseController
         if ($sipUser === '') {
             $sipUser = $fromUser;
         }
-        $dlg = (string) ($d['dialog'] ?? $d['hash'] ?? $d['dlg_id'] ?? $d['ID'] ?? $d['id'] ?? '');
+        $dlg = OpensipsProvisioner::extractDialogId($d);
         $fromTag = (string) ($d['from_tag'] ?? $d['caller_tag'] ?? $d['ftag'] ?? $d['fromtag'] ?? '');
         $callid = (string) ($d['callid'] ?? $d['Call-ID'] ?? $d['call_id'] ?? $d['CallId'] ?? $d['ci'] ?? '');
         return [
